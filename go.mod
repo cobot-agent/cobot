@@ -10,6 +10,7 @@ require (
 	github.com/creachadair/jrpc2 v1.3.5
 	github.com/dgraph-io/badger/v4 v4.9.1
 	github.com/modelcontextprotocol/go-sdk v1.5.0
+	github.com/robfig/cron/v3 v3.0.1
 	github.com/spf13/cobra v1.10.2
 	gopkg.in/yaml.v3 v3.0.1
 )
