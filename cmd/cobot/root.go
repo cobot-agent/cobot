@@ -56,11 +56,22 @@ func loadConfig() (*cobot.Config, error) {
 		}
 	}
 
-	if modelName != "" {
-		cfg.Model = modelName
-	}
 	if workspacePath != "" {
 		cfg.Workspace = workspacePath
+		if err := config.LoadWorkspaceConfig(cfg, workspacePath); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: %v\n", err)
+		}
+	} else if ws, err := workspace.Discover("."); err == nil {
+		cfg.Workspace = ws.Root
+		if err := config.LoadWorkspaceConfig(cfg, ws.Root); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: %v\n", err)
+		}
+	}
+
+	config.ApplyEnvVars(cfg)
+
+	if modelName != "" {
+		cfg.Model = modelName
 	}
 	return cfg, nil
 }

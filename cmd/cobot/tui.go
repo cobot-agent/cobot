@@ -80,6 +80,27 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.streaming = true
 			return m, m.startStream(text)
 		}
+
+	case streamMsg:
+		if msg.err != nil {
+			m.streaming = false
+			m.messages = append(m.messages, fmt.Sprintf("Error: %v", msg.err))
+			return m, nil
+		}
+		if msg.done {
+			m.streaming = false
+			m.messages = append(m.messages, "")
+			return m, nil
+		}
+		if len(m.messages) > 0 {
+			last := m.messages[len(m.messages)-1]
+			if strings.HasPrefix(last, "Assistant:") {
+				m.messages[len(m.messages)-1] += msg.content
+			} else {
+				m.messages = append(m.messages, "Assistant: "+msg.content)
+			}
+		}
+		return m, nil
 	}
 
 	if m.streaming {
@@ -149,8 +170,10 @@ var tuiCmd = &cobra.Command{
 		}
 
 		memDir := filepath.Join(xdg.DataHome(), "cobot", "memory")
+		var memStore *memory.Store
 		if ms, err := memory.OpenStore(memDir); err == nil {
-			a.SetMemoryStore(ms)
+			memStore = ms
+			a.SetMemoryStore(memStore)
 		}
 
 		a.RegisterTool(builtin.NewReadFileTool())
@@ -159,6 +182,9 @@ var tuiCmd = &cobra.Command{
 
 		p := tea.NewProgram(newTUIModel(a), tea.WithAltScreen())
 		_, err = p.Run()
+		if memStore != nil {
+			memStore.Close()
+		}
 		return err
 	},
 }
