@@ -1449,94 +1449,231 @@ jsonrpc.MakeID(v)           // ID
 
 ---
 
-### 15.6 JSON-RPC 2.0 — `github.com/sourcegraph/jsonrpc2`
+### 15.6 JSON-RPC 2.0 — `github.com/creachadair/jrpc2`
 
-**Purpose:** ACP server implementation (JSON-RPC 2.0 over stdio). Used alongside MCP go-sdk's internal jsonrpc.
+**Purpose:** ACP server implementation (JSON-RPC 2.0 over stdio). v1 stable, BSD-3. Full client+server with reflection-based handlers, server push, batch requests, and pluggable channel framing.
 
-**Core Handler:**
+**Packages:**
+
+| Package | Import | Purpose |
+|---------|--------|---------|
+| jrpc2 | `github.com/creachadair/jrpc2` | Core server, client, types |
+| channel | `github.com/creachadair/jrpc2/channel` | Transport abstraction + framing |
+| handler | `github.com/creachadair/jrpc2/handler` | Reflection-based handler adaptation |
+| jhttp | `github.com/creachadair/jrpc2/jhttp` | HTTP bridge |
+| server | `github.com/creachadair/jrpc2/server` | Multi-connection Loop, in-memory testing |
+
+**Server Creation and Lifecycle:**
 
 ```go
-type Handler interface {
-    Handle(ctx context.Context, conn *Conn, req *Request)
+// Handler signature (auto-marshals JSON params/results)
+// func(ctx context.Context, req *jrpc2.Request) (any, error)
+
+// Create an assigner (method → handler mapping)
+assigner := handler.Map{
+    "initialize":   handler.New(handleInitialize),
+    "session/new":  handler.New(handleSessionNew),
+    "session/prompt": handler.New(handleSessionPrompt),
+}
+
+srv := jrpc2.NewServer(assigner, &jrpc2.ServerOptions{
+    AllowPush:   true,  // enable server-to-client notifications
+    Concurrency: 0,     // max parallel handlers (0 = NumCPU)
+})
+ch := channel.Line(os.Stdin, os.Stdout)  // newline-delimited framing
+srv.Start(ch)
+err := srv.Wait()
+```
+
+**Server Push (notifications to client):**
+
+```go
+// In a handler, send notification back to client
+srv := jrpc2.ServerFromContext(ctx)
+srv.Notify(ctx, "session/update", SessionUpdate{
+    SessionUpdate: "agent_message_chunk",
+    Content:       ContentBlock{Type: "text", Text: chunk},
+})
+```
+
+**Client Usage:**
+
+```go
+ch := channel.Line(conn, conn)
+cli := jrpc2.NewClient(ch, &jrpc2.ClientOptions{
+    OnNotify: func(req *jrpc2.Request) {
+        // Handle server-push notifications
+        var update SessionUpdate
+        req.UnmarshalParams(&update)
+    },
+})
+defer cli.Close()
+
+// Call method
+rsp, err := cli.Call(ctx, "session/prompt", params)
+var result PromptResponse
+rsp.UnmarshalResult(&result)
+
+// Shorthand
+var result2 PromptResponse
+cli.CallResult(ctx, "session/prompt", params, &result2)
+
+// Batch
+rsps, _ := cli.Batch(ctx, []jrpc2.Spec{
+    {Method: "session/prompt", Params: params1},
+    {Method: "session/prompt", Params: params2},
+    {Method: "log", Params: msg, Notify: true},
+})
+```
+
+**Channel Framing (Transport Layer):**
+
+```go
+type Channel interface {
+    Send([]byte) error
+    Recv() ([]byte, error)
+    Close() error
 }
 ```
 
-**Connection:**
+| Framing | Usage |
+|---------|-------|
+| `channel.Line(r, w)` | Newline-delimited (ACP stdio default) |
+| `channel.Header(mime)` | Content-Length header framing |
+| `channel.LSP(r, w)` | LSP standard framing |
+| `channel.RawJSON(r, w)` | Raw JSON, no framing |
+| `channel.Direct()` | In-memory, zero-copy (testing) |
+
+**Handler Registration Patterns:**
 
 ```go
-stream := jsonrpc2.NewPlainObjectStream(rwc) // rwc = combined stdin+stdout
-conn := jsonrpc2.NewConn(ctx, stream, handler)
+// Reflection-based: auto-generates JSON param/result marshaling
+// Supports signatures like:
+//   func(ctx, Input) (Output, error)
+//   func(ctx, *Request) (any, error)
+//   func(ctx) error
 
-// Server responds manually
-conn.Reply(ctx, req.ID, result)
-conn.ReplyWithError(ctx, req.ID, &jsonrpc2.Error{Code: -32601, Message: "method not found"})
+assigner := handler.Map{
+    "initialize": handler.New(func(ctx context.Context, req ACPInitializeRequest) (ACPInitializeResponse, error) {
+        return ACPInitializeResponse{
+            ProtocolVersion:  1,
+            AgentCapabilities: AgentCapabilities{LoadSession: true},
+        }, nil
+    }),
+}
 
-// Send notification
-conn.Notify(ctx, "session/update", params)
-
-// Lifecycle
-<-conn.DisconnectNotify()
-conn.Close()
+// Namespaced services (method = "Service.Method")
+services := handler.ServiceMap{
+    "session": handler.Map{
+        "new":    handler.New(handleNew),
+        "prompt": handler.New(handlePrompt),
+        "cancel": handler.New(handleCancel),
+    },
+    "fs": handler.Map{
+        "read_text_file":  handler.New(handleReadFile),
+        "write_text_file": handler.New(handleWriteFile),
+    },
+    "terminal": handler.Map{
+        "create":        handler.New(handleTermCreate),
+        "output":        handler.New(handleTermOutput),
+        "release":       handler.New(handleTermRelease),
+        "wait_for_exit": handler.New(handleTermWait),
+        "kill":          handler.New(handleTermKill),
+    },
+}
 ```
 
-**Request/Response Types:**
+**Request Type:**
 
 ```go
-type Request struct {
-    Method string
-    Params *json.RawMessage
-    ID     ID
-    Notif  bool // true = notification
-}
+type Request struct { /* unexported */ }
 
-type Response struct {
-    ID     *json.RawMessage
-    Result *json.RawMessage
-    Error  *Error
-}
+func (r *Request) Method() string
+func (r *Request) ID() string
+func (r *Request) IsNotification() bool
+func (r *Request) HasParams() bool
+func (r *Request) ParamString() string
+func (r *Request) UnmarshalParams(v any) error
+```
+
+**Response Type:**
+
+```go
+type Response struct { /* unexported */ }
+
+func (r *Response) ID() string
+func (r *Response) Error() *Error
+func (r *Response) ResultString() string
+func (r *Response) UnmarshalResult(v any) error
+```
+
+**Error Handling:**
+
+```go
+type Code int32
+const (
+    ParseError     Code = -32700
+    InvalidRequest Code = -32600
+    MethodNotFound Code = -32601
+    InvalidParams  Code = -32602
+    InternalError  Code = -32603
+    Cancelled      Code = -32097  // context.Canceled
+)
 
 type Error struct {
-    Code    int64
-    Message string
-    Data    *json.RawMessage
-}
-```
-
-**Stream Construction for stdio:**
-
-```go
-type stdioRWC struct {
-    io.Reader
-    io.Writer
-    io.Closer
+    Code    Code            `json:"code"`
+    Message string          `json:"message,omitempty"`
+    Data    json.RawMessage `json:"data,omitempty"`
 }
 
-stream := jsonrpc2.NewPlainObjectStream(&stdioRWC{
-    Reader: os.Stdin,
-    Writer: os.Stdout,
-    Closer: os.Stdin,
-})
+// Create typed errors
+return nil, jrpc2.Errorf(jrpc2.MethodNotFound, "unknown method %q", method)
+return nil, jrpc2.Errorf(jrpc2.InvalidParams, "missing field").WithData(details)
+
+// Classify errors
+code := jrpc2.ErrorCode(err)
 ```
 
-**Async Handler (for concurrent request processing):**
+**In-Memory Testing:**
 
 ```go
-handler := jsonrpc2.AsyncHandler(myHandler{})
+loc := server.NewLocal(handler.Map{
+    "ping": handler.New(func(ctx context.Context) string { return "pong" }),
+}, nil)
+defer loc.Close()
+
+var result string
+loc.Client.CallResult(context.Background(), "ping", nil, &result)
 ```
 
-**Error-returning convenience:**
+**Multi-Connection Server Loop (for HTTP transport):**
 
 ```go
-handler := jsonrpc2.HandlerWithError(func(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) (interface{}, error) {
-    switch req.Method {
-    case "initialize":
-        return InitializeResponse{...}, nil
-    case "session/new":
-        return NewSessionResponse{...}, nil
-    default:
-        return nil, &jsonrpc2.Error{Code: -32601, Message: "method not found"}
+lst, _ := net.Listen("tcp", ":8080")
+server.Loop(ctx, server.NetAccepter(lst, channel.Line),
+    server.Static(handler.Map{...}), nil)
+```
+
+**Cobot ACP server pattern:**
+
+```go
+func serveACP(agent *agent.Agent) error {
+    assigner := handler.ServiceMap{
+        "session": handler.Map{
+            "new":    handler.New(agent.HandleSessionNew),
+            "prompt": handler.New(agent.HandleSessionPrompt),
+            "load":   handler.New(agent.HandleSessionLoad),
+            "cancel": handler.New(agent.HandleSessionCancel),
+        },
     }
-})
+    srv := jrpc2.NewServer(assigner, &jrpc2.ServerOptions{
+        AllowPush:   true,
+        Concurrency: runtime.NumCPU(),
+    })
+    ch := channel.Line(os.Stdin, os.Stdout)
+    srv.Start(ch)
+    return srv.Wait()
+}
 ```
 
 ---
@@ -1620,7 +1757,7 @@ require (
     github.com/dgraph-io/badger/v4            v4.6.0
     github.com/blevesearch/bleve/v2           v2.5.7
     github.com/modelcontextprotocol/go-sdk    v1.5.0
-    github.com/sourcegraph/jsonrpc2           v0.2.0
+    github.com/creachadair/jrpc2                v1.3.5
     github.com/robfig/cron/v3                 v3.0.1
     gopkg.in/yaml.v3                          v3.0.1
     github.com/invopop/jsonschema             v0.13.0
