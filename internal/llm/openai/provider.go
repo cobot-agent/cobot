@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 
 	cobot "github.com/cobot-agent/cobot/pkg"
@@ -110,7 +111,15 @@ func (p *Provider) doRequest(ctx context.Context, body chatRequest) (io.ReadClos
 	return resp.Body, nil
 }
 
+type pendingToolCall struct {
+	ID   string
+	Name string
+	Args strings.Builder
+}
+
 func (p *Provider) readStream(body io.ReadCloser, ch chan<- cobot.ProviderChunk) {
+	pending := make(map[int]*pendingToolCall)
+
 	scanner := bufio.NewScanner(body)
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -119,7 +128,6 @@ func (p *Provider) readStream(body io.ReadCloser, ch chan<- cobot.ProviderChunk)
 		}
 		data := strings.TrimPrefix(line, "data: ")
 		if data == "[DONE]" {
-			ch <- cobot.ProviderChunk{Done: true}
 			return
 		}
 
@@ -129,26 +137,58 @@ func (p *Provider) readStream(body io.ReadCloser, ch chan<- cobot.ProviderChunk)
 		}
 
 		for _, choice := range chunk.Choices {
+			for _, tc := range choice.Delta.ToolCalls {
+				ptc, exists := pending[tc.Index]
+				if !exists {
+					ptc = &pendingToolCall{}
+					pending[tc.Index] = ptc
+				}
+				if tc.ID != "" {
+					ptc.ID = tc.ID
+				}
+				if tc.Function != nil {
+					if tc.Function.Name != "" {
+						ptc.Name = tc.Function.Name
+					}
+					ptc.Args.WriteString(tc.Function.Arguments)
+				}
+			}
+
 			pc := cobot.ProviderChunk{
 				Content: choice.Delta.Content,
 			}
 
-			if len(choice.Delta.ToolCalls) > 0 {
-				tc := choice.Delta.ToolCalls[0]
-				pc.ToolCall = &cobot.ToolCall{
-					ID:   tc.ID,
-					Name: tc.Function.Name,
-				}
-				if tc.Function != nil {
-					pc.ToolCall.Arguments = json.RawMessage(tc.Function.Arguments)
-				}
-			}
-
 			if choice.FinishReason != nil {
+				if *choice.FinishReason == "tool_calls" {
+					indices := sortedMapKeys(pending)
+					for _, idx := range indices {
+						ptc := pending[idx]
+						ch <- cobot.ProviderChunk{
+							ToolCall: &cobot.ToolCall{
+								ID:        ptc.ID,
+								Name:      ptc.Name,
+								Arguments: json.RawMessage(ptc.Args.String()),
+							},
+						}
+					}
+				}
 				pc.Done = true
 			}
 
 			ch <- pc
 		}
 	}
+
+	if err := scanner.Err(); err != nil {
+		ch <- cobot.ProviderChunk{Done: true}
+	}
+}
+
+func sortedMapKeys(m map[int]*pendingToolCall) []int {
+	keys := make([]int, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Ints(keys)
+	return keys
 }
