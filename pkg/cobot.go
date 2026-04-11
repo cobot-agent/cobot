@@ -14,6 +14,7 @@ type Agent struct {
 	core     AgentCore
 	config   *Config
 	provider Provider
+	memStore MemoryStore
 }
 
 func New(config *Config, core AgentCore) (*Agent, error) {
@@ -30,6 +31,14 @@ func (a *Agent) SetProvider(p Provider) {
 	a.provider = p
 	a.core.SetProvider(p)
 }
+
+func (a *Agent) Provider() Provider { return a.provider }
+
+func (a *Agent) SetMemoryStore(s MemoryStore) { a.memStore = s }
+
+func (a *Agent) MemoryStore() MemoryStore { return a.memStore }
+
+func (a *Agent) Config() *Config { return a.config }
 
 func (a *Agent) Prompt(ctx context.Context, message string) (*ProviderResponse, error) {
 	return a.core.Prompt(ctx, message)

@@ -138,6 +138,41 @@ func TestAgentClose(t *testing.T) {
 	}
 }
 
+func TestAgentMemoryStore(t *testing.T) {
+	core := newTestCore("")
+	a, err := New(DefaultConfig(), core)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.MemoryStore() != nil {
+		t.Error("expected nil MemoryStore initially")
+	}
+	a.SetMemoryStore(nil)
+	if a.MemoryStore() != nil {
+		t.Error("expected nil")
+	}
+}
+
+func TestAgentConfig(t *testing.T) {
+	core := newTestCore("")
+	cfg := DefaultConfig()
+	a, err := New(cfg, core)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Config() != cfg {
+		t.Error("expected same config pointer")
+	}
+}
+
+func TestAgentProvider(t *testing.T) {
+	core := newTestCore("")
+	a, _ := New(DefaultConfig(), core)
+	if a.Provider() != nil {
+		t.Error("expected nil provider initially")
+	}
+}
+
 type testProvider struct {
 	response string
 }
