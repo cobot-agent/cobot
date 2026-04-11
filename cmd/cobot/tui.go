@@ -15,19 +15,22 @@ import (
 )
 
 type tuiModel struct {
-	input     textinput.Model
-	messages  []string
-	agent     *agent.Agent
-	streaming bool
-	cancelFn  context.CancelFunc
-	width     int
-	height    int
+	input        textinput.Model
+	messages     []string
+	agent        *agent.Agent
+	streaming    bool
+	streamCh     <-chan cobot.Event
+	streamCancel context.CancelFunc
+	width        int
+	height       int
 }
 
 type streamMsg struct {
-	content string
-	done    bool
-	err     error
+	content   string
+	eventType cobot.EventType
+	toolName  string
+	done      bool
+	err       error
 }
 
 func newTUIModel(a *agent.Agent) tuiModel {
@@ -56,9 +59,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.Type {
 		case tea.KeyCtrlC:
-			if m.streaming && m.cancelFn != nil {
-				m.cancelFn()
+			if m.streaming && m.streamCancel != nil {
+				m.streamCancel()
 				m.streaming = false
+				m.messages = append(m.messages, "")
 				return m, nil
 			}
 			return m, tea.Quit
@@ -73,29 +77,19 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.messages = append(m.messages, fmt.Sprintf("> %s", text))
 			m.input.SetValue("")
 			m.streaming = true
-			return m, m.startStream(text)
+			ctx, cancel := context.WithCancel(context.Background())
+			m.streamCancel = cancel
+			ch, err := m.agent.Stream(ctx, text)
+			if err != nil {
+				cancel()
+				return m, func() tea.Msg { return streamMsg{err: err} }
+			}
+			m.streamCh = ch
+			return m, m.readNextEvent()
 		}
 
 	case streamMsg:
-		if msg.err != nil {
-			m.streaming = false
-			m.messages = append(m.messages, fmt.Sprintf("Error: %v", msg.err))
-			return m, nil
-		}
-		if msg.done {
-			m.streaming = false
-			m.messages = append(m.messages, "")
-			return m, nil
-		}
-		if len(m.messages) > 0 {
-			last := m.messages[len(m.messages)-1]
-			if strings.HasPrefix(last, "Assistant:") {
-				m.messages[len(m.messages)-1] += msg.content
-			} else {
-				m.messages = append(m.messages, "Assistant: "+msg.content)
-			}
-		}
-		return m, nil
+		return m.handleStreamMsg(msg)
 	}
 
 	if m.streaming {
@@ -104,6 +98,67 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
 	return m, cmd
+}
+
+func (m tuiModel) readNextEvent() tea.Cmd {
+	ch := m.streamCh
+	return func() tea.Msg {
+		evt, ok := <-ch
+		if !ok {
+			return streamMsg{done: true}
+		}
+		sm := streamMsg{
+			content:   evt.Content,
+			eventType: evt.Type,
+			done:      evt.Done,
+			err:       evt.Error,
+		}
+		if evt.ToolCall != nil {
+			sm.toolName = evt.ToolCall.Name
+		}
+		return sm
+	}
+}
+
+func (m tuiModel) handleStreamMsg(msg streamMsg) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		m.streaming = false
+		m.streamCancel = nil
+		m.streamCh = nil
+		m.messages = append(m.messages, fmt.Sprintf("Error: %v", msg.err))
+		return m, nil
+	}
+	if msg.done {
+		m.streaming = false
+		m.streamCancel = nil
+		m.streamCh = nil
+		m.messages = append(m.messages, "")
+		return m, nil
+	}
+
+	switch msg.eventType {
+	case cobot.EventText:
+		if len(m.messages) > 0 {
+			last := m.messages[len(m.messages)-1]
+			if strings.HasPrefix(last, "Assistant:") {
+				m.messages[len(m.messages)-1] += msg.content
+			} else {
+				m.messages = append(m.messages, "Assistant: "+msg.content)
+			}
+		} else {
+			m.messages = append(m.messages, "Assistant: "+msg.content)
+		}
+	case cobot.EventToolCall:
+		m.messages = append(m.messages, fmt.Sprintf("  [Tool: %s]", msg.toolName))
+	case cobot.EventToolResult:
+		short := msg.content
+		if len(short) > 200 {
+			short = short[:200] + "..."
+		}
+		m.messages = append(m.messages, fmt.Sprintf("  [Result: %s]", short))
+	}
+
+	return m, m.readNextEvent()
 }
 
 func (m tuiModel) View() string {
@@ -119,33 +174,6 @@ func (m tuiModel) View() string {
 	b.WriteString("\n")
 	b.WriteString(m.input.View())
 	return b.String()
-}
-
-func (m *tuiModel) startStream(text string) tea.Cmd {
-	return func() tea.Msg {
-		ctx, cancel := context.WithCancel(context.Background())
-		m.cancelFn = cancel
-
-		ch, err := m.agent.Stream(ctx, text)
-		if err != nil {
-			return streamMsg{err: err}
-		}
-
-		var accumulated string
-		for chunk := range ch {
-			switch chunk.Type {
-			case cobot.EventText:
-				accumulated += chunk.Content
-			case cobot.EventError:
-				cancel()
-				return streamMsg{err: chunk.Error}
-			case cobot.EventDone:
-				cancel()
-				return streamMsg{content: accumulated, done: true}
-			}
-		}
-		return streamMsg{content: accumulated, done: true}
-	}
 }
 
 var tuiCmd = &cobra.Command{
