@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/cobot-agent/cobot/internal/agent"
+	"github.com/cobot-agent/cobot/internal/llm/anthropic"
 	"github.com/cobot-agent/cobot/internal/llm/openai"
 	"github.com/cobot-agent/cobot/internal/memory"
 	"github.com/cobot-agent/cobot/internal/tools/builtin"
@@ -39,10 +40,12 @@ func initProvider(cfg *cobot.Config) (cobot.Provider, error) {
 	}
 
 	switch providerName {
+	case "anthropic":
+		return anthropic.NewProvider(apiKey, baseURL), nil
 	case "openai":
 		return openai.NewProvider(apiKey, baseURL), nil
 	default:
-		return nil, fmt.Errorf("unknown provider: %s (supported: openai)", providerName)
+		return nil, fmt.Errorf("unknown provider: %s (supported: anthropic, openai)", providerName)
 	}
 }
 
