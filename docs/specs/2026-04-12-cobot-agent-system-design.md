@@ -971,17 +971,661 @@ var (
 
 ---
 
-## 15. Key Dependencies
+## 15. Complete Technology Stack & Package API Reference
 
-| Dependency | Purpose | Version |
-|------------|---------|---------|
-| `github.com/spf13/cobra` | CLI framework | latest |
-| `github.com/charmbracelet/bubbletea` | TUI framework | latest |
-| `github.com/dgraph-io/badger/v4` | Embedded KV store | v4 |
-| `github.com/blevesearch/bleve/v2` | Full-text + vector search | v2 |
-| `github.com/modelcontextprotocol/go-sdk/mcp` | MCP client/server | latest |
-| `github.com/robfig/cron/v3` | Cron scheduler | v3 |
-| `github.com/sourcegraph/jsonrpc2` | JSON-RPC 2.0 | latest |
+### 15.1 CLI Framework — `github.com/spf13/cobra`
+
+**Purpose:** Command structure, flags, subcommands, help generation, shell completions.
+
+**Core Type: `cobra.Command`**
+
+```go
+type Command struct {
+    Use   string            // "appname [flags]"
+    Short string            // one-line description
+    Long  string            // full description
+    Run   func(cmd *Command, args []string)
+    RunE  func(cmd *Command, args []string) error
+    Args  PositionalArgs    // cobra.ExactArgs(n), cobra.NoArgs, etc.
+}
+```
+
+**Key Methods:**
+
+| Method | Purpose |
+|--------|---------|
+| `rootCmd.AddCommand(cmds...)` | Add child subcommands |
+| `rootCmd.Execute()` | Main entry, uses os.Args[1:] |
+| `rootCmd.ExecuteContext(ctx)` | Execute with context |
+| `cmd.Flags().StringVarP(...)` | Register local flag |
+| `cmd.PersistentFlags().StringVarP(...)` | Register persistent (inherited) flag |
+| `cmd.MarkFlagRequired("name")` | Mark flag as required |
+| `cmd.SetArgs([]string{})` | Override args (testing) |
+| `cmd.SetContext(ctx)` | Attach context |
+
+**Lifecycle Hooks (execution order):**
+1. `PersistentPreRun` / `PersistentPreRunE` — inherited by children
+2. `PreRun` / `PreRunE` — this command only
+3. `Run` / `RunE` — main action
+4. `PostRun` / `PostPostRun`
+5. `PersistentPostRun` / `PersistentPostRunE` — inherited
+
+**Flag Types:** `StringP`, `BoolP`, `IntP`, `StringSliceP`, `StringArrayP`, `CountP`, `DurationP`
+
+**Package-level:**
+```go
+cobra.OnInitialize(func())   // Run before any command
+cobra.CheckErr(err)          // Print error and exit
+```
+
+**Cobot usage pattern:**
+```go
+var rootCmd = &cobra.Command{Use: "cobot"}
+var configPath string
+var workspacePath string
+
+func init() {
+    rootCmd.PersistentFlags().StringVarP(&configPath, "config", "c", "", "config file path")
+    rootCmd.PersistentFlags().StringVarP(&workspacePath, "workspace", "w", "", "workspace directory")
+}
+
+func main() { cobra.CheckErr(rootCmd.Execute()) }
+```
+
+---
+
+### 15.2 TUI Framework — `github.com/charmbracelet/bubbletea/v2`
+
+**Purpose:** Rich terminal UI with streaming responses, multiline input, chat history.
+
+**Core Interface: `tea.Model`**
+
+```go
+type Model interface {
+    Init() Cmd
+    Update(msg Msg) (Model, Cmd)
+    View() View
+}
+```
+
+**Key Types:**
+
+| Type | Purpose |
+|------|---------|
+| `tea.Cmd` | `func() Msg` — async I/O operation |
+| `tea.Msg` | Any — message carrying data into Update |
+| `tea.KeyPressMsg` | Key press event, match via `msg.String()` |
+| `tea.WindowSizeMsg` | `{Width, Height int}` — terminal resize |
+| `tea.QuitMsg` | Signal quit |
+
+**Built-in Commands:**
+
+```go
+tea.Quit                           // Signal exit
+tea.Batch(cmds...)                 // Run concurrent
+tea.Sequence(cmds...)              // Run sequential
+tea.Tick(d, fn)                    // Single-shot timer
+tea.Every(d, fn)                   // Periodic timer
+tea.ExecProcess(cmd, callback)     // Run subprocess
+```
+
+**Program Lifecycle:**
+
+```go
+p := tea.NewProgram(model, tea.WithContext(ctx), tea.WithAltScreen())
+model, err := p.Run()
+p.Send(msg)   // Inject message from outside
+p.Quit()      // Quit from outside
+```
+
+**Related packages:**
+
+| Package | Import | Purpose |
+|---------|--------|---------|
+| bubbles | `charm.land/bubbles/v2` | Pre-built components: `textarea`, `viewport`, `spinner`, `table`, `list` |
+| lipgloss | `charm.land/lipgloss/v2` | Styling: colors, borders, padding, layout (`JoinHorizontal`, `JoinVertical`) |
+| glamour | `github.com/charmbracelet/glamour` | Markdown rendering to terminal |
+
+**Cobot TUI architecture:**
+```go
+type chatModel struct {
+    messages  []chatMessage
+    viewport  viewport.Model
+    textarea  textarea.Model
+    agent     *cobot.Agent
+    streaming bool
+}
+
+func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+    switch msg := msg.(type) {
+    case tea.KeyPressMsg:
+        switch msg.String() {
+        case "ctrl+c":
+            if m.streaming { return m, tea.Interrupt }
+            return m, tea.Quit
+        case "enter":
+            if !m.textarea.Focused() { return m, nil }
+            return m, sendMessage(m.textarea.Value())
+        }
+    case responseMsg:
+        m.messages = append(m.messages, msg.chatMessage)
+    }
+    var cmd tea.Cmd
+    m.textarea, cmd = m.textarea.Update(msg)
+    return m, cmd
+}
+```
+
+---
+
+### 15.3 Embedded KV Store — `github.com/dgraph-io/badger/v4`
+
+**Purpose:** Store memory palace data (drawers, closets, rooms, wings, knowledge graph triples).
+
+**Open/Close:**
+
+```go
+db, err := badger.Open(badger.DefaultOptions("/path/to/badger"))
+defer db.Close()
+```
+
+**High-level KV Operations:**
+
+```go
+// Write
+err := db.Update(func(txn *badger.Txn) error {
+    return txn.Set([]byte("key"), []byte("value"))
+})
+
+// Read
+err := db.View(func(txn *badger.Txn) error {
+    item, err := txn.Get([]byte("key"))
+    if errors.Is(err, badger.ErrKeyNotFound) { return nil }
+    return item.Value(func(val []byte) error {
+        fmt.Println(string(val))
+        return nil
+    })
+})
+```
+
+**Item Access (within transaction):**
+
+```go
+item.Key()           // []byte — valid until Next() or txn ends
+item.KeyCopy(nil)    // []byte — safe copy
+item.Value(fn)       // callback-based read
+item.ValueCopy(nil)  // []byte — safe copy
+item.UserMeta()      // byte
+item.ExpiresAt()     // uint64
+```
+
+**Prefix Scanning (for palace namespaces):**
+
+```go
+err := db.View(func(txn *badger.Txn) error {
+    opts := badger.DefaultIteratorOptions
+    opts.Prefix = []byte("wing:")
+    it := txn.NewIterator(opts)
+    defer it.Close()
+    for it.Rewind(); it.Valid(); it.Next() {
+        item := it.Item()
+        k := item.KeyCopy(nil)
+        v, _ := item.ValueCopy(nil)
+    }
+    return nil
+})
+```
+
+**WriteBatch (bulk writes):**
+
+```go
+wb := db.NewWriteBatch()
+wb.Set([]byte("key1"), []byte("val1"))
+wb.Set([]byte("key2"), []byte("val2"))
+wb.Flush()
+```
+
+**Entry with TTL:**
+
+```go
+err := txn.SetEntry(badger.NewEntry([]byte("key"), []byte("val")).WithTTL(time.Hour))
+```
+
+**Garbage Collection:**
+
+```go
+db.RunValueLogGC(0.5)  // discardRatio 0.5
+lsm, vlog := db.Size() // check sizes
+```
+
+**Key Errors:** `ErrKeyNotFound`, `ErrTxnTooBig`, `ErrConflict`, `ErrDBClosed`
+
+**Cobot key prefix design:**
+
+| Prefix | Content |
+|--------|---------|
+| `wing:{id}` | Wing metadata (JSON) |
+| `room:{wingID}:{roomID}` | Room metadata (JSON) |
+| `drawer:{id}` | Raw verbatim content |
+| `closet:{roomID}:{id}` | Summary pointing to drawers |
+| `kg:{subject}:{predicate}:{object}` | Knowledge graph triple |
+| `session:{id}` | Session transcript |
+
+---
+
+### 15.4 Full-text & Vector Search — `github.com/blevesearch/bleve/v2`
+
+**Purpose:** Search memory drawers and closets with full-text, faceted, and vector similarity queries.
+
+**Index Creation:**
+
+```go
+mapping := bleve.NewIndexMapping()
+index, err := bleve.New("/path/to/index.bleve", mapping)
+// or memory-only:
+index, err := bleve.NewMemOnly(mapping)
+// or open existing:
+index, err := bleve.Open("/path/to/index.bleve")
+defer index.Close()
+```
+
+**Document Indexing:**
+
+```go
+err := index.Index("drawer:abc123", DrawerDocument{
+    Content:   "verbatim content here...",
+    WingID:    "wing_kai",
+    RoomID:    "room_auth-migration",
+    HallType:  "facts",
+    CreatedAt: time.Now(),
+})
+err := index.Delete("drawer:abc123")
+```
+
+**Field Mapping:**
+
+```go
+docMapping := bleve.NewDocumentMapping()
+
+contentField := bleve.NewTextFieldMapping()
+contentField.Analyzer = "en"
+docMapping.AddFieldMappingsAt("content", contentField)
+
+wingField := bleve.NewKeywordFieldMapping()
+docMapping.AddFieldMappingsAt("wing_id", wingField)
+
+roomField := bleve.NewKeywordFieldMapping()
+docMapping.AddFieldMappingsAt("room_id", roomField)
+
+hallField := bleve.NewKeywordFieldMapping()
+docMapping.AddFieldMappingsAt("hall_type", hallField)
+
+dateField := bleve.NewDateTimeFieldMapping()
+docMapping.AddFieldMappingsAt("created_at", dateField)
+
+// Vector field (requires `vectors` build tag + FAISS)
+vecField := bleve.NewVectorFieldMapping()
+vecField.Dims = 1536
+vecField.Similarity = "cosine"
+docMapping.AddFieldMappingsAt("embedding", vecField)
+
+mapping.AddDocumentMapping("drawer", docMapping)
+```
+
+**Search Queries:**
+
+```go
+// Full-text search
+q := bleve.NewMatchQuery("auth decision")
+
+// Filtered by wing and room
+wingQ := bleve.NewTermQuery("wing_kai")
+wingQ.SetField("wing_id")
+roomQ := bleve.NewTermQuery("room_auth-migration")
+roomQ.SetField("room_id")
+boolQ := bleve.NewBooleanQuery()
+boolQ.AddMust(wingQ, roomQ)
+boolQ.AddMust(bleve.NewMatchQuery("auth decision"))
+
+req := bleve.NewSearchRequest(boolQ)
+req.Highlight = bleve.NewHighlight()
+req.Fields = []string{"content", "wing_id", "room_id"}
+req.Size = 10
+
+result, err := index.Search(req)
+// result.Hits — []*search.DocumentMatch
+// result.Total — total matches
+// hit.Fields["content"] — stored field value
+// hit.Fragments["content"] — highlighted snippets
+```
+
+**Vector (KNN) Search:**
+
+```go
+req := bleve.NewSearchRequest(bleve.NewMatchNoneQuery())
+req.AddKNN("embedding", queryVector, 10, 1.0)
+// Hybrid: text + vector
+req = bleve.NewSearchRequest(bleve.NewMatchQuery("auth"))
+req.AddKNN("embedding", queryVector, 10, 1.0)
+req.Score = bleve.ScoreRRF // Reciprocal Rank Fusion
+```
+
+**Batch Indexing:**
+
+```go
+batch := index.NewBatch()
+batch.Index("doc1", data1)
+batch.Index("doc2", data2)
+index.Batch(batch)
+```
+
+**Faceted Search (memory analytics):**
+
+```go
+req.AddFacet("wings", bleve.NewFacetRequest("wing_id", 20))
+req.AddFacet("halls", bleve.NewFacetRequest("hall_type", 5))
+```
+
+**Cobot document types:**
+
+```go
+type DrawerDocument struct {
+    Content   string     `json:"content"`
+    WingID    string     `json:"wing_id"`
+    RoomID    string     `json:"room_id"`
+    HallType  string     `json:"hall_type"`
+    CreatedAt time.Time  `json:"created_at"`
+    Embedding []float32  `json:"embedding,omitempty"`
+}
+
+type ClosetDocument struct {
+    Summary   string     `json:"summary"`
+    WingID    string     `json:"wing_id"`
+    RoomID    string     `json:"room_id"`
+    DrawerIDs []string   `json:"drawer_ids"`
+}
+```
+
+---
+
+### 15.5 MCP SDK — `github.com/modelcontextprotocol/go-sdk/mcp`
+
+**Purpose:** MCP client (connect to external tool servers) and MCP server (expose cobot tools to others).
+
+**Client Usage (connect to MCP servers):**
+
+```go
+client := mcp.NewClient(&mcp.Implementation{
+    Name: "cobot", Version: "0.1.0",
+}, nil)
+
+// Stdio transport (subprocess)
+session, err := client.Connect(ctx, &mcp.CommandTransport{
+    Command: exec.Command("npx", "-y", "@modelcontextprotocol/server-filesystem", "/path"),
+}, nil)
+defer session.Close()
+
+// List available tools
+tools, err := session.ListTools(ctx, &mcp.ListToolsParams{})
+
+// Call a tool
+result, err := session.CallTool(ctx, &mcp.CallToolParams{
+    Name:      "read_file",
+    Arguments: map[string]any{"path": "/tmp/test.txt"},
+})
+// result.Content — []mcp.Content (TextContent, etc.)
+// result.IsError — bool
+
+// Read a resource
+res, err := session.ReadResource(ctx, &mcp.ReadResourceParams{URI: "file:///tmp/test.txt"})
+
+// Get a prompt
+prompt, err := session.GetPrompt(ctx, &mcp.GetPromptParams{
+    Name: "code_review",
+    Arguments: map[string]string{"language": "go"},
+})
+
+// Paging iterator (Go 1.23+)
+for tool, err := range session.Tools(ctx, nil) { ... }
+```
+
+**Server Usage (expose cobot as MCP server):**
+
+```go
+server := mcp.NewServer(&mcp.Implementation{
+    Name: "cobot-mcp", Version: "0.1.0",
+}, nil)
+
+// Generic tool registration (auto-generates JSON schema from struct tags)
+mcp.AddTool(server, &mcp.Tool{
+    Name: "memory_search", Description: "Search agent memory",
+}, func(ctx context.Context, req *mcp.CallToolRequest, input MemorySearchInput) (
+    *mcp.CallToolResult, MemorySearchOutput, error,
+) {
+    results, err := memory.Search(ctx, input.Query)
+    return nil, MemorySearchOutput{Results: results}, err
+})
+
+// Run over stdio
+server.Run(ctx, &mcp.StdioTransport{})
+```
+
+**Key Types:**
+
+| Type | Purpose |
+|------|---------|
+| `mcp.Client` | Long-lived client, create sessions |
+| `mcp.ClientSession` | Per-connection, call tools/resources/prompts |
+| `mcp.Server` | Long-lived server, register features |
+| `mcp.ServerSession` | Per-connection, access client capabilities |
+| `mcp.Tool` | `{Name, Description, InputSchema, OutputSchema}` |
+| `mcp.CallToolParams` | `{Name, Arguments}` |
+| `mcp.CallToolResult` | `{Content []Content, IsError bool}` |
+| `mcp.TextContent` | `{Text string}` — implements Content |
+| `mcp.Resource` | `{URI, Name, Description, MIMEType}` |
+| `mcp.Prompt` | `{Name, Description, Arguments}` |
+| `mcp.Implementation` | `{Name, Version string}` |
+
+**Transport Types:**
+
+| Transport | Side | Usage |
+|-----------|------|-------|
+| `mcp.StdioTransport` | Server | stdin/stdout |
+| `mcp.CommandTransport` | Client | Launch subprocess, talk via stdin/stdout |
+| `mcp.StreamableClientTransport` | Client | HTTP transport |
+| `mcp.StreamableServerTransport` | Server | HTTP transport |
+| `mcp.SSEClientTransport` | Client | SSE transport (deprecated) |
+| `mcp.InMemoryTransport` | Both | Testing |
+
+**JSON-RPC Types (public facade):**
+
+```go
+import "github.com/modelcontextprotocol/go-sdk/jsonrpc"
+
+jsonrpc.EncodeMessage(msg)  // []byte
+jsonrpc.DecodeMessage(data) // Message
+jsonrpc.MakeID(v)           // ID
+```
+
+---
+
+### 15.6 JSON-RPC 2.0 — `github.com/sourcegraph/jsonrpc2`
+
+**Purpose:** ACP server implementation (JSON-RPC 2.0 over stdio). Used alongside MCP go-sdk's internal jsonrpc.
+
+**Core Handler:**
+
+```go
+type Handler interface {
+    Handle(ctx context.Context, conn *Conn, req *Request)
+}
+```
+
+**Connection:**
+
+```go
+stream := jsonrpc2.NewPlainObjectStream(rwc) // rwc = combined stdin+stdout
+conn := jsonrpc2.NewConn(ctx, stream, handler)
+
+// Server responds manually
+conn.Reply(ctx, req.ID, result)
+conn.ReplyWithError(ctx, req.ID, &jsonrpc2.Error{Code: -32601, Message: "method not found"})
+
+// Send notification
+conn.Notify(ctx, "session/update", params)
+
+// Lifecycle
+<-conn.DisconnectNotify()
+conn.Close()
+```
+
+**Request/Response Types:**
+
+```go
+type Request struct {
+    Method string
+    Params *json.RawMessage
+    ID     ID
+    Notif  bool // true = notification
+}
+
+type Response struct {
+    ID     *json.RawMessage
+    Result *json.RawMessage
+    Error  *Error
+}
+
+type Error struct {
+    Code    int64
+    Message string
+    Data    *json.RawMessage
+}
+```
+
+**Stream Construction for stdio:**
+
+```go
+type stdioRWC struct {
+    io.Reader
+    io.Writer
+    io.Closer
+}
+
+stream := jsonrpc2.NewPlainObjectStream(&stdioRWC{
+    Reader: os.Stdin,
+    Writer: os.Stdout,
+    Closer: os.Stdin,
+})
+```
+
+**Async Handler (for concurrent request processing):**
+
+```go
+handler := jsonrpc2.AsyncHandler(myHandler{})
+```
+
+**Error-returning convenience:**
+
+```go
+handler := jsonrpc2.HandlerWithError(func(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) (interface{}, error) {
+    switch req.Method {
+    case "initialize":
+        return InitializeResponse{...}, nil
+    case "session/new":
+        return NewSessionResponse{...}, nil
+    default:
+        return nil, &jsonrpc2.Error{Code: -32601, Message: "method not found"}
+    }
+})
+```
+
+---
+
+### 15.7 Cron Scheduler — `github.com/robfig/cron/v3`
+
+**Purpose:** Scheduled automations (daily reports, weekly audits, etc.).
+
+**Core API:**
+
+```go
+c := cron.New(cron.WithSeconds(), cron.WithLocation(time.UTC))
+id, _ := c.AddFunc("0 30 9 * * *", func() { /* daily at 9:30 */ })
+c.Start()
+defer c.Stop()
+c.Remove(id)
+```
+
+**Key Methods:**
+
+| Method | Purpose |
+|--------|---------|
+| `cron.New(opts...)` | Create scheduler |
+| `c.AddFunc(spec, fn)` | Add function with cron spec |
+| `c.AddJob(spec, job)` | Add Job interface |
+| `c.Schedule(schedule, job)` | Add with custom Schedule |
+| `c.Start()` | Start in goroutine |
+| `c.Stop()` | Stop, returns context |
+| `c.Entries()` | List entries |
+| `c.Remove(id)` | Remove entry |
+
+**Options:** `cron.WithSeconds()`, `cron.WithLocation(loc)`, `cron.WithLogger(l)`, `cron.WithChain(wrappers...)`
+
+**Job Wrappers:** `cron.Recover(logger)`, `cron.SkipIfStillRunning(logger)`, `cron.DelayIfStillRunning(logger)`
+
+**Cron Spec:** 5-field (min hour dom month dow) or 6-field with `WithSeconds()`. Special: `@hourly`, `@daily`, `@weekly`, `@monthly`, `@every 1h30m`
+
+**Cobot usage:**
+
+```go
+func (s *Scheduler) loadTasks(path string) error {
+    for _, task := range config.Tasks {
+        id, _ := s.cron.AddFunc(task.Schedule, func() {
+            s.agent.Prompt(context.Background(), task.Prompt)
+        })
+        s.ids[task.Name] = id
+    }
+    return nil
+}
+```
+
+---
+
+### 15.8 Additional Dependencies
+
+| Dependency | Purpose | Import |
+|------------|---------|--------|
+| YAML parser | Config files | `gopkg.in/yaml.v3` |
+| JSON Schema | Tool parameter validation | `github.com/invopop/jsonschema` |
+| HTTP client | OpenAI API calls | `net/http` (stdlib) |
+| WebSocket | Future streaming transports | `github.com/coder/websocket` |
+| Logging | Structured logging | `log/slog` (stdlib) |
+| Testing | Table-driven, mocks | `testing` (stdlib) |
+| Embedding generation | Vector embeddings for memory | `internal/llm/openai` (reuse provider) |
+
+---
+
+### 15.9 Go Module Dependencies (go.mod)
+
+```
+module github.com/cobot-agent/cobot
+
+go 1.24
+
+require (
+    github.com/spf13/cobra                    v1.9.1
+    charm.land/bubbletea/v2                   v2.0.2
+    charm.land/bubbles/v2                     v2.0.2
+    charm.land/lipgloss/v2                    v2.0.2
+    github.com/charmbracelet/glamour          v0.9.1
+    github.com/dgraph-io/badger/v4            v4.6.0
+    github.com/blevesearch/bleve/v2           v2.5.7
+    github.com/modelcontextprotocol/go-sdk    v1.5.0
+    github.com/sourcegraph/jsonrpc2           v0.2.0
+    github.com/robfig/cron/v3                 v3.0.1
+    gopkg.in/yaml.v3                          v3.0.1
+    github.com/invopop/jsonschema             v0.13.0
+)
+```
 
 ---
 
