@@ -15,7 +15,7 @@ func (a *Agent) Prompt(ctx context.Context, message string) (*cobot.ProviderResp
 	a.session.AddMessage(cobot.Message{Role: cobot.RoleUser, Content: message})
 
 	for turn := 0; turn < a.config.MaxTurns; turn++ {
-		msgs := a.session.Messages()
+		msgs := a.buildMessages(ctx)
 		req := &cobot.ProviderRequest{
 			Model:    a.config.Model,
 			Messages: msgs,
@@ -61,7 +61,7 @@ func (a *Agent) Stream(ctx context.Context, message string) (<-chan cobot.Event,
 		a.session.AddMessage(cobot.Message{Role: cobot.RoleUser, Content: message})
 
 		for turn := 0; turn < a.config.MaxTurns; turn++ {
-			msgs := a.session.Messages()
+			msgs := a.buildMessages(ctx)
 			req := &cobot.ProviderRequest{
 				Model:    a.config.Model,
 				Messages: msgs,

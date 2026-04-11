@@ -1,15 +1,17 @@
 package agent
 
 import (
+	"github.com/cobot-agent/cobot/internal/memory"
 	"github.com/cobot-agent/cobot/internal/tools"
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
 type Agent struct {
-	config   *cobot.Config
-	provider cobot.Provider
-	tools    *tools.Registry
-	session  *Session
+	config      *cobot.Config
+	provider    cobot.Provider
+	tools       *tools.Registry
+	session     *Session
+	memoryStore *memory.Store
 }
 
 func New(config *cobot.Config) *Agent {
@@ -34,6 +36,28 @@ func (a *Agent) Session() *Session {
 
 func (a *Agent) RegisterTool(tool cobot.Tool) {
 	a.tools.Register(tool)
+}
+
+func (a *Agent) SetToolRegistry(r *tools.Registry) {
+	a.tools = r
+}
+
+func (a *Agent) SetMemoryStore(s *memory.Store) {
+	a.memoryStore = s
+	a.tools.Register(memory.NewMemorySearchTool(s))
+	a.tools.Register(memory.NewMemoryStoreTool(s))
+}
+
+func (a *Agent) MemoryStore() *memory.Store {
+	return a.memoryStore
+}
+
+func (a *Agent) Config() *cobot.Config {
+	return a.config
+}
+
+func (a *Agent) Provider() cobot.Provider {
+	return a.provider
 }
 
 func (a *Agent) Close() error {
