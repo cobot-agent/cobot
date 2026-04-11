@@ -1,0 +1,168 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"path/filepath"
+	"strings"
+
+	"github.com/charmbracelet/bubbles/textinput"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/spf13/cobra"
+
+	"github.com/cobot-agent/cobot/internal/agent"
+	"github.com/cobot-agent/cobot/internal/llm/openai"
+	"github.com/cobot-agent/cobot/internal/memory"
+	"github.com/cobot-agent/cobot/internal/tools/builtin"
+	"github.com/cobot-agent/cobot/internal/xdg"
+	cobot "github.com/cobot-agent/cobot/pkg"
+)
+
+type tuiModel struct {
+	input     textinput.Model
+	messages  []string
+	agent     *agent.Agent
+	streaming bool
+	cancelFn  context.CancelFunc
+	width     int
+	height    int
+}
+
+type streamMsg struct {
+	content string
+	done    bool
+	err     error
+}
+
+func newTUIModel(a *agent.Agent) tuiModel {
+	ti := textinput.New()
+	ti.Placeholder = "Type a message..."
+	ti.Focus()
+	ti.CharLimit = 4096
+	return tuiModel{
+		input:    ti,
+		agent:    a,
+		messages: []string{},
+	}
+}
+
+func (m tuiModel) Init() tea.Cmd {
+	return textinput.Blink
+}
+
+func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+		return m, nil
+
+	case tea.KeyMsg:
+		switch msg.Type {
+		case tea.KeyCtrlC:
+			if m.streaming && m.cancelFn != nil {
+				m.cancelFn()
+				m.streaming = false
+				return m, nil
+			}
+			return m, tea.Quit
+		case tea.KeyEnter:
+			text := strings.TrimSpace(m.input.Value())
+			if text == "" {
+				return m, nil
+			}
+			if text == "/quit" || text == "/exit" {
+				return m, tea.Quit
+			}
+			m.messages = append(m.messages, fmt.Sprintf("> %s", text))
+			m.input.SetValue("")
+			m.streaming = true
+			return m, m.startStream(text)
+		}
+	}
+
+	if m.streaming {
+		return m, nil
+	}
+	var cmd tea.Cmd
+	m.input, cmd = m.input.Update(msg)
+	return m, cmd
+}
+
+func (m tuiModel) View() string {
+	var b strings.Builder
+	for _, msg := range m.messages {
+		b.WriteString(msg)
+		b.WriteString("\n")
+	}
+	if m.streaming {
+		b.WriteString(lipgloss.NewStyle().Faint(true).Render("Thinking..."))
+		b.WriteString("\n")
+	}
+	b.WriteString("\n")
+	b.WriteString(m.input.View())
+	return b.String()
+}
+
+func (m *tuiModel) startStream(text string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithCancel(context.Background())
+		m.cancelFn = cancel
+
+		ch, err := m.agent.Stream(ctx, text)
+		if err != nil {
+			return streamMsg{err: err}
+		}
+
+		var accumulated string
+		for chunk := range ch {
+			switch chunk.Type {
+			case cobot.EventText:
+				accumulated += chunk.Content
+			case cobot.EventError:
+				cancel()
+				return streamMsg{err: chunk.Error}
+			case cobot.EventDone:
+				cancel()
+				return streamMsg{content: accumulated, done: true}
+			}
+		}
+		return streamMsg{content: accumulated, done: true}
+	}
+}
+
+var tuiCmd = &cobra.Command{
+	Use:   "tui",
+	Short: "Start interactive TUI",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		cfg, err := loadConfig()
+		if err != nil {
+			return err
+		}
+
+		a := agent.New(cfg)
+
+		apiKey := cfg.APIKeys["openai"]
+		if apiKey != "" {
+			a.SetProvider(openai.NewProvider(apiKey, ""))
+		}
+
+		memDir := filepath.Join(xdg.DataHome(), "cobot", "memory")
+		if ms, err := memory.OpenStore(memDir); err == nil {
+			a.SetMemoryStore(ms)
+		}
+
+		a.RegisterTool(builtin.NewReadFileTool())
+		a.RegisterTool(builtin.NewWriteFileTool())
+		a.RegisterTool(builtin.NewShellExecTool())
+
+		p := tea.NewProgram(newTUIModel(a), tea.WithAltScreen())
+		_, err = p.Run()
+		return err
+	},
+}
+
+func init() {
+	rootCmd.AddCommand(tuiCmd)
+}

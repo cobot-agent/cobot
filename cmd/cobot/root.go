@@ -23,6 +23,9 @@ var rootCmd = &cobra.Command{
 	Short:   "A personal AI agent system",
 	Long:    "Cobot is a Go-based personal agent system with memory, tools, and protocols.",
 	Version: "0.1.0",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return tuiCmd.RunE(cmd, args)
+	},
 }
 
 func init() {

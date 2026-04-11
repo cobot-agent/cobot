@@ -4,12 +4,15 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
 	"github.com/cobot-agent/cobot/internal/agent"
 	"github.com/cobot-agent/cobot/internal/llm/openai"
+	"github.com/cobot-agent/cobot/internal/memory"
 	"github.com/cobot-agent/cobot/internal/tools/builtin"
+	"github.com/cobot-agent/cobot/internal/xdg"
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
@@ -41,6 +44,11 @@ var chatCmd = &cobra.Command{
 
 		provider := openai.NewProvider(apiKey, "")
 		agt.SetProvider(provider)
+
+		memDir := filepath.Join(xdg.DataHome(), "cobot", "memory")
+		if ms, err := memory.OpenStore(memDir); err == nil {
+			core.SetMemoryStore(ms)
+		}
 
 		ch, err := agt.Stream(context.Background(), args[0])
 		if err != nil {
