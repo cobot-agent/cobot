@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/cobot-agent/cobot/internal/xdg"
 )
 
 func Discover(startDir string) (*Workspace, error) {
@@ -15,6 +17,7 @@ func Discover(startDir string) (*Workspace, error) {
 			ws := &Workspace{
 				Root:       dir,
 				ConfigPath: filepath.Join(cobotDir, "config.yaml"),
+				DataDir:    workspaceDataDir(dir),
 			}
 			agentsMd := filepath.Join(cobotDir, "AGENTS.md")
 			if _, err := os.Stat(agentsMd); err == nil {
@@ -48,9 +51,29 @@ func Init(dir string) (*Workspace, error) {
 			return nil, fmt.Errorf("write AGENTS.md: %w", err)
 		}
 	}
+
+	dataDir := workspaceDataDir(dir)
+	if err := os.MkdirAll(filepath.Join(dataDir, "memory"), 0755); err != nil {
+		return nil, fmt.Errorf("create data dir: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Join(dataDir, "sessions"), 0755); err != nil {
+		return nil, fmt.Errorf("create sessions dir: %w", err)
+	}
+
 	return &Workspace{
 		Root:       dir,
 		ConfigPath: configPath,
 		AgentsMd:   agentsMd,
+		DataDir:    dataDir,
 	}, nil
+}
+
+func EnsureGlobalDirs() error {
+	if err := os.MkdirAll(xdg.CobotConfigDir(), 0755); err != nil {
+		return fmt.Errorf("create config dir: %w", err)
+	}
+	if err := os.MkdirAll(xdg.CobotDataDir(), 0755); err != nil {
+		return fmt.Errorf("create data dir: %w", err)
+	}
+	return nil
 }

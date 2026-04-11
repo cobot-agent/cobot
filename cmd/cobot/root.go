@@ -2,10 +2,13 @@ package main
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/spf13/cobra"
 
 	"github.com/cobot-agent/cobot/internal/config"
+	"github.com/cobot-agent/cobot/internal/workspace"
+	"github.com/cobot-agent/cobot/internal/xdg"
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
@@ -23,18 +26,33 @@ var rootCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.PersistentFlags().StringVarP(&cfgPath, "config", "c", "", "config file path")
+	rootCmd.PersistentFlags().StringVarP(&cfgPath, "config", "c", "", "config file path (default: $XDG_CONFIG_HOME/cobot/config.yaml)")
 	rootCmd.PersistentFlags().StringVarP(&workspacePath, "workspace", "w", "", "workspace directory")
 	rootCmd.PersistentFlags().StringVarP(&modelName, "model", "m", "", "LLM model (e.g. openai:gpt-4o)")
 }
 
 func loadConfig() (*cobot.Config, error) {
+	if err := workspace.EnsureGlobalDirs(); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
+	}
+
 	cfg := cobot.DefaultConfig()
+
 	if cfgPath != "" {
-		if err := config.LoadFromFile(cfg, cfgPath); err != nil {
-			return nil, fmt.Errorf("load config: %w", err)
+		if _, err := os.Stat(cfgPath); err == nil {
+			if err := config.LoadFromFile(cfg, cfgPath); err != nil {
+				return nil, fmt.Errorf("load config: %w", err)
+			}
+		}
+	} else {
+		globalCfg := xdg.GlobalConfigPath()
+		if _, err := os.Stat(globalCfg); err == nil {
+			if err := config.LoadFromFile(cfg, globalCfg); err != nil {
+				return nil, fmt.Errorf("load global config: %w", err)
+			}
 		}
 	}
+
 	if modelName != "" {
 		cfg.Model = modelName
 	}
