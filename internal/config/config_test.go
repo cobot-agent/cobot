@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
 func TestLoadDefaults(t *testing.T) {
@@ -67,5 +69,50 @@ func TestEnvVarExpansion(t *testing.T) {
 	}
 	if cfg.APIKeys["openai"] != "sk-test-123" {
 		t.Errorf("expected expanded env var, got %s", cfg.APIKeys["openai"])
+	}
+}
+
+func TestApplyEnvVars(t *testing.T) {
+	t.Setenv("COBOT_MODEL", "test-model")
+	t.Setenv("OPENAI_API_KEY", "sk-test123")
+
+	cfg := cobot.DefaultConfig()
+	ApplyEnvVars(cfg)
+
+	if cfg.Model != "test-model" {
+		t.Errorf("expected test-model, got %s", cfg.Model)
+	}
+	if cfg.APIKeys["openai"] != "sk-test123" {
+		t.Error("expected openai API key")
+	}
+}
+
+func TestLoadWorkspaceConfig(t *testing.T) {
+	dir := t.TempDir()
+	wsDir := filepath.Join(dir, ".cobot")
+	os.MkdirAll(wsDir, 0755)
+
+	yamlData := "model: workspace-model\nmax_turns: 99\n"
+	os.WriteFile(filepath.Join(wsDir, "config.yaml"), []byte(yamlData), 0644)
+
+	cfg := cobot.DefaultConfig()
+	err := LoadWorkspaceConfig(cfg, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Model != "workspace-model" {
+		t.Errorf("expected workspace-model, got %s", cfg.Model)
+	}
+	if cfg.MaxTurns != 99 {
+		t.Errorf("expected 99, got %d", cfg.MaxTurns)
+	}
+}
+
+func TestLoadWorkspaceConfigMissing(t *testing.T) {
+	dir := t.TempDir()
+	cfg := cobot.DefaultConfig()
+	err := LoadWorkspaceConfig(cfg, dir)
+	if err != nil {
+		t.Fatal("expected nil error for missing workspace config")
 	}
 }

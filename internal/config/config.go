@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -25,4 +26,33 @@ func expandEnvVars(s string) string {
 		varName := strings.Trim(match, "${}")
 		return os.Getenv(varName)
 	})
+}
+
+func ApplyEnvVars(cfg *cobot.Config) {
+	if v := os.Getenv("COBOT_MODEL"); v != "" {
+		cfg.Model = v
+	}
+	if v := os.Getenv("COBOT_WORKSPACE"); v != "" {
+		cfg.Workspace = v
+	}
+	if v := os.Getenv("OPENAI_API_KEY"); v != "" {
+		if cfg.APIKeys == nil {
+			cfg.APIKeys = make(map[string]string)
+		}
+		cfg.APIKeys["openai"] = v
+	}
+	if v := os.Getenv("ANTHROPIC_API_KEY"); v != "" {
+		if cfg.APIKeys == nil {
+			cfg.APIKeys = make(map[string]string)
+		}
+		cfg.APIKeys["anthropic"] = v
+	}
+}
+
+func LoadWorkspaceConfig(cfg *cobot.Config, workspaceDir string) error {
+	wsConfig := filepath.Join(workspaceDir, ".cobot", "config.yaml")
+	if _, err := os.Stat(wsConfig); err != nil {
+		return nil
+	}
+	return LoadFromFile(cfg, wsConfig)
 }
