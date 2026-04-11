@@ -32,6 +32,10 @@ func (a *Agent) Session() *Session {
 	return a.session
 }
 
+func (a *Agent) RegisterTool(tool cobot.Tool) {
+	a.tools.Register(tool)
+}
+
 func (a *Agent) Close() error {
 	return nil
 }
