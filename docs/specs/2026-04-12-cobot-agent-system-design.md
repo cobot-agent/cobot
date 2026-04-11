@@ -25,7 +25,7 @@ Cobot is a Go-based personal agent system providing a CLI tool and an importable
 | MCP | Official go-sdk | Standard compliance, maintained by MCP team + Google |
 | CLI framework | cobra + bubbletea | Industry standard, rich TUI |
 | SDK shape | Go package library (`pkg/`) | Idiomatic Go, cobra-desktop imports directly |
-| Workspace | Directory-scoped `.cobot/` | Isolation, project-specific config |
+| Workspace | XDG directories + directory-scoped `.cobot/` | XDG for data, `.cobot/` for project config |
 
 ---
 
@@ -100,6 +100,8 @@ cobot/
 │   │   ├── workspace.go        # Workspace struct
 │   │   ├── discovery.go        # Find .cobot/ up the directory tree
 │   │   └── init.go             # Workspace initialization
+│   ├── xdg/                    # XDG Base Directory resolution
+│   │   └── xdg.go              # ConfigHome, DataHome, paths
 │   ├── skills/                 # Skill system (procedural memory)
 │   │   ├── skill.go            # Skill definition
 │   │   ├── loader.go           # Load skills from workspace
@@ -341,8 +343,27 @@ func NewOpenAIProvider(apiKey, baseURL string) *OpenAIProvider
 ### Architecture (MemPalace-inspired)
 
 ```
-~/.cobot/workspaces/<hash>/memory/
-├── badger/                     # BadgerDB KV store
+~/.config/cobot/                          # XDG_CONFIG_HOME/cobot/
+├── config.yaml                            # Global config
+
+~/.local/share/cobot/                      # XDG_DATA_HOME/cobot/
+├── workspaces/
+│   └── <project-path-hash>/               # One dir per workspace
+│       ├── memory/
+│       │   ├── badger/                    # BadgerDB KV store
+│       │   └── bleve/                     # Bleve search indexes
+│       ├── sessions/                      # Session transcripts
+│       ├── skills/                        # Workspace skills
+│       └── scheduler/
+│           └── tasks.yaml                 # Scheduled tasks
+
+<project-dir>/.cobot/                     # Per-project, lightweight
+├── config.yaml                            # Workspace config overrides
+├── AGENTS.md                              # Bot personality
+└── tools.yaml                             # MCP servers config
+```
+~/.local/share/cobot/workspaces/<hash>/memory/
+├── badger/                     # BadgerDB KV store (key-prefixed)
 │   ├── drawers/                # Raw verbatim content
 │   ├── closets/                # Summaries pointing to drawers
 │   ├── rooms/                  # Room metadata
@@ -646,21 +667,27 @@ type SubAgentResult struct {
 
 ```
 project/
-├── .cobot/
-│   ├── config.yaml          # Workspace-specific config
+├── .cobot/                  # Per-project config (lightweight, checked into VCS)
+│   ├── config.yaml          # Workspace-specific config overrides
 │   ├── AGENTS.md            # Bot personality/instructions
 │   ├── tools.yaml           # MCP servers, tool configuration
-│   ├── context/             # Files always loaded into context
-│   │   └── *.md
-│   ├── memory/              # Local memory store
-│   │   ├── badger/
-│   │   └── bleve/
-│   ├── sessions/            # Conversation history
-│   │   └── *.jsonl
-│   ├── skills/              # Workspace-specific skills
-│   └── scheduler/
-│       └── tasks.yaml
+│   └── context/             # Files always loaded into context
+│       └── *.md
 └── ...                      # Project files
+
+~/.config/cobot/             # XDG_CONFIG_HOME/cobot/
+├── config.yaml              # Global default config
+
+~/.local/share/cobot/        # XDG_DATA_HOME/cobot/
+├── workspaces/
+│   └── <hash>/              # Derived from project path
+│       ├── memory/
+│       │   ├── badger/
+│       │   └── bleve/
+│       ├── sessions/
+│       ├── skills/
+│       └── scheduler/
+│           └── tasks.yaml
 ```
 
 ### Workspace Discovery
@@ -668,7 +695,7 @@ project/
 When `cobot` runs in a directory, it searches upward for `.cobot/`:
 1. Current directory
 2. Parent directories up to root
-3. Falls back to `~/.cobot/` global config only
+3. Falls back to XDG global config (`$XDG_CONFIG_HOME/cobot/config.yaml`) only
 
 ### Config Layering
 
@@ -676,7 +703,7 @@ Priority (highest to lowest):
 1. CLI flags (`--config`, `--workspace`, `--model`)
 2. Environment variables (`COBOT_MODEL`, `COBOT_CONFIG`, `COBOT_WORKSPACE`)
 3. Workspace config (`.cobot/config.yaml`)
-4. Global config (`~/.cobot/config.yaml`)
+4. Global config (`$XDG_CONFIG_HOME/cobot/config.yaml`, defaults to `~/.config/cobot/config.yaml`)
 5. Compiled defaults
 
 ### Config Types
