@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -12,10 +11,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/cobot-agent/cobot/internal/agent"
-	"github.com/cobot-agent/cobot/internal/llm/openai"
-	"github.com/cobot-agent/cobot/internal/memory"
-	"github.com/cobot-agent/cobot/internal/tools/builtin"
-	"github.com/cobot-agent/cobot/internal/xdg"
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
@@ -162,29 +157,14 @@ var tuiCmd = &cobra.Command{
 			return err
 		}
 
-		a := agent.New(cfg)
-
-		apiKey := cfg.APIKeys["openai"]
-		if apiKey != "" {
-			a.SetProvider(openai.NewProvider(apiKey, ""))
+		a, cleanup, err := initAgent(cfg, false)
+		if err != nil {
+			return err
 		}
-
-		memDir := filepath.Join(xdg.DataHome(), "cobot", "memory")
-		var memStore *memory.Store
-		if ms, err := memory.OpenStore(memDir); err == nil {
-			memStore = ms
-			a.SetMemoryStore(memStore)
-		}
-
-		a.RegisterTool(builtin.NewReadFileTool())
-		a.RegisterTool(builtin.NewWriteFileTool())
-		a.RegisterTool(builtin.NewShellExecTool())
+		defer cleanup()
 
 		p := tea.NewProgram(newTUIModel(a), tea.WithAltScreen())
 		_, err = p.Run()
-		if memStore != nil {
-			memStore.Close()
-		}
 		return err
 	},
 }

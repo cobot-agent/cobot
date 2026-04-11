@@ -4,15 +4,10 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/spf13/cobra"
 
 	"github.com/cobot-agent/cobot/internal/agent"
-	"github.com/cobot-agent/cobot/internal/llm/openai"
-	"github.com/cobot-agent/cobot/internal/memory"
-	"github.com/cobot-agent/cobot/internal/tools/builtin"
-	"github.com/cobot-agent/cobot/internal/xdg"
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
@@ -26,28 +21,23 @@ var chatCmd = &cobra.Command{
 			return err
 		}
 
-		core := agent.New(cfg)
-		agt, err := cobot.New(cfg, core)
+		_, cleanup, err := initAgent(cfg, true)
 		if err != nil {
 			return err
 		}
-		defer agt.Close()
+		defer cleanup()
 
-		agt.RegisterTool(builtin.NewReadFileTool())
-		agt.RegisterTool(builtin.NewWriteFileTool())
-		agt.RegisterTool(builtin.NewShellExecTool())
-
-		apiKey := cfg.APIKeys["openai"]
-		if apiKey == "" {
-			return fmt.Errorf("openai API key not configured (set api_keys.openai in config or OPENAI_API_KEY env)")
+		a := agent.New(cfg)
+		provider, err := initProvider(cfg)
+		if err != nil {
+			return err
 		}
+		a.SetProvider(provider)
+		defer a.Close()
 
-		provider := openai.NewProvider(apiKey, "")
-		agt.SetProvider(provider)
-
-		memDir := filepath.Join(xdg.DataHome(), "cobot", "memory")
-		if ms, err := memory.OpenStore(memDir); err == nil {
-			core.SetMemoryStore(ms)
+		agt, err := cobot.New(cfg, a)
+		if err != nil {
+			return err
 		}
 
 		ch, err := agt.Stream(context.Background(), args[0])
