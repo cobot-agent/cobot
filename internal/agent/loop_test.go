@@ -95,6 +95,93 @@ func TestAgentMaxTurnsExceeded(t *testing.T) {
 	}
 }
 
+type mockStreamProvider struct {
+	chunks [][]cobot.ProviderChunk
+	calls  int
+}
+
+func (m *mockStreamProvider) Name() string { return "mock-stream" }
+func (m *mockStreamProvider) Complete(ctx context.Context, req *cobot.ProviderRequest) (*cobot.ProviderResponse, error) {
+	return &cobot.ProviderResponse{Content: "done", StopReason: cobot.StopEndTurn}, nil
+}
+func (m *mockStreamProvider) Stream(ctx context.Context, req *cobot.ProviderRequest) (<-chan cobot.ProviderChunk, error) {
+	ch := make(chan cobot.ProviderChunk, 16)
+	var chunks []cobot.ProviderChunk
+	if m.calls < len(m.chunks) {
+		chunks = m.chunks[m.calls]
+	}
+	m.calls++
+	go func() {
+		defer close(ch)
+		for _, c := range chunks {
+			ch <- c
+		}
+	}()
+	return ch, nil
+}
+
+func TestAgentStreamWithToolCall(t *testing.T) {
+	a := New(&cobot.Config{MaxTurns: 10})
+	a.SetProvider(&mockStreamProvider{
+		chunks: [][]cobot.ProviderChunk{
+			{
+				{Content: "Let me check "},
+				{Content: "that."},
+				{ToolCall: &cobot.ToolCall{ID: "call_1", Name: "echo", Arguments: json.RawMessage(`{"msg":"hi"}`)}},
+				{Done: true},
+			},
+			{
+				{Content: "The echo says: hi"},
+				{Done: true},
+			},
+		},
+	})
+	a.ToolRegistry().Register(&echoTool{})
+
+	ch, err := a.Stream(context.Background(), "run echo")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var events []cobot.Event
+	for evt := range ch {
+		events = append(events, evt)
+	}
+
+	var textContent string
+	var toolCallEvents []cobot.Event
+	var toolResultEvents []cobot.Event
+	var gotDone bool
+	for _, e := range events {
+		switch e.Type {
+		case cobot.EventText:
+			textContent += e.Content
+		case cobot.EventToolCall:
+			toolCallEvents = append(toolCallEvents, e)
+		case cobot.EventToolResult:
+			toolResultEvents = append(toolResultEvents, e)
+		case cobot.EventDone:
+			gotDone = true
+		}
+	}
+
+	if !gotDone {
+		t.Error("expected EventDone")
+	}
+	if textContent != "Let me check that.The echo says: hi" {
+		t.Errorf("unexpected text content: %q", textContent)
+	}
+	if len(toolCallEvents) != 1 {
+		t.Fatalf("expected 1 EventToolCall, got %d", len(toolCallEvents))
+	}
+	if toolCallEvents[0].ToolCall.ID != "call_1" {
+		t.Errorf("expected tool call ID call_1, got %s", toolCallEvents[0].ToolCall.ID)
+	}
+	if len(toolResultEvents) != 1 {
+		t.Fatalf("expected 1 EventToolResult, got %d", len(toolResultEvents))
+	}
+}
+
 type echoTool struct{}
 
 func (e *echoTool) Name() string        { return "echo" }

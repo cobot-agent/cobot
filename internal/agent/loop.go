@@ -89,6 +89,7 @@ func (a *Agent) Stream(ctx context.Context, message string) (<-chan cobot.Event,
 				}
 				if chunk.ToolCall != nil {
 					toolCalls = append(toolCalls, *chunk.ToolCall)
+					ch <- cobot.Event{Type: cobot.EventToolCall, ToolCall: chunk.ToolCall}
 				}
 				if chunk.Done && len(toolCalls) == 0 {
 					a.session.AddMessage(cobot.Message{Role: cobot.RoleAssistant, Content: content})
