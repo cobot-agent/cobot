@@ -78,19 +78,19 @@ type ProviderChunk struct {
 }
 
 type Event struct {
-	Type     EventType
-	Content  string
-	ToolCall *ToolCall
-	Done     bool
-	Error    error
+	Type     EventType `json:"type"`
+	Content  string    `json:"content,omitempty"`
+	ToolCall *ToolCall `json:"tool_call,omitempty"`
+	Done     bool      `json:"done"`
+	Error    error     `json:"-"`
 }
 
-type EventType int
+type EventType string
 
 const (
-	EventText EventType = iota
-	EventToolCall
-	EventToolResult
-	EventDone
-	EventError
+	EventText       EventType = "text"
+	EventToolCall   EventType = "tool_call"
+	EventToolResult EventType = "tool_result"
+	EventDone       EventType = "done"
+	EventError      EventType = "error"
 )
