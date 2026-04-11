@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/blevesearch/bleve/v2"
+
 	cobot "github.com/cobot-agent/cobot/pkg"
 	"github.com/dgraph-io/badger/v4"
 )
@@ -13,6 +15,7 @@ import (
 type Store struct {
 	db       *badger.DB
 	bleveDir string
+	bleveIdx bleve.Index
 }
 
 func OpenStore(memoryDir string) (*Store, error) {
@@ -23,10 +26,20 @@ func OpenStore(memoryDir string) (*Store, error) {
 	}
 	bleveDir := filepath.Join(memoryDir, "bleve")
 	os.MkdirAll(bleveDir, 0755)
-	return &Store{db: db, bleveDir: bleveDir}, nil
+	s := &Store{db: db, bleveDir: bleveDir}
+	idx, err := s.openIndex()
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	s.bleveIdx = idx
+	return s, nil
 }
 
 func (s *Store) Close() error {
+	if s.bleveIdx != nil {
+		s.bleveIdx.Close()
+	}
 	if s.db != nil {
 		return s.db.Close()
 	}

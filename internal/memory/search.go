@@ -51,21 +51,10 @@ func (s *Store) openIndex() (bleve.Index, error) {
 }
 
 func (s *Store) indexDrawer(ctx context.Context, d *drawerDoc) error {
-	idx, err := s.openIndex()
-	if err != nil {
-		return err
-	}
-	defer idx.Close()
-	return idx.Index(d.ID, d)
+	return s.bleveIdx.Index(d.ID, d)
 }
 
 func (s *Store) searchDrawers(ctx context.Context, query *cobot.SearchQuery) ([]*cobot.SearchResult, error) {
-	idx, err := s.openIndex()
-	if err != nil {
-		return nil, err
-	}
-	defer idx.Close()
-
 	mq := bleve.NewMatchQuery(query.Text)
 	mq.SetField("content")
 
@@ -77,7 +66,7 @@ func (s *Store) searchDrawers(ctx context.Context, query *cobot.SearchQuery) ([]
 		} else {
 			req.Size = 10
 		}
-		return s.executeSearch(idx, req)
+		return s.executeSearch(s.bleveIdx, req)
 	}
 
 	bq := bleve.NewBooleanQuery()
@@ -106,7 +95,7 @@ func (s *Store) searchDrawers(ctx context.Context, query *cobot.SearchQuery) ([]
 	} else {
 		req.Size = 10
 	}
-	return s.executeSearch(idx, req)
+	return s.executeSearch(s.bleveIdx, req)
 }
 
 func (s *Store) executeSearch(idx bleve.Index, req *bleve.SearchRequest) ([]*cobot.SearchResult, error) {
