@@ -27,9 +27,12 @@ func (s *ACPServer) handleInitialize(ctx context.Context, req acpapi.InitializeR
 
 func (s *ACPServer) handleSessionNew(ctx context.Context, req acpapi.NewSessionRequest) (acpapi.NewSessionResponse, error) {
 	id := newSessionID()
+	sessCtx, cancel := context.WithCancel(context.Background())
 	s.sessions.Put(&Session{
-		ID:  id,
-		CWD: req.CWD,
+		ID:       id,
+		CWD:      req.CWD,
+		Ctx:      sessCtx,
+		CancelFn: cancel,
 	})
 	return acpapi.NewSessionResponse{
 		SessionID: id,
@@ -57,7 +60,11 @@ func (s *ACPServer) handleSessionPrompt(ctx context.Context, req acpapi.PromptRe
 		},
 	})
 
-	_, err := s.agent.Prompt(ctx, text)
+	promptCtx := sess.Ctx
+	if promptCtx == nil {
+		promptCtx = ctx
+	}
+	_, err := s.agent.Prompt(promptCtx, text)
 	if err != nil {
 		return acpapi.PromptResponse{}, jrpc2.Errorf(jrpc2.InvalidParams, "agent error: %v", err)
 	}

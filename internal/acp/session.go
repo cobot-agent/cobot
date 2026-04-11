@@ -10,6 +10,7 @@ import (
 type Session struct {
 	ID       string
 	CWD      string
+	Ctx      context.Context
 	CancelFn context.CancelFunc
 }
 

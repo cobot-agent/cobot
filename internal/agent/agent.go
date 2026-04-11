@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"fmt"
+
 	"github.com/cobot-agent/cobot/internal/memory"
 	"github.com/cobot-agent/cobot/internal/tools"
 	cobot "github.com/cobot-agent/cobot/pkg"
@@ -61,5 +63,10 @@ func (a *Agent) Provider() cobot.Provider {
 }
 
 func (a *Agent) Close() error {
+	if a.memoryStore != nil {
+		if err := a.memoryStore.Close(); err != nil {
+			return fmt.Errorf("close memory store: %w", err)
+		}
+	}
 	return nil
 }
