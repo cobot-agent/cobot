@@ -77,6 +77,12 @@ func (a *Agent) Stream(ctx context.Context, message string) (<-chan cobot.Event,
 			var content string
 			var toolCalls []cobot.ToolCall
 			for chunk := range streamCh {
+				select {
+				case <-ctx.Done():
+					ch <- cobot.Event{Type: cobot.EventError, Error: ctx.Err()}
+					return
+				default:
+				}
 				if chunk.Content != "" {
 					content += chunk.Content
 					ch <- cobot.Event{Type: cobot.EventText, Content: chunk.Content}

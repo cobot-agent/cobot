@@ -28,7 +28,9 @@ func openBadger(dir string) (*badger.DB, error) {
 
 func newID() string {
 	b := make([]byte, 8)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		panic("crypto/rand: " + err.Error())
+	}
 	return hex.EncodeToString(b)
 }
 

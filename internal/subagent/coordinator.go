@@ -54,7 +54,12 @@ func (c *Coordinator) Gather(ctx context.Context, ids []string) []*Result {
 		if sa, ok := c.Get(id); ok {
 			select {
 			case <-sa.Done():
-				results = append(results, sa.Result())
+				r := sa.Result()
+				if r == nil {
+					results = append(results, &Result{ID: id, Error: "cancelled"})
+				} else {
+					results = append(results, r)
+				}
 			case <-ctx.Done():
 				results = append(results, &Result{ID: id, Error: "timeout"})
 			}
@@ -123,6 +128,7 @@ func (c *Coordinator) run(ctx context.Context, sa *SubAgent) {
 	resp, err := childAgent.Prompt(subCtx, sa.config.Task)
 	duration := time.Since(start)
 
+	sa.mu.Lock()
 	sa.result = &Result{
 		ID:       sa.ID,
 		Duration: duration,
@@ -130,6 +136,7 @@ func (c *Coordinator) run(ctx context.Context, sa *SubAgent) {
 
 	if err != nil {
 		sa.result.Error = err.Error()
+		sa.mu.Unlock()
 		return
 	}
 
@@ -137,10 +144,13 @@ func (c *Coordinator) run(ctx context.Context, sa *SubAgent) {
 		sa.result.Output = resp.Content
 		sa.result.ToolCalls = len(resp.ToolCalls)
 	}
+	sa.mu.Unlock()
 }
 
 func newHexID(n int) string {
 	b := make([]byte, n)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		panic("crypto/rand: " + err.Error())
+	}
 	return hex.EncodeToString(b)
 }

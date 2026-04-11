@@ -28,10 +28,15 @@ type SubAgent struct {
 	result *Result
 	done   chan struct{}
 	once   sync.Once
+	mu     sync.Mutex
 }
 
 func (s *SubAgent) Done() <-chan struct{} { return s.done }
-func (s *SubAgent) Result() *Result       { return s.result }
+func (s *SubAgent) Result() *Result {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.result
+}
 
 func (s *SubAgent) close() {
 	s.once.Do(func() { close(s.done) })

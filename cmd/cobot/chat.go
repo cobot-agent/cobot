@@ -7,7 +7,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/cobot-agent/cobot/internal/agent"
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
@@ -21,19 +20,11 @@ var chatCmd = &cobra.Command{
 			return err
 		}
 
-		_, cleanup, err := initAgent(cfg, true)
+		a, cleanup, err := initAgent(cfg, true)
 		if err != nil {
 			return err
 		}
 		defer cleanup()
-
-		a := agent.New(cfg)
-		provider, err := initProvider(cfg)
-		if err != nil {
-			return err
-		}
-		a.SetProvider(provider)
-		defer a.Close()
 
 		agt, err := cobot.New(cfg, a)
 		if err != nil {
