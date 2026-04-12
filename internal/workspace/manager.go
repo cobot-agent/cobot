@@ -28,14 +28,14 @@ type ManagerConfig struct {
 
 // managerConfigPath 返回 manager 配置文件路径
 func managerConfigPath() string {
-	return filepath.Join(xdg.CobotConfigDir(), "workspaces", "manager.yaml")
+	return filepath.Join(xdg.ConfigDir(), "workspaces", "manager.yaml")
 }
 
 // NewManager 创建新的 workspace manager
 func NewManager() (*Manager, error) {
 	m := &Manager{
-		workspacesDir:     filepath.Join(xdg.CobotConfigDir(), "workspaces"),
-		workspacesDataDir: filepath.Join(xdg.CobotDataDir(), "workspaces"),
+		workspacesDir:     filepath.Join(xdg.ConfigDir(), "workspaces"),
+		workspacesDataDir: filepath.Join(xdg.DataDir(), "workspaces"),
 	}
 
 	// 确保目录存在

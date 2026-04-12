@@ -63,7 +63,7 @@ var setupCmd = &cobra.Command{
 		cfg.Model = provider + ":" + model
 		cfg.APIKeys = map[string]string{provider: apiKey}
 
-		configDir := xdg.CobotConfigDir()
+		configDir := xdg.ConfigDir()
 		configPath := filepath.Join(configDir, "config.yaml")
 
 		data, err := yaml.Marshal(cfg)

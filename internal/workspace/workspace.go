@@ -161,8 +161,8 @@ func NewWorkspace(name string, wsType WorkspaceType, root string) *Workspace {
 	}
 
 	// 设置路径
-	workspacesDir := filepath.Join(xdg.CobotConfigDir(), "workspaces")
-	workspaceDataDir := filepath.Join(xdg.CobotDataDir(), "workspaces")
+	workspacesDir := filepath.Join(xdg.ConfigDir(), "workspaces")
+	workspaceDataDir := filepath.Join(xdg.DataDir(), "workspaces")
 
 	switch wsType {
 	case WorkspaceTypeDefault:

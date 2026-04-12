@@ -28,9 +28,9 @@ var doctorCmd = &cobra.Command{
 
 		ws := manager.Current()
 
-		configDir := xdg.CobotConfigDir()
+		configDir := xdg.ConfigDir()
 		configPath := filepath.Join(configDir, "config.yaml")
-		dataDir := xdg.CobotDataDir()
+		dataDir := xdg.DataDir()
 
 		fmt.Printf("\nConfig directory: %s\n", configDir)
 		if info, err := os.Stat(configDir); err == nil && info.IsDir() {

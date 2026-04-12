@@ -16,7 +16,7 @@ func Discover(startDir string) (*Workspace, error) {
 		if err == nil && info.IsDir() {
 			projectName := filepath.Base(dir)
 			ws, err := LoadWorkspace(filepath.Join(
-				xdg.CobotConfigDir(),
+				xdg.ConfigDir(),
 				"workspaces",
 				projectName,
 				"workspace.yaml",

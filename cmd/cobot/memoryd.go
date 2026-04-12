@@ -19,7 +19,7 @@ var memorydCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		dataDir, _ := cmd.Flags().GetString("data")
 		if dataDir == "" {
-			dataDir = xdg.CobotDataDir()
+			dataDir = xdg.DataDir()
 		}
 
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
