@@ -109,39 +109,11 @@ func (t *MemoryStoreTool) Execute(ctx context.Context, args json.RawMessage) (st
 }
 
 func (t *MemoryStoreTool) findOrCreateWing(ctx context.Context, name string) (string, error) {
-	wings, err := t.store.GetWings(ctx)
-	if err != nil {
-		return "", err
-	}
-	for _, w := range wings {
-		if w.Name == name {
-			return w.ID, nil
-		}
-	}
-
-	wing := &cobot.Wing{Name: name}
-	if err := t.store.CreateWing(ctx, wing); err != nil {
-		return "", err
-	}
-	return wing.ID, nil
+	return t.store.CreateWingIfNotExists(ctx, name)
 }
 
 func (t *MemoryStoreTool) findOrCreateRoom(ctx context.Context, wingID, name, hallType string) (string, error) {
-	rooms, err := t.store.GetRooms(ctx, wingID)
-	if err != nil {
-		return "", err
-	}
-	for _, r := range rooms {
-		if r.Name == name {
-			return r.ID, nil
-		}
-	}
-
-	room := &cobot.Room{WingID: wingID, Name: name, HallType: hallType}
-	if err := t.store.CreateRoom(ctx, room); err != nil {
-		return "", err
-	}
-	return room.ID, nil
+	return t.store.CreateRoomIfNotExists(ctx, wingID, name, hallType)
 }
 
 var (

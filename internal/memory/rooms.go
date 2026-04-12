@@ -11,6 +11,10 @@ func roomKey(room *cobot.Room) string {
 	return prefixRoom + room.WingID + ":" + room.ID
 }
 
+func roomKeyByID(wingID, roomID string) string {
+	return prefixRoom + wingID + ":" + roomID
+}
+
 func (s *Store) CreateRoom(ctx context.Context, room *cobot.Room) error {
 	if room.ID == "" {
 		room.ID = newID()
@@ -47,7 +51,7 @@ func (s *Store) GetRooms(ctx context.Context, wingID string) ([]*cobot.Room, err
 
 func (s *Store) GetRoom(ctx context.Context, wingID, roomID string) (*cobot.Room, error) {
 	var r cobot.Room
-	key := prefixRoom + wingID + ":" + roomID
+	key := roomKeyByID(wingID, roomID)
 	err := s.db.View(func(txn *badger.Txn) error {
 		item, err := txn.Get([]byte(key))
 		if err != nil {
@@ -61,4 +65,34 @@ func (s *Store) GetRoom(ctx context.Context, wingID, roomID string) (*cobot.Room
 		return nil, err
 	}
 	return &r, nil
+}
+
+func (s *Store) GetRoomByName(ctx context.Context, wingID, name string) (*cobot.Room, error) {
+	rooms, err := s.GetRooms(ctx, wingID)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range rooms {
+		if r.Name == name {
+			return r, nil
+		}
+	}
+	return nil, nil
+}
+
+func (s *Store) CreateRoomIfNotExists(ctx context.Context, wingID, name, hallType string) (string, error) {
+	roomMu.Lock()
+	defer roomMu.Unlock()
+
+	if existing, err := s.GetRoomByName(ctx, wingID, name); err != nil {
+		return "", err
+	} else if existing != nil {
+		return existing.ID, nil
+	}
+
+	room := &cobot.Room{ID: newID(), WingID: wingID, Name: name, HallType: hallType}
+	if err := s.CreateRoom(ctx, room); err != nil {
+		return "", err
+	}
+	return room.ID, nil
 }

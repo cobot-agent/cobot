@@ -2,9 +2,15 @@ package memory
 
 import (
 	"context"
+	"sync"
 
 	cobot "github.com/cobot-agent/cobot/pkg"
 	"github.com/dgraph-io/badger/v4"
+)
+
+var (
+	wingMu sync.Mutex
+	roomMu sync.Mutex
 )
 
 func (s *Store) CreateWing(ctx context.Context, wing *cobot.Wing) error {
@@ -35,4 +41,34 @@ func (s *Store) GetWing(ctx context.Context, id string) (*cobot.Wing, error) {
 		return nil, err
 	}
 	return &w, nil
+}
+
+func (s *Store) GetWingByName(ctx context.Context, name string) (*cobot.Wing, error) {
+	wings, err := s.GetWings(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, w := range wings {
+		if w.Name == name {
+			return w, nil
+		}
+	}
+	return nil, nil
+}
+
+func (s *Store) CreateWingIfNotExists(ctx context.Context, name string) (string, error) {
+	wingMu.Lock()
+	defer wingMu.Unlock()
+
+	if existing, err := s.GetWingByName(ctx, name); err != nil {
+		return "", err
+	} else if existing != nil {
+		return existing.ID, nil
+	}
+
+	wing := &cobot.Wing{ID: newID(), Name: name}
+	if err := s.CreateWing(ctx, wing); err != nil {
+		return "", err
+	}
+	return wing.ID, nil
 }

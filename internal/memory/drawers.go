@@ -45,3 +45,9 @@ func (s *Store) GetDrawer(ctx context.Context, id string) (*cobot.Drawer, error)
 	}
 	return &d, nil
 }
+
+func (s *Store) DeleteDrawer(ctx context.Context, id string) error {
+	return s.db.Update(func(txn *badger.Txn) error {
+		return txn.Delete([]byte(prefixDrawer + id))
+	})
+}

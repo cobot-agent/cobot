@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/blevesearch/bleve/v2"
@@ -16,6 +17,7 @@ type Store struct {
 	db       *badger.DB
 	bleveDir string
 	bleveIdx bleve.Index
+	mu       sync.Mutex
 }
 
 func OpenStore(memoryDir string) (*Store, error) {
@@ -72,10 +74,13 @@ func (s *Store) Store(ctx context.Context, content string, wingID, roomID string
 	if err != nil {
 		return "", err
 	}
+
 	room, err := s.GetRoom(ctx, wingID, roomID)
 	if err != nil {
+		s.DeleteDrawer(ctx, id)
 		return "", err
 	}
+
 	if err := s.indexDrawer(ctx, &drawerDoc{
 		ID:        id,
 		Content:   content,
@@ -84,8 +89,10 @@ func (s *Store) Store(ctx context.Context, content string, wingID, roomID string
 		HallType:  room.HallType,
 		CreatedAt: time.Now(),
 	}); err != nil {
+		s.DeleteDrawer(ctx, id)
 		return "", err
 	}
+
 	return id, nil
 }
 
