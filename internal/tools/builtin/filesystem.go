@@ -3,6 +3,7 @@ package builtin
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 
 	cobot "github.com/cobot-agent/cobot/pkg"
@@ -12,10 +13,22 @@ type readFileArgs struct {
 	Path string `json:"path"`
 }
 
-type ReadFileTool struct{}
+type ReadFileTool struct {
+	sandbox SandboxChecker
+}
 
-func NewReadFileTool() *ReadFileTool {
-	return &ReadFileTool{}
+type ReadFileToolOption func(*ReadFileTool)
+
+func WithReadSandbox(s SandboxChecker) ReadFileToolOption {
+	return func(t *ReadFileTool) { t.sandbox = s }
+}
+
+func NewReadFileTool(opts ...ReadFileToolOption) *ReadFileTool {
+	t := &ReadFileTool{}
+	for _, o := range opts {
+		o(t)
+	}
+	return t
 }
 
 func (t *ReadFileTool) Name() string {
@@ -35,6 +48,9 @@ func (t *ReadFileTool) Execute(ctx context.Context, args json.RawMessage) (strin
 	if err := json.Unmarshal(args, &a); err != nil {
 		return "", err
 	}
+	if t.sandbox != nil && !t.sandbox.IsAllowed(a.Path, false) {
+		return "", fmt.Errorf("sandbox: path not allowed: %s", a.Path)
+	}
 	data, err := os.ReadFile(a.Path)
 	if err != nil {
 		return "", err
@@ -47,10 +63,22 @@ type writeFileArgs struct {
 	Content string `json:"content"`
 }
 
-type WriteFileTool struct{}
+type WriteFileTool struct {
+	sandbox SandboxChecker
+}
 
-func NewWriteFileTool() *WriteFileTool {
-	return &WriteFileTool{}
+type WriteFileToolOption func(*WriteFileTool)
+
+func WithWriteSandbox(s SandboxChecker) WriteFileToolOption {
+	return func(t *WriteFileTool) { t.sandbox = s }
+}
+
+func NewWriteFileTool(opts ...WriteFileToolOption) *WriteFileTool {
+	t := &WriteFileTool{}
+	for _, o := range opts {
+		o(t)
+	}
+	return t
 }
 
 func (t *WriteFileTool) Name() string {
@@ -69,6 +97,9 @@ func (t *WriteFileTool) Execute(ctx context.Context, args json.RawMessage) (stri
 	var a writeFileArgs
 	if err := json.Unmarshal(args, &a); err != nil {
 		return "", err
+	}
+	if t.sandbox != nil && !t.sandbox.IsAllowed(a.Path, true) {
+		return "", fmt.Errorf("sandbox: path not allowed: %s", a.Path)
 	}
 	if err := os.WriteFile(a.Path, []byte(a.Content), 0644); err != nil {
 		return "", err
