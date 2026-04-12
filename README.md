@@ -1,31 +1,45 @@
-# Cobot - Personal AI Agent System
+# Cobot - Personal AI Agent
 
 [![Go Version](https://img.shields.io/badge/go-1.26.2-blue.svg)](https://golang.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-Cobot is a Go-based personal AI agent system with memory, tools, and protocols. It implements the MemPalace architecture for hierarchical memory management and supports ACP (Agent Communication Protocol) and MCP (Model Context Protocol).
+Cobot is a **personal AI agent** that learns from all your interactions across contexts. Unlike project-based agents, Cobot maintains a single global memory space that persists across all your work.
+
+Inspired by [nanobot](https://github.com/HKUDS/nanobot) and MemPalace architecture.
 
 ## 🌟 Features
 
 ### Core Capabilities
-- **🧠 Hierarchical Memory (MemPalace)**: L0-L3 memory layers with WakeUp context building
-- **🔧 Tool System**: Built-in tools + MCP integration for external tool servers
-- **🤖 Multi-Provider**: OpenAI and Anthropic LLM provider support
-- **💬 Interactive Modes**: CLI commands, TUI, and ACP server modes
-- **📚 Skill System**: YAML-based skill definitions with step execution
-- **⏰ Scheduler**: Cron-based task scheduling
+- **🧠 Global Memory**: Single memory space across all contexts (not per-project)
+- **👤 Persona Layer**: SOUL.md (bot personality) + USER.md (user profile)
+- **🏛️ MemPalace**: Hierarchical memory (Wings → Rooms → Drawers → Closets)
+- **🔧 Tool System**: Built-in tools + MCP integration
+- **🤖 Multi-Provider**: OpenAI and Anthropic LLM support
+- **💬 Interactive Modes**: CLI, TUI, and ACP server
 
-### Memory Architecture (MemPalace)
-- **Wings**: Top-level organization (projects, domains)
+### Personal Agent Architecture
+
+```
+~/.config/cobot/              # Configuration (XDG)
+├── config.yaml               # Main configuration
+├── SOUL.md                   # Bot personality & voice
+├── USER.md                   # User profile & preferences
+└── MEMORY.md                 # Consolidated memories
+
+~/.local/share/cobot/         # Data (XDG)
+├── memory/                   # Global MemPalace storage
+│   ├── badger/               # BadgerDB
+│   └── bleve/                # Search index
+├── sessions/                 # Session data
+└── skills/                   # Skill storage
+```
+
+### Memory Hierarchy (MemPalace)
+- **Wings**: Domains/Topics (e.g., "golang", "machine-learning")
 - **Rooms**: Contextual spaces within wings
 - **Drawers**: Raw content storage
 - **Closets**: Summarized/aggregated content
 - **Knowledge Graph**: Temporal triples with inference
-
-### Protocols
-- **ACP**: Agent Communication Protocol (JSON-RPC 2.0 over stdio)
-- **MCP**: Model Context Protocol for tool integration
-- **SubAgent**: Spawn and coordinate sub-agents
 
 ## 🚀 Installation
 
@@ -47,12 +61,16 @@ go install github.com/cobot-agent/cobot/cmd/cobot@latest
 
 ## 📝 Quick Start
 
-### 1. Initialize Workspace
+### 1. First-Time Setup
 ```bash
-# Create a new project workspace
-cd ~/my-project
-cobot workspace init
+cobot setup
 ```
+
+This creates:
+- `~/.config/cobot/config.yaml` - Your configuration
+- `~/.config/cobot/SOUL.md` - Bot personality
+- `~/.config/cobot/USER.md` - Your profile
+- `~/.local/share/cobot/memory/` - Global memory storage
 
 ### 2. Configure API Keys
 ```bash
@@ -63,306 +81,175 @@ cobot config set apikey.openai sk-xxx
 export OPENAI_API_KEY=sk-xxx
 ```
 
-### 3. Start Chatting
+### 3. Customize Your Agent
 ```bash
-# Interactive TUI mode
+# Edit bot personality
+cobot persona edit soul
+
+# Edit your profile
+cobot persona edit user
+
+# View current settings
+cobot persona show soul
+cobot persona show user
+```
+
+### 4. Start Chatting
+```bash
+# Interactive TUI mode (works from any directory)
 cobot chat
 
 # One-shot command
-cobot chat "What files are in this directory?"
+cobot chat "Explain Go interfaces"
 
 # With specific model
 cobot chat --model anthropic:claude-3-opus "Hello!"
 ```
 
+## 🎭 Persona Files
+
+### SOUL.md - Bot Personality
+```markdown
+# SOUL
+
+You are Cobot, a personal AI assistant.
+
+## Voice
+- Concise and direct
+- Technical but accessible
+- Use analogies when helpful
+
+## Style
+- Prefer code examples over explanations
+- Always suggest best practices
+```
+
+### USER.md - User Profile
+```markdown
+# USER
+
+## Profile
+- Name: Developer
+- Role: Software Engineer
+- Experience: 5+ years
+
+## Preferences
+- Likes: Go, TypeScript, Python
+- Editor: VS Code
+- Values: Clean code, performance
+
+## Work Style
+- Morning person
+- Test-driven development
+```
+
+## 🧠 Memory Commands
+
+```bash
+# Search your memory
+cobot memory search "authentication patterns"
+
+# View memory palace structure
+cobot memory status
+
+# Filter by wing
+cobot memory search "goroutines" --wing golang
+```
+
 ## 🧪 Testing
 
-Cobot uses Go's standard testing framework with comprehensive test coverage across 29+ test files.
-
-### Test Structure
-
-```
-internal/
-├── agent/
-│   ├── loop_test.go        # Agent loop unit tests
-│   ├── e2e_test.go         # End-to-end integration tests
-│   └── acp_test.go         # ACP scaffolding tests
-├── memory/
-│   ├── store_test.go       # Storage CRUD tests
-│   ├── layers_test.go      # Memory layer tests (L0-L3)
-│   ├── race_test.go        # Race condition tests
-│   ├── l3_test.go          # L3 deep search tests
-│   └── knowledge_test.go   # Knowledge graph tests
-├── llm/
-│   ├── openai/
-│   │   ├── provider_test.go
-│   │   └── stream_test.go  # Streaming tests
-│   └── anthropic/
-│       └── provider_test.go
-└── ... (29 test files total)
-```
-
-### Running Tests
-
-#### All Tests
 ```bash
+# All tests
 go test ./...
-```
 
-#### Specific Package
-```bash
-go test ./internal/memory/...
-go test ./internal/agent/...
-```
-
-#### With Verbose Output
-```bash
-go test -v ./internal/memory/...
-```
-
-#### Race Detection
-```bash
-go test -race ./internal/memory/...
-```
-
-#### Specific Test
-```bash
-go test -v -run TestCreateWingIfNotExists_RaceCondition ./internal/memory/
-```
-
-#### Coverage Report
-```bash
+# With coverage
 go test -cover ./...
-go test -coverprofile=coverage.out ./...
-go tool cover -html=coverage.out
-```
 
-### Test Categories
-
-#### 1. Unit Tests
-Test individual functions in isolation:
-```go
-func TestSummarizeContent(t *testing.T) {
-    s := &Store{}
-    result := s.SummarizeContent("Long content here...")
-    // assertions
-}
-```
-
-#### 2. Integration Tests
-Test component interactions:
-```go
-func TestStoreAndSearch(t *testing.T) {
-    dir := t.TempDir()
-    s, _ := OpenStore(dir)
-    defer s.Close()
-    
-    // Store content
-    s.Store(ctx, "test", wingID, roomID)
-    
-    // Search and verify
-    results, _ := s.Search(ctx, query)
-    // assertions
-}
-```
-
-#### 3. E2E Tests
-Test full agent workflows:
-```go
-func TestE2EToolCallFlow(t *testing.T) {
-    a := New(&cobot.Config{MaxTurns: 10})
-    a.SetProvider(mockProvider)
-    a.ToolRegistry().Register(tool)
-    
-    resp, err := a.Prompt(ctx, "run echo hello")
-    // Verify tool execution + response
-}
-```
-
-#### 4. Race Condition Tests
-Test concurrent access safety:
-```go
-func TestCreateWingIfNotExists_RaceCondition(t *testing.T) {
-    var wg sync.WaitGroup
-    for i := 0; i < 10; i++ {
-        wg.Add(1)
-        go func() {
-            defer wg.Done()
-            s.CreateWingIfNotExists(ctx, "test-wing")
-        }()
-    }
-    wg.Wait()
-    // Verify only 1 wing created
-}
-```
-
-### Writing Tests (Best Practices)
-
-1. **Use `t.TempDir()`** for temporary storage:
-```go
-dir := t.TempDir()
-s, err := OpenStore(dir)
-defer s.Close()
-```
-
-2. **Test table patterns** for multiple cases:
-```go
-tests := []struct {
-    name     string
-    input    string
-    expected string
-}{
-    {"short", "hi", "hi"},
-    {"long", strings.Repeat("a", 300), strings.Repeat("a", 200) + "..."},
-}
-for _, tt := range tests {
-    t.Run(tt.name, func(t *testing.T) {
-        result := fn(tt.input)
-        if result != tt.expected {
-            t.Errorf("got %q, want %q", result, tt.expected)
-        }
-    })
-}
-```
-
-3. **Parallel testing** where safe:
-```go
-t.Parallel()
-```
-
-4. **Cleanup with defer**:
-```go
-dir := t.TempDir()
-s, _ := OpenStore(dir)
-defer s.Close()
-```
-
-## 🏗️ Architecture
-
-```
-cobot/
-├── api/acp/              # ACP protocol types
-├── cmd/cobot/            # CLI commands
-│   ├── chat.go
-│   ├── config_cmd.go
-│   ├── memory_cmd.go
-│   └── ...
-├── pkg/                  # Public SDK
-│   ├── cobot.go          # Agent, AgentCore
-│   ├── types.go          # Public types
-│   └── interfaces.go     # Provider, Tool interfaces
-└── internal/             # Internal implementation
-    ├── agent/            # Core agent loop
-    ├── memory/           # MemPalace storage
-    ├── llm/              # LLM providers
-    ├── tools/            # Tool registry
-    ├── acp/              # ACP server
-    ├── mcp/              # MCP client
-    └── subagent/         # Sub-agent coordination
+# Specific package
+go test ./internal/memory/...
 ```
 
 ## 🔧 Configuration
 
-### Config File Location
-- **Global**: `~/.config/cobot/config.yaml`
-- **Workspace**: `.cobot/config.yaml`
-
-### Example Config
+### Config File
+`~/.config/cobot/config.yaml`:
 ```yaml
 model: openai:gpt-4o
-max_turns: 10
-system_prompt: "You are a helpful assistant"
+max_turns: 50
 temperature: 0.7
 apikeys:
   openai: sk-xxx
   anthropic: sk-xxx
 memory:
   enabled: true
-tools:
-  builtin:
-    - filesystem_read
-    - filesystem_write
-    - shell_exec
 ```
 
 ### Environment Variables
 ```bash
 COBOT_MODEL=openai:gpt-4o
-COBOT_WORKSPACE=/path/to/workspace
 OPENAI_API_KEY=sk-xxx
 ANTHROPIC_API_KEY=sk-xxx
-```
-
-## 🛠️ Development
-
-### Adding a New Tool
-
-1. Create tool in `internal/tools/builtin/`:
-```go
-type MyTool struct{}
-
-func (t *MyTool) Name() string { return "my_tool" }
-func (t *MyTool) Description() string { return "Does something" }
-func (t *MyTool) Parameters() json.RawMessage { ... }
-func (t *MyTool) Execute(ctx context.Context, args json.RawMessage) (string, error) { ... }
-```
-
-2. Register in agent:
-```go
-agent.ToolRegistry().Register(&MyTool{})
-```
-
-3. Add tests in `*_test.go`
-
-### Running Locally
-
-```bash
-# Build
-go build -o cobot ./cmd/cobot
-
-# Run with verbose logging
-cobot chat --verbose
-
-# Run ACP server
-cobot acp serve
 ```
 
 ## 📝 CLI Commands
 
 ```bash
-cobot chat [message]              # Interactive chat or one-shot
-cobot model list                  # List available models
-cobot workspace init              # Initialize workspace
-cobot config show                 # Show full config
-cobot config get <key>            # Get config value
+# Setup & Configuration
+cobot setup                       # First-time setup
+cobot doctor                      # Check configuration
+cobot config show                 # Show config
 cobot config set <key> <value>    # Set config value
+
+# Persona Management
+cobot persona init                # Create persona files
+cobot persona edit soul           # Edit SOUL.md
+cobot persona edit user           # Edit USER.md
+cobot persona show memory         # Show MEMORY.md
+
+# Chat & Interaction
+cobot chat [message]              # Chat with agent
+cobot tui                         # Interactive TUI mode
+cobot acp serve                   # Start ACP server
+
+# Memory
 cobot memory search <query>       # Search memory
 cobot memory status               # Show memory stats
+
+# Tools & Models
 cobot tools list                  # List available tools
-cobot acp serve                   # Start ACP server
-cobot tui                         # Start TUI mode
-cobot setup                       # First-time setup
-cobot doctor                      # Diagnostic check
+cobot model list                  # List available models
+
+# Workspace (legacy - not needed for personal agent)
+cobot workspace init              # Create project workspace
+```
+
+## 🏗️ Architecture
+
+```
+cobot/
+├── cmd/cobot/            # CLI commands
+│   ├── chat.go
+│   ├── persona_cmd.go    # Persona management
+│   ├── config_cmd.go
+│   └── ...
+├── internal/
+│   ├── agent/            # Core agent loop
+│   ├── memory/           # MemPalace storage
+│   ├── persona/          # SOUL.md, USER.md management
+│   ├── llm/              # LLM providers
+│   └── workspace/        # Workspace utilities
+└── pkg/                  # Public SDK
 ```
 
 ## 🤝 Contributing
 
 1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Write tests for your changes
-4. Ensure all tests pass (`go test ./...`)
-5. Commit your changes (`git commit -m 'Add amazing feature'`)
-6. Push to the branch (`git push origin feature/amazing-feature`)
-7. Open a Pull Request
-
-### Commit Message Format
-```
-feat: add new feature
-fix: resolve race condition
-docs: update README
-test: add missing tests
-refactor: simplify logic
-```
+2. Create feature branch: `git checkout -b feature/amazing-feature`
+3. Write tests
+4. Ensure tests pass: `go test ./...`
+5. Commit: `git commit -m 'feat: add amazing feature'`
+6. Push: `git push origin feature/amazing-feature`
+7. Open Pull Request
 
 ## 📄 License
 
@@ -370,11 +257,7 @@ MIT License - see [LICENSE](LICENSE) file
 
 ## 🙏 Acknowledgments
 
-- Inspired by MemPalace architecture
-- Uses [Bubbletea](https://github.com/charmbracelet/bubbletea) for TUI
+- Inspired by [nanobot](https://github.com/HKUDS/nanobot) personal agent concept
+- MemPalace architecture for hierarchical memory
 - Uses [BadgerDB](https://github.com/dgraph-io/badger) for storage
 - Uses [Bleve](https://github.com/blevesearch/bleve) for search
-
----
-
-**Ultraworked with [Sisyphus](https://github.com/code-yeongyu/oh-my-openagent)**
