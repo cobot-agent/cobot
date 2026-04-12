@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/cobot-agent/cobot/internal/memory"
+	"github.com/cobot-agent/cobot/internal/memory/daemon"
 	"github.com/cobot-agent/cobot/internal/workspace"
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
@@ -21,14 +21,14 @@ var memorySearchCmd = &cobra.Command{
 	Short: "Search memory",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		store, err := memory.OpenStore(workspace.GlobalMemoryDir())
+		client, cleanup, err := daemon.StartOrConnect(context.Background(), workspace.GlobalMemoryDir())
 		if err != nil {
 			return err
 		}
-		defer store.Close()
+		defer cleanup()
 
 		wingID, _ := cmd.Flags().GetString("wing")
-		results, err := store.Search(context.Background(), &cobot.SearchQuery{
+		results, err := client.Search(context.Background(), &cobot.SearchQuery{
 			Text:   args[0],
 			WingID: wingID,
 			Limit:  10,
@@ -49,24 +49,63 @@ var memorySearchCmd = &cobra.Command{
 	},
 }
 
+var memoryStoreCmd = &cobra.Command{
+	Use:   "store [content] [wing_name] [room_name]",
+	Short: "Store information in memory palace",
+	Args:  cobra.ExactArgs(3),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		client, cleanup, err := daemon.StartOrConnect(context.Background(), workspace.GlobalMemoryDir())
+		if err != nil {
+			return err
+		}
+		defer cleanup()
+
+		content := args[0]
+		wingName := args[1]
+		roomName := args[2]
+		hallType, _ := cmd.Flags().GetString("hall_type")
+		if hallType == "" {
+			hallType = "facts"
+		}
+
+		wingID, err := client.CreateWingIfNotExists(context.Background(), wingName)
+		if err != nil {
+			return fmt.Errorf("creating wing: %w", err)
+		}
+
+		roomID, err := client.CreateRoomIfNotExists(context.Background(), wingID, roomName, hallType)
+		if err != nil {
+			return fmt.Errorf("creating room: %w", err)
+		}
+
+		drawerID, err := client.Store(context.Background(), content, wingID, roomID)
+		if err != nil {
+			return fmt.Errorf("storing content: %w", err)
+		}
+
+		fmt.Fprintf(cmd.OutOrStdout(), "Stored in drawer %s (wing: %s, room: %s)\n", drawerID, wingName, roomName)
+		return nil
+	},
+}
+
 var memoryStatusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show memory palace overview",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		store, err := memory.OpenStore(workspace.GlobalMemoryDir())
+		client, cleanup, err := daemon.StartOrConnect(context.Background(), workspace.GlobalMemoryDir())
 		if err != nil {
 			return err
 		}
-		defer store.Close()
+		defer cleanup()
 
-		wings, err := store.GetWings(context.Background())
+		wings, err := client.GetWings(context.Background())
 		if err != nil {
 			return err
 		}
 
 		fmt.Fprintf(cmd.OutOrStdout(), "Memory Palace: %d wings\n", len(wings))
 		for _, w := range wings {
-			rooms, _ := store.GetRooms(context.Background(), w.ID)
+			rooms, _ := client.GetRooms(context.Background(), w.ID)
 			fmt.Fprintf(cmd.OutOrStdout(), "  Wing: %s (%s) — %d rooms\n", w.Name, w.ID, len(rooms))
 			for _, r := range rooms {
 				fmt.Fprintf(cmd.OutOrStdout(), "    Room: %s [%s]\n", r.Name, r.HallType)
@@ -78,7 +117,10 @@ var memoryStatusCmd = &cobra.Command{
 
 func init() {
 	memorySearchCmd.Flags().String("wing", "", "Filter by wing ID")
+	memoryStoreCmd.Flags().String("hall_type", "facts", "Room type: facts, log, or code")
+
 	memoryCmd.AddCommand(memorySearchCmd)
+	memoryCmd.AddCommand(memoryStoreCmd)
 	memoryCmd.AddCommand(memoryStatusCmd)
 	rootCmd.AddCommand(memoryCmd)
 }

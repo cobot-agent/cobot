@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -8,7 +9,7 @@ import (
 	"github.com/cobot-agent/cobot/internal/agent"
 	"github.com/cobot-agent/cobot/internal/llm/anthropic"
 	"github.com/cobot-agent/cobot/internal/llm/openai"
-	"github.com/cobot-agent/cobot/internal/memory"
+	"github.com/cobot-agent/cobot/internal/memory/daemon"
 	"github.com/cobot-agent/cobot/internal/tools/builtin"
 	"github.com/cobot-agent/cobot/internal/workspace"
 	cobot "github.com/cobot-agent/cobot/pkg"
@@ -65,15 +66,23 @@ func initAgent(cfg *cobot.Config, requireProvider bool) (*agent.Agent, func(), e
 		a.SetProvider(provider)
 	}
 
-	if ms, err := memory.OpenStore(workspace.GlobalMemoryDir()); err == nil {
-		a.SetMemoryStore(ms)
-	} else {
+	dataDir := workspace.GlobalMemoryDir()
+	mc, memCleanup, err := daemon.StartOrConnect(context.Background(), dataDir)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to open memory store: %v\n", err)
+	} else {
+		a.SetMemoryStore(mc)
 	}
 
 	a.RegisterTool(builtin.NewReadFileTool())
 	a.RegisterTool(builtin.NewWriteFileTool())
 	a.RegisterTool(builtin.NewShellExecTool())
 
-	return a, func() { a.Close() }, nil
+	cleanup := func() {
+		a.Close()
+		if memCleanup != nil {
+			memCleanup()
+		}
+	}
+	return a, cleanup, nil
 }
