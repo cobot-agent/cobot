@@ -15,11 +15,11 @@ type memorySearchArgs struct {
 }
 
 type MemorySearchTool struct {
-	store *Store
+	client Client
 }
 
-func NewMemorySearchTool(s *Store) *MemorySearchTool {
-	return &MemorySearchTool{store: s}
+func NewMemorySearchTool(c Client) *MemorySearchTool {
+	return &MemorySearchTool{client: c}
 }
 
 func (t *MemorySearchTool) Name() string { return "memory_search" }
@@ -42,7 +42,7 @@ func (t *MemorySearchTool) Execute(ctx context.Context, args json.RawMessage) (s
 		Limit:  a.Limit,
 	}
 
-	results, err := t.store.Search(ctx, query)
+	results, err := t.client.Search(ctx, query)
 	if err != nil {
 		return "", err
 	}
@@ -66,11 +66,11 @@ type memoryStoreArgs struct {
 }
 
 type MemoryStoreTool struct {
-	store *Store
+	client Client
 }
 
-func NewMemoryStoreTool(s *Store) *MemoryStoreTool {
-	return &MemoryStoreTool{store: s}
+func NewMemoryStoreTool(c Client) *MemoryStoreTool {
+	return &MemoryStoreTool{client: c}
 }
 
 func (t *MemoryStoreTool) Name() string        { return "memory_store" }
@@ -100,7 +100,7 @@ func (t *MemoryStoreTool) Execute(ctx context.Context, args json.RawMessage) (st
 		return "", fmt.Errorf("finding/creating room: %w", err)
 	}
 
-	drawerID, err := t.store.Store(ctx, a.Content, wingID, roomID)
+	drawerID, err := t.client.Store(ctx, a.Content, wingID, roomID)
 	if err != nil {
 		return "", fmt.Errorf("storing content: %w", err)
 	}
@@ -109,11 +109,11 @@ func (t *MemoryStoreTool) Execute(ctx context.Context, args json.RawMessage) (st
 }
 
 func (t *MemoryStoreTool) findOrCreateWing(ctx context.Context, name string) (string, error) {
-	return t.store.CreateWingIfNotExists(ctx, name)
+	return t.client.CreateWingIfNotExists(ctx, name)
 }
 
 func (t *MemoryStoreTool) findOrCreateRoom(ctx context.Context, wingID, name, hallType string) (string, error) {
-	return t.store.CreateRoomIfNotExists(ctx, wingID, name, hallType)
+	return t.client.CreateRoomIfNotExists(ctx, wingID, name, hallType)
 }
 
 var (

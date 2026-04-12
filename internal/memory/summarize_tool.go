@@ -14,11 +14,11 @@ type memorySummarizeArgs struct {
 }
 
 type MemorySummarizeTool struct {
-	store *Store
+	client Client
 }
 
-func NewMemorySummarizeTool(s *Store) *MemorySummarizeTool {
-	return &MemorySummarizeTool{store: s}
+func NewMemorySummarizeTool(c Client) *MemorySummarizeTool {
+	return &MemorySummarizeTool{client: c}
 }
 
 func (t *MemorySummarizeTool) Name() string { return "memory_summarize" }
@@ -35,7 +35,7 @@ func (t *MemorySummarizeTool) Execute(ctx context.Context, args json.RawMessage)
 		return "", err
 	}
 
-	wing, err := t.store.GetWingByName(ctx, a.WingName)
+	wing, err := t.client.GetWingByName(ctx, a.WingName)
 	if err != nil {
 		return "", fmt.Errorf("finding wing: %w", err)
 	}
@@ -43,7 +43,7 @@ func (t *MemorySummarizeTool) Execute(ctx context.Context, args json.RawMessage)
 		return "", fmt.Errorf("wing not found: %s", a.WingName)
 	}
 
-	room, err := t.store.GetRoomByName(ctx, wing.ID, a.RoomName)
+	room, err := t.client.GetRoomByName(ctx, wing.ID, a.RoomName)
 	if err != nil {
 		return "", fmt.Errorf("finding room: %w", err)
 	}
@@ -51,7 +51,7 @@ func (t *MemorySummarizeTool) Execute(ctx context.Context, args json.RawMessage)
 		return "", fmt.Errorf("room not found: %s", a.RoomName)
 	}
 
-	if err := t.store.AutoSummarizeRoom(ctx, wing.ID, room.ID); err != nil {
+	if err := t.client.AutoSummarizeRoom(ctx, wing.ID, room.ID); err != nil {
 		return "", fmt.Errorf("summarizing room: %w", err)
 	}
 

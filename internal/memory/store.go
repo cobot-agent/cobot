@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"sync"
 	"time"
 
 	"github.com/blevesearch/bleve/v2"
@@ -17,7 +16,6 @@ type Store struct {
 	db       *badger.DB
 	bleveDir string
 	bleveIdx bleve.Index
-	mu       sync.Mutex
 }
 
 func OpenStore(memoryDir string) (*Store, error) {

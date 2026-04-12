@@ -14,11 +14,11 @@ type l3SearchArgs struct {
 }
 
 type L3DeepSearchTool struct {
-	store *Store
+	client Client
 }
 
-func NewL3DeepSearchTool(s *Store) *L3DeepSearchTool {
-	return &L3DeepSearchTool{store: s}
+func NewL3DeepSearchTool(c Client) *L3DeepSearchTool {
+	return &L3DeepSearchTool{client: c}
 }
 
 func (t *L3DeepSearchTool) Name() string { return "l3_deep_search" }
@@ -35,7 +35,7 @@ func (t *L3DeepSearchTool) Execute(ctx context.Context, args json.RawMessage) (s
 		return "", err
 	}
 
-	results, err := t.store.L3DeepSearch(ctx, a.Query, a.Limit)
+	results, err := t.client.L3DeepSearch(ctx, a.Query, a.Limit)
 	if err != nil {
 		return "", err
 	}
