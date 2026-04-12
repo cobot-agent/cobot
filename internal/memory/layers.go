@@ -3,20 +3,68 @@ package memory
 import (
 	"context"
 	"strings"
+
+	cobot "github.com/cobot-agent/cobot/pkg"
+)
+
+type MemoryLayer int
+
+const (
+	L0Identity MemoryLayer = iota
+	L1Facts
+	L2RoomRecall
+	L3DeepSearch
 )
 
 func (s *Store) WakeUp(ctx context.Context) (string, error) {
+	return s.WakeUpToLayer(ctx, L2RoomRecall)
+}
+
+func (s *Store) WakeUpToLayer(ctx context.Context, layer MemoryLayer) (string, error) {
 	l0 := "You are Cobot, a personal AI assistant."
 
-	var summaries []string
+	if layer == L0Identity {
+		return l0, nil
+	}
+
+	var sections []string
+	sections = append(sections, l0)
+
 	wings, err := s.GetWings(ctx)
 	if err != nil {
 		return "", err
 	}
+
+	if layer >= L1Facts {
+		facts := s.collectL1Facts(ctx, wings)
+		if len(facts) > 0 {
+			sections = append(sections, "## Known Facts")
+			sections = append(sections, facts...)
+		}
+	}
+
+	if layer >= L2RoomRecall {
+		roomContexts := s.collectL2RoomRecall(ctx, wings)
+		if len(roomContexts) > 0 {
+			sections = append(sections, "## Room Context")
+			sections = append(sections, roomContexts...)
+		}
+	}
+
+	if layer >= L3DeepSearch {
+		sections = append(sections, "## Deep Search")
+		sections = append(sections, "(L3 deep search not yet implemented)")
+	}
+
+	return strings.Join(sections, "\n\n"), nil
+}
+
+func (s *Store) collectL1Facts(ctx context.Context, wings []*cobot.Wing) []string {
+	var facts []string
 	for _, w := range wings {
 		rooms, err := s.GetRooms(ctx, w.ID)
 		if err != nil {
-			return "", err
+			continue
 		}
 		for _, r := range rooms {
 			if r.HallType != "facts" {
@@ -24,25 +72,51 @@ func (s *Store) WakeUp(ctx context.Context) (string, error) {
 			}
 			closets, err := s.GetClosets(ctx, r.ID)
 			if err != nil {
-				return "", err
+				continue
 			}
 			for _, c := range closets {
 				if c.Summary != "" {
-					summaries = append(summaries, c.Summary)
+					facts = append(facts, "- "+c.Summary)
 				}
 			}
 		}
 	}
+	return facts
+}
 
-	if len(summaries) == 0 {
-		return l0, nil
-	}
+func (s *Store) collectL2RoomRecall(ctx context.Context, wings []*cobot.Wing) []string {
+	var contexts []string
+	for _, w := range wings {
+		rooms, err := s.GetRooms(ctx, w.ID)
+		if err != nil {
+			continue
+		}
+		for _, r := range rooms {
+			var b strings.Builder
+			b.WriteString("### ")
+			b.WriteString(w.Name)
+			b.WriteString(" / ")
+			b.WriteString(r.Name)
+			b.WriteString(" (")
+			b.WriteString(r.HallType)
+			b.WriteString(")")
 
-	var b strings.Builder
-	b.WriteString(l0)
-	for _, s := range summaries {
-		b.WriteString("\n\n")
-		b.WriteString(s)
+			drawers, err := s.searchDrawers(ctx, &cobot.SearchQuery{
+				RoomID: r.ID,
+				Limit:  5,
+			})
+			if err == nil && len(drawers) > 0 {
+				for _, d := range drawers {
+					content := d.Content
+					if len(content) > 100 {
+						content = content[:100] + "..."
+					}
+					b.WriteString("\n- ")
+					b.WriteString(content)
+				}
+			}
+			contexts = append(contexts, b.String())
+		}
 	}
-	return b.String(), nil
+	return contexts
 }

@@ -4,11 +4,12 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
-func TestWakeUpEmpty(t *testing.T) {
+func TestWakeUpL0(t *testing.T) {
 	dir := t.TempDir()
 	s, err := OpenStore(dir)
 	if err != nil {
@@ -17,17 +18,16 @@ func TestWakeUpEmpty(t *testing.T) {
 	defer s.Close()
 
 	ctx := context.Background()
-	got, err := s.WakeUp(ctx)
+	result, err := s.WakeUpToLayer(ctx, L0Identity)
 	if err != nil {
 		t.Fatal(err)
 	}
-	expected := "You are Cobot, a personal AI assistant."
-	if got != expected {
-		t.Errorf("expected %q, got %q", expected, got)
+	if !strings.Contains(result, "You are Cobot") {
+		t.Errorf("expected identity prompt, got: %s", result)
 	}
 }
 
-func TestWakeUpWithFacts(t *testing.T) {
+func TestWakeUpL1(t *testing.T) {
 	dir := t.TempDir()
 	s, err := OpenStore(dir)
 	if err != nil {
@@ -36,33 +36,82 @@ func TestWakeUpWithFacts(t *testing.T) {
 	defer s.Close()
 
 	ctx := context.Background()
-	wing := &cobot.Wing{Name: "proj", Type: "project"}
-	s.CreateWing(ctx, wing)
-	room := &cobot.Room{WingID: wing.ID, Name: "facts-room", HallType: "facts"}
-	s.CreateRoom(ctx, room)
 
-	drawerID, _ := s.AddDrawer(ctx, wing.ID, room.ID, "some content")
-	closet := &cobot.Closet{
-		RoomID:    room.ID,
-		DrawerIDs: []string{drawerID},
-		Summary:   "user prefers dark mode",
-	}
+	wing := &cobot.Wing{Name: "test"}
+	s.CreateWing(ctx, wing)
+	room := &cobot.Room{WingID: wing.ID, Name: "facts", HallType: "facts"}
+	s.CreateRoom(ctx, room)
+	closet := &cobot.Closet{RoomID: room.ID, Summary: "Important fact about testing"}
 	s.CreateCloset(ctx, closet)
 
-	got, err := s.WakeUp(ctx)
+	result, err := s.WakeUpToLayer(ctx, L1Facts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result, "Known Facts") {
+		t.Errorf("expected facts section, got: %s", result)
+	}
+	if !strings.Contains(result, "Important fact about testing") {
+		t.Errorf("expected fact content, got: %s", result)
+	}
+}
+
+func TestWakeUpL2(t *testing.T) {
+	dir := t.TempDir()
+	s, err := OpenStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	ctx := context.Background()
+
+	wing := &cobot.Wing{Name: "myproject"}
+	s.CreateWing(ctx, wing)
+	room := &cobot.Room{WingID: wing.ID, Name: "notes", HallType: "log"}
+	s.CreateRoom(ctx, room)
+
+	_, err = s.Store(ctx, "First note about the project", wing.ID, room.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if !strings.HasPrefix(got, "You are Cobot, a personal AI assistant.") {
-		t.Errorf("expected identity prefix, got %q", got)
+	time.Sleep(100 * time.Millisecond)
+
+	result, err := s.WakeUpToLayer(ctx, L2RoomRecall)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(got, "user prefers dark mode") {
-		t.Errorf("expected summary in output, got %q", got)
+	if !strings.Contains(result, "Room Context") {
+		t.Errorf("expected room context section, got: %s", result)
+	}
+	if !strings.Contains(result, "myproject") {
+		t.Errorf("expected wing name, got: %s", result)
+	}
+	if !strings.Contains(result, "notes") {
+		t.Errorf("expected room name, got: %s", result)
 	}
 }
 
-func TestWakeUpIgnoresNonFacts(t *testing.T) {
+func TestWakeUpDefaultsToL2(t *testing.T) {
+	dir := t.TempDir()
+	s, err := OpenStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	ctx := context.Background()
+	result, err := s.WakeUp(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result, "You are Cobot") {
+		t.Errorf("expected identity, got: %s", result)
+	}
+}
+
+func TestWakeUpIgnoresNonFactsAtL1(t *testing.T) {
 	dir := t.TempDir()
 	s, err := OpenStore(dir)
 	if err != nil {
@@ -76,20 +125,17 @@ func TestWakeUpIgnoresNonFacts(t *testing.T) {
 	room := &cobot.Room{WingID: wing.ID, Name: "log-room", HallType: "log"}
 	s.CreateRoom(ctx, room)
 
-	drawerID, _ := s.AddDrawer(ctx, wing.ID, room.ID, "log entry")
 	closet := &cobot.Closet{
-		RoomID:    room.ID,
-		DrawerIDs: []string{drawerID},
-		Summary:   "this should be ignored",
+		RoomID:  room.ID,
+		Summary: "this should be ignored at L1",
 	}
 	s.CreateCloset(ctx, closet)
 
-	got, err := s.WakeUp(ctx)
+	got, err := s.WakeUpToLayer(ctx, L1Facts)
 	if err != nil {
 		t.Fatal(err)
 	}
-	expected := "You are Cobot, a personal AI assistant."
-	if got != expected {
-		t.Errorf("expected identity only, got %q", got)
+	if strings.Contains(got, "this should be ignored") {
+		t.Errorf("L1 should ignore non-fact rooms, got %q", got)
 	}
 }

@@ -56,3 +56,15 @@ func LoadWorkspaceConfig(cfg *cobot.Config, workspaceDir string) error {
 	}
 	return LoadFromFile(cfg, wsConfig)
 }
+
+func SaveToFile(cfg *cobot.Config, path string) error {
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0644)
+}
