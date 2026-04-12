@@ -1,8 +1,12 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
+	"os"
+	"os/exec"
+	"strconv"
 	"strings"
 
 	"github.com/cobot-agent/cobot/internal/config"
@@ -65,7 +69,7 @@ var configSetCmd = &cobra.Command{
 		key := args[0]
 		value := args[1]
 
-		ws, err := workspace.Discover("")
+		ws, err := workspace.DiscoverOrGlobal("")
 		if err != nil {
 			return fmt.Errorf("finding workspace: %w", err)
 		}
@@ -82,6 +86,196 @@ var configSetCmd = &cobra.Command{
 		}
 
 		fmt.Fprintf(cmd.OutOrStdout(), "Set %s = %s\n", key, value)
+		return nil
+	},
+}
+
+var configInitCmd = &cobra.Command{
+	Use:   "init",
+	Short: "Initialize configuration file",
+	Long:  "Create a new configuration file with interactive prompts or default values",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		force, _ := cmd.Flags().GetBool("force")
+
+		ws, err := workspace.DiscoverOrGlobal("")
+		if err != nil {
+			return fmt.Errorf("finding workspace: %w", err)
+		}
+
+		if _, err := os.Stat(ws.ConfigPath); err == nil && !force {
+			return fmt.Errorf("config already exists at %s (use --force to overwrite)", ws.ConfigPath)
+		}
+
+		cfg := cobot.DefaultConfig()
+
+		_ = config.LoadFromFile(cfg, ws.ConfigPath)
+
+		interactive, _ := cmd.Flags().GetBool("interactive")
+		if interactive {
+			if err := interactiveConfig(cfg); err != nil {
+				return err
+			}
+		}
+
+		if err := config.SaveToFile(cfg, ws.ConfigPath); err != nil {
+			return fmt.Errorf("saving config: %w", err)
+		}
+
+		fmt.Fprintf(cmd.OutOrStdout(), "Configuration initialized at %s\n", ws.ConfigPath)
+		return nil
+	},
+}
+
+var configEditCmd = &cobra.Command{
+	Use:   "edit",
+	Short: "Edit configuration file in default editor",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		ws, err := workspace.DiscoverOrGlobal("")
+		if err != nil {
+			return fmt.Errorf("finding workspace: %w", err)
+		}
+
+		if _, err := os.Stat(ws.ConfigPath); os.IsNotExist(err) {
+			cfg := cobot.DefaultConfig()
+			if err := config.SaveToFile(cfg, ws.ConfigPath); err != nil {
+				return fmt.Errorf("creating config: %w", err)
+			}
+		}
+
+		editor := os.Getenv("EDITOR")
+		if editor == "" {
+			editor = "vi"
+		}
+
+		execCmd := execCommand(editor, ws.ConfigPath)
+		execCmd.Stdin = os.Stdin
+		execCmd.Stdout = os.Stdout
+		execCmd.Stderr = os.Stderr
+
+		if err := execCmd.Run(); err != nil {
+			return fmt.Errorf("editor failed: %w", err)
+		}
+
+		return nil
+	},
+}
+
+var configValidateCmd = &cobra.Command{
+	Use:   "validate",
+	Short: "Validate configuration file",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		ws, err := workspace.DiscoverOrGlobal("")
+		if err != nil {
+			return fmt.Errorf("finding workspace: %w", err)
+		}
+
+		cfg := cobot.DefaultConfig()
+		if err := config.LoadFromFile(cfg, ws.ConfigPath); err != nil {
+			return fmt.Errorf("invalid config: %w", err)
+		}
+
+		issues := validateConfig(cfg)
+		if len(issues) > 0 {
+			fmt.Fprintln(cmd.OutOrStdout(), "Configuration issues found:")
+			for _, issue := range issues {
+				fmt.Fprintf(cmd.OutOrStdout(), "  - %s\n", issue)
+			}
+			return fmt.Errorf("config validation failed")
+		}
+
+		fmt.Fprintln(cmd.OutOrStdout(), "Configuration is valid")
+		return nil
+	},
+}
+
+var configSetProviderCmd = &cobra.Command{
+	Use:   "set-provider <provider>",
+	Short: "Configure LLM provider settings",
+	Long:  "Configure provider settings like base URL for OpenAI-compatible APIs (Ollama, vLLM, etc.)",
+	Example: `  cobot config set-provider openai --base-url http://localhost:11434/v1
+  cobot config set-provider openai --base-url https://api.openai.com/v1 --header "Authorization: Bearer token"`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		providerName := args[0]
+		baseURL, _ := cmd.Flags().GetString("base-url")
+		headerFlags, _ := cmd.Flags().GetStringArray("header")
+
+		ws, err := workspace.DiscoverOrGlobal("")
+		if err != nil {
+			return fmt.Errorf("finding workspace: %w", err)
+		}
+
+		cfg := cobot.DefaultConfig()
+		_ = config.LoadFromFile(cfg, ws.ConfigPath)
+
+		if cfg.Providers == nil {
+			cfg.Providers = make(map[string]cobot.ProviderConfig)
+		}
+
+		pc := cfg.Providers[providerName]
+
+		if baseURL != "" {
+			pc.BaseURL = baseURL
+		}
+
+		if len(headerFlags) > 0 {
+			if pc.Headers == nil {
+				pc.Headers = make(map[string]string)
+			}
+			for _, h := range headerFlags {
+				parts := strings.SplitN(h, ":", 2)
+				if len(parts) == 2 {
+					pc.Headers[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+				}
+			}
+		}
+
+		cfg.Providers[providerName] = pc
+
+		if err := config.SaveToFile(cfg, ws.ConfigPath); err != nil {
+			return fmt.Errorf("saving config: %w", err)
+		}
+
+		fmt.Fprintf(cmd.OutOrStdout(), "Configured provider: %s\n", providerName)
+		if pc.BaseURL != "" {
+			fmt.Fprintf(cmd.OutOrStdout(), "  Base URL: %s\n", pc.BaseURL)
+		}
+		if len(pc.Headers) > 0 {
+			fmt.Fprintln(cmd.OutOrStdout(), "  Headers:")
+			for k := range pc.Headers {
+				fmt.Fprintf(cmd.OutOrStdout(), "    %s\n", k)
+			}
+		}
+		return nil
+	},
+}
+
+var configSetApiKeyCmd = &cobra.Command{
+	Use:   "set-apikey <provider> <key>",
+	Short: "Set API key for a provider",
+	Args:  cobra.ExactArgs(2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		provider := args[0]
+		apiKey := args[1]
+
+		ws, err := workspace.DiscoverOrGlobal("")
+		if err != nil {
+			return fmt.Errorf("finding workspace: %w", err)
+		}
+
+		cfg := cobot.DefaultConfig()
+		_ = config.LoadFromFile(cfg, ws.ConfigPath)
+
+		if cfg.APIKeys == nil {
+			cfg.APIKeys = make(map[string]string)
+		}
+		cfg.APIKeys[provider] = apiKey
+
+		if err := config.SaveToFile(cfg, ws.ConfigPath); err != nil {
+			return fmt.Errorf("saving config: %w", err)
+		}
+
+		fmt.Fprintf(cmd.OutOrStdout(), "Set API key for %s\n", provider)
 		return nil
 	},
 }
@@ -145,9 +339,87 @@ func setConfigValue(cfg *cobot.Config, key, value string) error {
 	return nil
 }
 
+func interactiveConfig(cfg *cobot.Config) error {
+	reader := bufio.NewReader(os.Stdin)
+
+	fmt.Println("Configuration Wizard")
+	fmt.Println("===================")
+	fmt.Println()
+
+	fmt.Printf("Model [%s]: ", cfg.Model)
+	if input, _ := reader.ReadString('\n'); strings.TrimSpace(input) != "" {
+		cfg.Model = strings.TrimSpace(input)
+	}
+
+	fmt.Printf("Max turns [%d]: ", cfg.MaxTurns)
+	if input, _ := reader.ReadString('\n'); strings.TrimSpace(input) != "" {
+		if n, err := strconv.Atoi(strings.TrimSpace(input)); err == nil {
+			cfg.MaxTurns = n
+		}
+	}
+
+	fmt.Printf("Temperature [%.1f]: ", cfg.Temperature)
+	if input, _ := reader.ReadString('\n'); strings.TrimSpace(input) != "" {
+		if f, err := strconv.ParseFloat(strings.TrimSpace(input), 64); err == nil {
+			cfg.Temperature = f
+		}
+	}
+
+	fmt.Println()
+	fmt.Println("API Keys (press Enter to skip):")
+
+	fmt.Print("OpenAI API key: ")
+	if input, _ := reader.ReadString('\n'); strings.TrimSpace(input) != "" {
+		if cfg.APIKeys == nil {
+			cfg.APIKeys = make(map[string]string)
+		}
+		cfg.APIKeys["openai"] = strings.TrimSpace(input)
+	}
+
+	fmt.Print("Anthropic API key: ")
+	if input, _ := reader.ReadString('\n'); strings.TrimSpace(input) != "" {
+		if cfg.APIKeys == nil {
+			cfg.APIKeys = make(map[string]string)
+		}
+		cfg.APIKeys["anthropic"] = strings.TrimSpace(input)
+	}
+
+	return nil
+}
+
+func validateConfig(cfg *cobot.Config) []string {
+	var issues []string
+
+	if cfg.Model == "" {
+		issues = append(issues, "model is not set")
+	}
+
+	if cfg.MaxTurns <= 0 {
+		issues = append(issues, "max_turns must be positive")
+	}
+
+	if cfg.Temperature < 0 || cfg.Temperature > 2 {
+		issues = append(issues, "temperature should be between 0 and 2")
+	}
+
+	return issues
+}
+
+var execCommand = exec.Command
+
 func init() {
+	configInitCmd.Flags().Bool("interactive", false, "Interactive mode with prompts")
+	configInitCmd.Flags().Bool("force", false, "Overwrite existing config")
+	configSetProviderCmd.Flags().String("base-url", "", "Base URL for the provider API (e.g., http://localhost:11434/v1 for Ollama)")
+	configSetProviderCmd.Flags().StringArray("header", nil, "Custom headers (format: 'Key: Value')")
+
 	configCmd.AddCommand(configShowCmd)
 	configCmd.AddCommand(configGetCmd)
 	configCmd.AddCommand(configSetCmd)
+	configCmd.AddCommand(configInitCmd)
+	configCmd.AddCommand(configEditCmd)
+	configCmd.AddCommand(configValidateCmd)
+	configCmd.AddCommand(configSetProviderCmd)
+	configCmd.AddCommand(configSetApiKeyCmd)
 	rootCmd.AddCommand(configCmd)
 }

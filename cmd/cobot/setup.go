@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/cobot-agent/cobot/internal/persona"
 	"github.com/cobot-agent/cobot/internal/workspace"
 	"github.com/cobot-agent/cobot/internal/xdg"
 	cobot "github.com/cobot-agent/cobot/pkg"
@@ -21,12 +22,17 @@ var setupCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		reader := bufio.NewReader(os.Stdin)
 
-		fmt.Println("Cobot Setup Wizard")
-		fmt.Println("==================")
+		fmt.Println("Cobot Personal Agent Setup")
+		fmt.Println("==========================")
 		fmt.Println()
 
-		if err := workspace.EnsureGlobalDirs(); err != nil {
+		if err := workspace.EnsureGlobalWorkspace(); err != nil {
 			return err
+		}
+
+		p := persona.New()
+		if err := p.EnsureFiles(); err != nil {
+			return fmt.Errorf("ensure persona files: %w", err)
 		}
 
 		fmt.Print("LLM provider [openai]: ")
@@ -65,10 +71,14 @@ var setupCmd = &cobra.Command{
 
 		fmt.Println()
 		fmt.Printf("Config saved to %s\n", configPath)
+		fmt.Printf("SOUL:   %s\n", p.GetSoulPath())
+		fmt.Printf("USER:   %s\n", p.GetUserPath())
+		fmt.Printf("MEMORY: %s\n", p.GetMemoryPath())
 		fmt.Println()
 		fmt.Println("You can now use cobot:")
 		fmt.Println("  cobot chat \"hello\"")
 		fmt.Println("  cobot tui")
+		fmt.Println("  cobot persona edit soul")
 		return nil
 	},
 }

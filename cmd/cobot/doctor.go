@@ -7,6 +7,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/cobot-agent/cobot/internal/persona"
+	"github.com/cobot-agent/cobot/internal/workspace"
 	"github.com/cobot-agent/cobot/internal/xdg"
 )
 
@@ -16,8 +18,8 @@ var doctorCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ok := true
 
-		fmt.Println("Cobot Doctor")
-		fmt.Println("============")
+		fmt.Println("Cobot Personal Agent Doctor")
+		fmt.Println("===========================")
 
 		configDir := xdg.CobotConfigDir()
 		configPath := filepath.Join(configDir, "config.yaml")
@@ -57,16 +59,40 @@ var doctorCmd = &cobra.Command{
 			ok = false
 		}
 
+		fmt.Println("\nPersona files:")
+		p := persona.New()
+		if _, err := os.Stat(p.GetSoulPath()); err == nil {
+			fmt.Printf("  [OK] SOUL:   %s\n", p.GetSoulPath())
+		} else {
+			fmt.Printf("  [MISSING] SOUL:   %s\n", p.GetSoulPath())
+		}
+		if _, err := os.Stat(p.GetUserPath()); err == nil {
+			fmt.Printf("  [OK] USER:   %s\n", p.GetUserPath())
+		} else {
+			fmt.Printf("  [MISSING] USER:   %s\n", p.GetUserPath())
+		}
+		if _, err := os.Stat(p.GetMemoryPath()); err == nil {
+			fmt.Printf("  [OK] MEMORY: %s\n", p.GetMemoryPath())
+		} else {
+			fmt.Printf("  [MISSING] MEMORY: %s\n", p.GetMemoryPath())
+		}
+
 		fmt.Printf("\nData directory: %s\n", dataDir)
 		if info, err := os.Stat(dataDir); err == nil && info.IsDir() {
 			fmt.Println("  [OK] Directory exists")
+			memDir := workspace.GlobalMemoryDir()
+			if info, err := os.Stat(memDir); err == nil && info.IsDir() {
+				fmt.Printf("  [OK] Memory dir: %s\n", memDir)
+			} else {
+				fmt.Printf("  [INFO] Memory dir will be created: %s\n", memDir)
+			}
 		} else {
 			fmt.Println("  [MISSING] Will be created on first use")
 		}
 
 		fmt.Println()
 		if ok {
-			fmt.Println("All checks passed!")
+			fmt.Println("All critical checks passed!")
 		} else {
 			fmt.Println("Some issues found. Run 'cobot setup' to fix.")
 		}
