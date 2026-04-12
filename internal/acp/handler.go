@@ -7,6 +7,7 @@ import (
 	"github.com/creachadair/jrpc2"
 
 	acpapi "github.com/cobot-agent/cobot/api/acp"
+	"github.com/cobot-agent/cobot/internal/workspace"
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
@@ -28,11 +29,26 @@ func (s *ACPServer) handleInitialize(ctx context.Context, req acpapi.InitializeR
 func (s *ACPServer) handleSessionNew(ctx context.Context, req acpapi.NewSessionRequest) (acpapi.NewSessionResponse, error) {
 	id := newSessionID()
 	sessCtx, cancel := context.WithCancel(context.Background())
+
+	if req.Workspace != "" {
+		m, err := workspace.NewManager()
+		if err != nil {
+			cancel()
+			return acpapi.NewSessionResponse{}, jrpc2.Errorf(jrpc2.InvalidParams, "workspace manager error: %v", err)
+		}
+		if _, err := m.Resolve(req.Workspace); err != nil {
+			cancel()
+			return acpapi.NewSessionResponse{}, jrpc2.Errorf(jrpc2.InvalidParams, "workspace not found: %s", req.Workspace)
+		}
+	}
+
 	s.sessions.Put(&Session{
-		ID:       id,
-		CWD:      req.CWD,
-		Ctx:      sessCtx,
-		CancelFn: cancel,
+		ID:        id,
+		CWD:       req.CWD,
+		Workspace: req.Workspace,
+		Agent:     req.Agent,
+		Ctx:       sessCtx,
+		CancelFn:  cancel,
 	})
 	return acpapi.NewSessionResponse{
 		SessionID: id,

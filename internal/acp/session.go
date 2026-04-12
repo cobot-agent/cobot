@@ -8,10 +8,12 @@ import (
 )
 
 type Session struct {
-	ID       string
-	CWD      string
-	Ctx      context.Context
-	CancelFn context.CancelFunc
+	ID        string
+	CWD       string
+	Workspace string
+	Agent     string
+	Ctx       context.Context
+	CancelFn  context.CancelFunc
 }
 
 type SessionStore struct {
