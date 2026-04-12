@@ -48,14 +48,20 @@ func TestReadStreamSingleToolCall(t *testing.T) {
 		t.Fatal("expected a Done chunk")
 	}
 
-	var toolCallIdx int
+	var firstToolCallIdx int
+	foundToolCall := false
 	for i, c := range chunks {
-		if c.ToolCall != nil {
-			toolCallIdx = i
+		if c.ToolCall != nil && !foundToolCall {
+			firstToolCallIdx = i
+			foundToolCall = true
+			break
 		}
 	}
-	if toolCallIdx >= doneIdx {
-		t.Errorf("tool call at index %d must come before Done at index %d", toolCallIdx, doneIdx)
+	if !foundToolCall {
+		t.Fatal("expected at least one tool call chunk")
+	}
+	if firstToolCallIdx >= doneIdx {
+		t.Errorf("first tool call at index %d must come before Done at index %d", firstToolCallIdx, doneIdx)
 	}
 
 	if len(toolCallChunks) != 1 {

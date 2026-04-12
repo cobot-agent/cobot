@@ -14,6 +14,8 @@ import (
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
+const maxResultDisplayLen = 200
+
 type tuiModel struct {
 	input        textinput.Model
 	messages     []string
@@ -152,10 +154,12 @@ func (m tuiModel) handleStreamMsg(msg streamMsg) (tea.Model, tea.Cmd) {
 		m.messages = append(m.messages, fmt.Sprintf("  [Tool: %s]", msg.toolName))
 	case cobot.EventToolResult:
 		short := msg.content
-		if len(short) > 200 {
-			short = short[:200] + "..."
+		if len(short) > maxResultDisplayLen {
+			short = short[:maxResultDisplayLen] + "..."
 		}
 		m.messages = append(m.messages, fmt.Sprintf("  [Result: %s]", short))
+	case cobot.EventError:
+		m.messages = append(m.messages, lipgloss.NewStyle().Foreground(lipgloss.Color("#FF0000")).Render("Error: "+msg.content))
 	}
 
 	return m, m.readNextEvent()

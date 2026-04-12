@@ -14,6 +14,8 @@ import (
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
+const maxScannerBuffer = 256 * 1024 // 256KB
+
 type Provider struct {
 	apiKey  string
 	baseURL string
@@ -121,6 +123,8 @@ func (p *Provider) readStream(body io.ReadCloser, ch chan<- cobot.ProviderChunk)
 	pending := make(map[int]*pendingToolCall)
 
 	scanner := bufio.NewScanner(body)
+	scanner.Buffer(make([]byte, 4096), maxScannerBuffer)
+
 	for scanner.Scan() {
 		line := scanner.Text()
 		if !strings.HasPrefix(line, "data: ") {
@@ -133,6 +137,9 @@ func (p *Provider) readStream(body io.ReadCloser, ch chan<- cobot.ProviderChunk)
 
 		var chunk streamChunk
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			ch <- cobot.ProviderChunk{
+				Content: fmt.Sprintf("[stream error: malformed data: %v]", err),
+			}
 			continue
 		}
 
@@ -180,7 +187,10 @@ func (p *Provider) readStream(body io.ReadCloser, ch chan<- cobot.ProviderChunk)
 	}
 
 	if err := scanner.Err(); err != nil {
-		ch <- cobot.ProviderChunk{Done: true}
+		ch <- cobot.ProviderChunk{
+			Content: fmt.Sprintf("[stream error: %v]", err),
+			Done:    true,
+		}
 	}
 }
 
