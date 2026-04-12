@@ -2,6 +2,7 @@ package agent
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/cobot-agent/cobot/acp"
 	"github.com/cobot-agent/cobot/internal/memory"
@@ -10,13 +11,15 @@ import (
 )
 
 type Agent struct {
-	config      *cobot.Config
-	provider    cobot.Provider
-	tools       *tools.Registry
-	session     *Session
-	memoryStore *memory.Store
-	// ACP server scaffolding. May be nil until initialized.
-	acpServer *acp.Server
+	config       *cobot.Config
+	provider     cobot.Provider
+	tools        *tools.Registry
+	session      *Session
+	memoryStore  memory.Client
+	memoryAgent  *memory.Agent
+	acpServer    *acp.Server
+	systemPrompt string
+	sysPromptMu  sync.RWMutex
 }
 
 func New(config *cobot.Config) *Agent {
@@ -57,6 +60,13 @@ func (a *Agent) Session() *Session {
 	return a.session
 }
 
+func (a *Agent) AddMessage(m cobot.Message) {
+	a.session.AddMessage(m)
+	if a.memoryAgent != nil {
+		a.memoryAgent.AddMessage(m)
+	}
+}
+
 func (a *Agent) RegisterTool(tool cobot.Tool) {
 	a.tools.Register(tool)
 }
@@ -65,13 +75,20 @@ func (a *Agent) SetToolRegistry(r *tools.Registry) {
 	a.tools = r
 }
 
-func (a *Agent) SetMemoryStore(s *memory.Store) {
+func (a *Agent) SetMemoryStore(s memory.Client) {
 	a.memoryStore = s
 	a.tools.Register(memory.NewMemorySearchTool(s))
 	a.tools.Register(memory.NewMemoryStoreTool(s))
+	a.tools.Register(memory.NewMemorySummarizeTool(s))
+	a.tools.Register(memory.NewL3DeepSearchTool(s))
+
+	if a.config.Memory.IntelligentCuration && a.provider != nil {
+		a.memoryAgent = memory.NewAgent(a.provider, s)
+		a.memoryAgent.Start()
+	}
 }
 
-func (a *Agent) MemoryStore() *memory.Store {
+func (a *Agent) MemoryStore() memory.Client {
 	return a.memoryStore
 }
 
@@ -84,6 +101,9 @@ func (a *Agent) Provider() cobot.Provider {
 }
 
 func (a *Agent) Close() error {
+	if a.memoryAgent != nil {
+		a.memoryAgent.Stop()
+	}
 	if a.memoryStore != nil {
 		if err := a.memoryStore.Close(); err != nil {
 			return fmt.Errorf("close memory store: %w", err)

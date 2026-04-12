@@ -1,5 +1,7 @@
 package cobot
 
+import "time"
+
 type Config struct {
 	ConfigPath  string  `yaml:"config_path"`
 	Workspace   string  `yaml:"workspace"`
@@ -28,9 +30,11 @@ func (c *Config) migrateTools() {
 }
 
 type MemoryConfig struct {
-	Enabled    bool
-	BadgerPath string
-	BlevePath  string
+	Enabled             bool          `yaml:"enabled"`
+	IntelligentCuration bool          `yaml:"intelligent_curation"`
+	CurationInterval    time.Duration `yaml:"curation_interval"`
+	BadgerPath          string        `yaml:"badger_path"`
+	BlevePath           string        `yaml:"bleve_path"`
 }
 
 type ProviderConfig struct {
@@ -57,5 +61,10 @@ func DefaultConfig() *Config {
 		MaxTurns: 50,
 		Model:    "openai:gpt-4o",
 		APIKeys:  make(map[string]string),
+		Memory: MemoryConfig{
+			Enabled:             true,
+			IntelligentCuration: true,
+			CurationInterval:    30 * time.Second,
+		},
 	}
 }
