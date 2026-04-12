@@ -165,6 +165,30 @@ func (m *MCPManager) Close() {
 	}
 }
 
+func (m *MCPManager) ConnectFromRegistry(ctx context.Context, name string, entry *RegistryEntry) error {
+	cfg := ServerConfig{
+		Command: entry.Command,
+		Args:    entry.Args,
+	}
+	for k, v := range entry.Env {
+		cfg.Env = append(cfg.Env, k+"="+v)
+	}
+	return m.Connect(ctx, name, cfg)
+}
+
+func (m *MCPManager) ConnectEnabled(ctx context.Context, registry map[string]*RegistryEntry, enabled []string) error {
+	for _, name := range enabled {
+		entry, ok := registry[name]
+		if !ok {
+			return fmt.Errorf("MCP server %q not found in registry", name)
+		}
+		if err := m.ConnectFromRegistry(ctx, name, entry); err != nil {
+			return fmt.Errorf("connect MCP server %q: %w", name, err)
+		}
+	}
+	return nil
+}
+
 func extractText(contents []mcp.Content) string {
 	var text string
 	for _, content := range contents {
