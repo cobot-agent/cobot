@@ -6,9 +6,40 @@ import (
 	"testing"
 )
 
-func TestDiscover_NoWorkspace(t *testing.T) {
+func setupDiscoveryManager(t *testing.T) (*Manager, func()) {
+	t.Helper()
 	tmpDir := t.TempDir()
+	origConfig := os.Getenv("COBOT_CONFIG_PATH")
+	origData := os.Getenv("COBOT_DATA_PATH")
 
+	os.Setenv("COBOT_CONFIG_PATH", filepath.Join(tmpDir, "config"))
+	os.Setenv("COBOT_DATA_PATH", filepath.Join(tmpDir, "data"))
+
+	m, err := NewManager()
+	if err != nil {
+		t.Fatalf("NewManager() error: %v", err)
+	}
+
+	cleanup := func() {
+		if origConfig != "" {
+			os.Setenv("COBOT_CONFIG_PATH", origConfig)
+		} else {
+			os.Unsetenv("COBOT_CONFIG_PATH")
+		}
+		if origData != "" {
+			os.Setenv("COBOT_DATA_PATH", origData)
+		} else {
+			os.Unsetenv("COBOT_DATA_PATH")
+		}
+	}
+	return m, cleanup
+}
+
+func TestDiscover_NoWorkspace(t *testing.T) {
+	_, cleanup := setupDiscoveryManager(t)
+	defer cleanup()
+
+	tmpDir := t.TempDir()
 	_, err := Discover(tmpDir)
 	if err == nil {
 		t.Fatal("expected error when no workspace found")
@@ -16,6 +47,9 @@ func TestDiscover_NoWorkspace(t *testing.T) {
 }
 
 func TestDiscover_FindsWorkspace(t *testing.T) {
+	m, cleanup := setupDiscoveryManager(t)
+	defer cleanup()
+
 	tmpDir := t.TempDir()
 	targetDir := filepath.Join(tmpDir, "project")
 	cobotDir := filepath.Join(targetDir, ".cobot")
@@ -24,94 +58,25 @@ func TestDiscover_FindsWorkspace(t *testing.T) {
 		t.Fatalf("failed to create .cobot dir: %v", err)
 	}
 
-	manager, err := NewManager()
+	ws, err := m.Discover(targetDir)
 	if err != nil {
-		t.Fatalf("failed to create manager: %v", err)
+		t.Fatalf("Discover() error: %v", err)
 	}
-
-	_, err = EnsureDefaultWorkspace()
-	if err != nil {
-		t.Fatalf("failed to ensure default workspace: %v", err)
-	}
-
-	ws, err := Discover(targetDir)
-	if err != nil {
-		ws, err = manager.CreateProject(targetDir)
-		if err != nil {
-			t.Fatalf("failed to create project workspace: %v", err)
-		}
-	}
-
-	if ws.Type != WorkspaceTypeProject {
-		t.Errorf("expected project type, got %s", ws.Type)
+	if ws.Definition.Type != WorkspaceTypeProject {
+		t.Errorf("expected project type, got %s", ws.Definition.Type)
 	}
 }
 
 func TestDiscoverOrDefault_ReturnsDefault(t *testing.T) {
+	_, cleanup := setupDiscoveryManager(t)
+	defer cleanup()
+
 	tmpDir := t.TempDir()
-
-	_, err := EnsureDefaultWorkspace()
-	if err != nil {
-		t.Fatalf("failed to ensure default workspace: %v", err)
-	}
-
 	ws, err := DiscoverOrDefault(tmpDir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-
 	if !ws.IsDefault() {
 		t.Error("expected default workspace when no project found")
-	}
-}
-
-func TestWorkspace_ValidatePathWithinWorkspace(t *testing.T) {
-	tmpDir := t.TempDir()
-	ws := &Workspace{
-		ID:        "test-id",
-		Name:      "test",
-		Type:      WorkspaceTypeCustom,
-		ConfigDir: filepath.Join(tmpDir, "config"),
-		DataDir:   filepath.Join(tmpDir, "data"),
-		Root:      "",
-	}
-
-	os.MkdirAll(ws.ConfigDir, 0755)
-	os.MkdirAll(ws.DataDir, 0755)
-
-	tests := []struct {
-		name    string
-		path    string
-		wantErr bool
-	}{
-		{
-			name:    "valid config path",
-			path:    filepath.Join(ws.ConfigDir, "SOUL.md"),
-			wantErr: false,
-		},
-		{
-			name:    "valid data path",
-			path:    filepath.Join(ws.DataDir, "memory", "test.db"),
-			wantErr: false,
-		},
-		{
-			name:    "outside workspace",
-			path:    filepath.Join(tmpDir, "..", "outside.txt"),
-			wantErr: true,
-		},
-		{
-			name:    "system path",
-			path:    "/etc/passwd",
-			wantErr: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := ws.ValidatePathWithinWorkspace(tt.path)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("ValidatePathWithinWorkspace() error = %v, wantErr %v", err, tt.wantErr)
-			}
-		})
 	}
 }

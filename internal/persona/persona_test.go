@@ -11,16 +11,25 @@ import (
 func setupTestWorkspace(t *testing.T) *workspace.Workspace {
 	tmpDir := t.TempDir()
 	ws := &workspace.Workspace{
-		ID:        "test-id",
-		Name:      "test",
-		Type:      workspace.WorkspaceTypeCustom,
-		ConfigDir: filepath.Join(tmpDir, "config"),
-		DataDir:   filepath.Join(tmpDir, "data"),
+		Definition: &workspace.WorkspaceDefinition{
+			Name: "test",
+			Type: workspace.WorkspaceTypeCustom,
+		},
+		Config:  newWorkspaceConfig("test"),
+		DataDir: filepath.Join(tmpDir, "data"),
 	}
 	if err := ws.EnsureDirs(); err != nil {
 		t.Fatalf("Failed to create workspace dirs: %v", err)
 	}
 	return ws
+}
+
+func newWorkspaceConfig(name string) *workspace.WorkspaceConfig {
+	return &workspace.WorkspaceConfig{
+		ID:   "test-id",
+		Name: name,
+		Type: workspace.WorkspaceTypeCustom,
+	}
 }
 
 func TestNewService(t *testing.T) {
@@ -163,16 +172,16 @@ func TestFileLocations(t *testing.T) {
 	ws := setupTestWorkspace(t)
 	svc := NewService(ws)
 
-	if svc.GetSoulPath() != filepath.Join(ws.ConfigDir, "SOUL.md") {
-		t.Errorf("SOUL.md should be in workspace config dir")
+	if svc.GetSoulPath() != filepath.Join(ws.DataDir, "SOUL.md") {
+		t.Errorf("SOUL.md should be in workspace data dir")
 	}
 
-	if svc.GetUserPath() != filepath.Join(ws.ConfigDir, "USER.md") {
-		t.Errorf("USER.md should be in workspace config dir")
+	if svc.GetUserPath() != filepath.Join(ws.DataDir, "USER.md") {
+		t.Errorf("USER.md should be in workspace data dir")
 	}
 
-	if svc.GetMemoryPath() != filepath.Join(ws.ConfigDir, "MEMORY.md") {
-		t.Errorf("MEMORY.md should be in workspace config dir")
+	if svc.GetMemoryPath() != filepath.Join(ws.DataDir, "MEMORY.md") {
+		t.Errorf("MEMORY.md should be in workspace data dir")
 	}
 }
 

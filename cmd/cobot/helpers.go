@@ -49,13 +49,19 @@ func initProvider(cfg *cobot.Config) (cobot.Provider, error) {
 	}
 }
 
-func initAgent(cfg *cobot.Config, requireProvider bool) (*agent.Agent, func(), error) {
-	manager, err := workspace.NewManager()
+func resolveWorkspace() (*workspace.Workspace, error) {
+	m, err := workspace.NewManager()
 	if err != nil {
-		return nil, nil, fmt.Errorf("create workspace manager: %w", err)
+		return nil, fmt.Errorf("create workspace manager: %w", err)
 	}
+	return m.ResolveByNameOrDiscover("", ".")
+}
 
-	ws := manager.Current()
+func initAgent(cfg *cobot.Config, requireProvider bool) (*agent.Agent, func(), error) {
+	ws, err := resolveWorkspace()
+	if err != nil {
+		return nil, nil, err
+	}
 	if err := ws.EnsureDirs(); err != nil {
 		return nil, nil, fmt.Errorf("ensure workspace dirs: %w", err)
 	}

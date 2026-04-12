@@ -10,7 +10,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/cobot-agent/cobot/internal/persona"
-	"github.com/cobot-agent/cobot/internal/workspace"
 	"github.com/cobot-agent/cobot/internal/xdg"
 	cobot "github.com/cobot-agent/cobot/pkg"
 	"gopkg.in/yaml.v3"
@@ -26,12 +25,10 @@ var setupCmd = &cobra.Command{
 		fmt.Println("==========================")
 		fmt.Println()
 
-		manager, err := workspace.NewManager()
+		ws, err := resolveWorkspace()
 		if err != nil {
-			return fmt.Errorf("create workspace manager: %w", err)
+			return err
 		}
-
-		ws := manager.Current()
 		if err := ws.EnsureDirs(); err != nil {
 			return fmt.Errorf("ensure workspace dirs: %w", err)
 		}
@@ -77,7 +74,7 @@ var setupCmd = &cobra.Command{
 
 		fmt.Println()
 		fmt.Printf("Config saved to %s\n", configPath)
-		fmt.Printf("Workspace: %s (%s)\n", ws.Name, ws.ID[:8])
+		fmt.Printf("Workspace: %s (%s)\n", ws.Config.Name, ws.Config.ID[:8])
 		fmt.Printf("SOUL:   %s\n", svc.GetSoulPath())
 		fmt.Printf("USER:   %s\n", svc.GetUserPath())
 		fmt.Printf("MEMORY: %s\n", svc.GetMemoryPath())
@@ -90,7 +87,7 @@ var setupCmd = &cobra.Command{
 		fmt.Println("Workspace commands:")
 		fmt.Println("  cobot workspace list")
 		fmt.Println("  cobot workspace create <name>")
-		fmt.Println("  cobot workspace switch <name>")
+		fmt.Println("  cobot workspace show <name>")
 		return nil
 	},
 }
