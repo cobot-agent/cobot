@@ -50,8 +50,14 @@ func initProvider(cfg *cobot.Config) (cobot.Provider, error) {
 }
 
 func initAgent(cfg *cobot.Config, requireProvider bool) (*agent.Agent, func(), error) {
-	if err := workspace.EnsureGlobalWorkspace(); err != nil {
-		return nil, nil, fmt.Errorf("ensure global workspace: %w", err)
+	manager, err := workspace.NewManager()
+	if err != nil {
+		return nil, nil, fmt.Errorf("create workspace manager: %w", err)
+	}
+
+	ws := manager.Current()
+	if err := ws.EnsureDirs(); err != nil {
+		return nil, nil, fmt.Errorf("ensure workspace dirs: %w", err)
 	}
 
 	a := agent.New(cfg)
@@ -66,7 +72,7 @@ func initAgent(cfg *cobot.Config, requireProvider bool) (*agent.Agent, func(), e
 		a.SetProvider(provider)
 	}
 
-	dataDir := workspace.GlobalMemoryDir()
+	dataDir := ws.MemoryDir()
 	mc, memCleanup, err := daemon.StartOrConnect(context.Background(), dataDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to open memory store: %v\n", err)

@@ -26,12 +26,18 @@ var setupCmd = &cobra.Command{
 		fmt.Println("==========================")
 		fmt.Println()
 
-		if err := workspace.EnsureGlobalWorkspace(); err != nil {
-			return err
+		manager, err := workspace.NewManager()
+		if err != nil {
+			return fmt.Errorf("create workspace manager: %w", err)
 		}
 
-		p := persona.New()
-		if err := p.EnsureFiles(); err != nil {
+		ws := manager.Current()
+		if err := ws.EnsureDirs(); err != nil {
+			return fmt.Errorf("ensure workspace dirs: %w", err)
+		}
+
+		svc := persona.NewService(ws)
+		if err := svc.EnsureFiles(); err != nil {
 			return fmt.Errorf("ensure persona files: %w", err)
 		}
 
@@ -71,14 +77,20 @@ var setupCmd = &cobra.Command{
 
 		fmt.Println()
 		fmt.Printf("Config saved to %s\n", configPath)
-		fmt.Printf("SOUL:   %s\n", p.GetSoulPath())
-		fmt.Printf("USER:   %s\n", p.GetUserPath())
-		fmt.Printf("MEMORY: %s\n", p.GetMemoryPath())
+		fmt.Printf("Workspace: %s (%s)\n", ws.Name, ws.ID[:8])
+		fmt.Printf("SOUL:   %s\n", svc.GetSoulPath())
+		fmt.Printf("USER:   %s\n", svc.GetUserPath())
+		fmt.Printf("MEMORY: %s\n", svc.GetMemoryPath())
 		fmt.Println()
 		fmt.Println("You can now use cobot:")
 		fmt.Println("  cobot chat \"hello\"")
 		fmt.Println("  cobot tui")
 		fmt.Println("  cobot persona edit soul")
+		fmt.Println()
+		fmt.Println("Workspace commands:")
+		fmt.Println("  cobot workspace list")
+		fmt.Println("  cobot workspace create <name>")
+		fmt.Println("  cobot workspace switch <name>")
 		return nil
 	},
 }

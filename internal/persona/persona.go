@@ -5,7 +5,6 @@ import (
 	"os"
 
 	"github.com/cobot-agent/cobot/internal/workspace"
-	"github.com/cobot-agent/cobot/internal/xdg"
 )
 
 const defaultSoulContent = `# SOUL
@@ -53,37 +52,29 @@ This file contains consolidated memories from your conversations.
 - Active projects and their status
 `
 
-// Persona manages the personal agent's persona files
-type Persona struct {
-	ConfigDir string
-	DataDir   string
+type Service struct {
+	ws *workspace.Workspace
 }
 
-// New creates a new Persona instance
-func New() *Persona {
-	return &Persona{
-		ConfigDir: xdg.CobotConfigDir(),
-		DataDir:   xdg.CobotDataDir(),
-	}
+func NewService(ws *workspace.Workspace) *Service {
+	return &Service{ws: ws}
 }
 
-// EnsureFiles creates all persona files if they don't exist
-func (p *Persona) EnsureFiles() error {
-	if err := p.EnsureSoulFile(); err != nil {
+func (s *Service) EnsureFiles() error {
+	if err := s.EnsureSoulFile(); err != nil {
 		return fmt.Errorf("ensure soul file: %w", err)
 	}
-	if err := p.EnsureUserFile(); err != nil {
+	if err := s.EnsureUserFile(); err != nil {
 		return fmt.Errorf("ensure user file: %w", err)
 	}
-	if err := p.EnsureMemoryFile(); err != nil {
+	if err := s.EnsureMemoryFile(); err != nil {
 		return fmt.Errorf("ensure memory file: %w", err)
 	}
 	return nil
 }
 
-// EnsureSoulFile creates SOUL.md if it doesn't exist
-func (p *Persona) EnsureSoulFile() error {
-	path := workspace.GlobalSoulPath()
+func (s *Service) EnsureSoulFile() error {
+	path := s.ws.GetSoulPath()
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		if err := os.WriteFile(path, []byte(defaultSoulContent), 0644); err != nil {
 			return fmt.Errorf("write soul file: %w", err)
@@ -92,9 +83,8 @@ func (p *Persona) EnsureSoulFile() error {
 	return nil
 }
 
-// EnsureUserFile creates USER.md if it doesn't exist
-func (p *Persona) EnsureUserFile() error {
-	path := workspace.GlobalUserPath()
+func (s *Service) EnsureUserFile() error {
+	path := s.ws.GetUserPath()
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		if err := os.WriteFile(path, []byte(defaultUserContent), 0644); err != nil {
 			return fmt.Errorf("write user file: %w", err)
@@ -103,9 +93,8 @@ func (p *Persona) EnsureUserFile() error {
 	return nil
 }
 
-// EnsureMemoryFile creates MEMORY.md if it doesn't exist
-func (p *Persona) EnsureMemoryFile() error {
-	path := workspace.GlobalMemoryMdPath()
+func (s *Service) EnsureMemoryFile() error {
+	path := s.ws.GetMemoryMdPath()
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		if err := os.WriteFile(path, []byte(defaultMemoryContent), 0644); err != nil {
 			return fmt.Errorf("write memory file: %w", err)
@@ -114,9 +103,8 @@ func (p *Persona) EnsureMemoryFile() error {
 	return nil
 }
 
-// LoadSoul reads the SOUL.md content
-func (p *Persona) LoadSoul() (string, error) {
-	path := workspace.GlobalSoulPath()
+func (s *Service) LoadSoul() (string, error) {
+	path := s.ws.GetSoulPath()
 	content, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -127,9 +115,8 @@ func (p *Persona) LoadSoul() (string, error) {
 	return string(content), nil
 }
 
-// LoadUser reads the USER.md content
-func (p *Persona) LoadUser() (string, error) {
-	path := workspace.GlobalUserPath()
+func (s *Service) LoadUser() (string, error) {
+	path := s.ws.GetUserPath()
 	content, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -140,9 +127,8 @@ func (p *Persona) LoadUser() (string, error) {
 	return string(content), nil
 }
 
-// LoadMemory reads the MEMORY.md content
-func (p *Persona) LoadMemory() (string, error) {
-	path := workspace.GlobalMemoryMdPath()
+func (s *Service) LoadMemory() (string, error) {
+	path := s.ws.GetMemoryMdPath()
 	content, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -153,44 +139,42 @@ func (p *Persona) LoadMemory() (string, error) {
 	return string(content), nil
 }
 
-// SaveSoul writes the SOUL.md content
-func (p *Persona) SaveSoul(content string) error {
-	path := workspace.GlobalSoulPath()
+func (s *Service) SaveSoul(content string) error {
+	path := s.ws.GetSoulPath()
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		return fmt.Errorf("write soul file: %w", err)
 	}
 	return nil
 }
 
-// SaveUser writes the USER.md content
-func (p *Persona) SaveUser(content string) error {
-	path := workspace.GlobalUserPath()
+func (s *Service) SaveUser(content string) error {
+	path := s.ws.GetUserPath()
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		return fmt.Errorf("write user file: %w", err)
 	}
 	return nil
 }
 
-// SaveMemory writes the MEMORY.md content
-func (p *Persona) SaveMemory(content string) error {
-	path := workspace.GlobalMemoryMdPath()
+func (s *Service) SaveMemory(content string) error {
+	path := s.ws.GetMemoryMdPath()
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		return fmt.Errorf("write memory file: %w", err)
 	}
 	return nil
 }
 
-// GetSoulPath returns the path to SOUL.md
-func (p *Persona) GetSoulPath() string {
-	return workspace.GlobalSoulPath()
+func (s *Service) GetSoulPath() string {
+	return s.ws.GetSoulPath()
 }
 
-// GetUserPath returns the path to USER.md
-func (p *Persona) GetUserPath() string {
-	return workspace.GlobalUserPath()
+func (s *Service) GetUserPath() string {
+	return s.ws.GetUserPath()
 }
 
-// GetMemoryPath returns the path to MEMORY.md
-func (p *Persona) GetMemoryPath() string {
-	return workspace.GlobalMemoryMdPath()
+func (s *Service) GetMemoryPath() string {
+	return s.ws.GetMemoryMdPath()
+}
+
+func (s *Service) Workspace() *workspace.Workspace {
+	return s.ws
 }

@@ -69,10 +69,11 @@ var configSetCmd = &cobra.Command{
 		key := args[0]
 		value := args[1]
 
-		ws, err := workspace.DiscoverOrGlobal("")
+		m, err := workspace.NewManager()
 		if err != nil {
-			return fmt.Errorf("finding workspace: %w", err)
+			return fmt.Errorf("create workspace manager: %w", err)
 		}
+		ws := m.Current()
 
 		cfg := cobot.DefaultConfig()
 		_ = config.LoadFromFile(cfg, ws.ConfigPath)
@@ -97,10 +98,11 @@ var configInitCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		force, _ := cmd.Flags().GetBool("force")
 
-		ws, err := workspace.DiscoverOrGlobal("")
+		m, err := workspace.NewManager()
 		if err != nil {
-			return fmt.Errorf("finding workspace: %w", err)
+			return fmt.Errorf("create workspace manager: %w", err)
 		}
+		ws := m.Current()
 
 		if _, err := os.Stat(ws.ConfigPath); err == nil && !force {
 			return fmt.Errorf("config already exists at %s (use --force to overwrite)", ws.ConfigPath)
@@ -130,10 +132,11 @@ var configEditCmd = &cobra.Command{
 	Use:   "edit",
 	Short: "Edit configuration file in default editor",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		ws, err := workspace.DiscoverOrGlobal("")
+		m, err := workspace.NewManager()
 		if err != nil {
-			return fmt.Errorf("finding workspace: %w", err)
+			return fmt.Errorf("create workspace manager: %w", err)
 		}
+		ws := m.Current()
 
 		if _, err := os.Stat(ws.ConfigPath); os.IsNotExist(err) {
 			cfg := cobot.DefaultConfig()
@@ -164,10 +167,11 @@ var configValidateCmd = &cobra.Command{
 	Use:   "validate",
 	Short: "Validate configuration file",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		ws, err := workspace.DiscoverOrGlobal("")
+		m, err := workspace.NewManager()
 		if err != nil {
-			return fmt.Errorf("finding workspace: %w", err)
+			return fmt.Errorf("create workspace manager: %w", err)
 		}
+		ws := m.Current()
 
 		cfg := cobot.DefaultConfig()
 		if err := config.LoadFromFile(cfg, ws.ConfigPath); err != nil {
@@ -200,10 +204,11 @@ var configSetProviderCmd = &cobra.Command{
 		baseURL, _ := cmd.Flags().GetString("base-url")
 		headerFlags, _ := cmd.Flags().GetStringArray("header")
 
-		ws, err := workspace.DiscoverOrGlobal("")
+		m, err := workspace.NewManager()
 		if err != nil {
-			return fmt.Errorf("finding workspace: %w", err)
+			return fmt.Errorf("create workspace manager: %w", err)
 		}
+		ws := m.Current()
 
 		cfg := cobot.DefaultConfig()
 		_ = config.LoadFromFile(cfg, ws.ConfigPath)
@@ -258,10 +263,11 @@ var configSetApiKeyCmd = &cobra.Command{
 		provider := args[0]
 		apiKey := args[1]
 
-		ws, err := workspace.DiscoverOrGlobal("")
+		m, err := workspace.NewManager()
 		if err != nil {
-			return fmt.Errorf("finding workspace: %w", err)
+			return fmt.Errorf("create workspace manager: %w", err)
 		}
+		ws := m.Current()
 
 		cfg := cobot.DefaultConfig()
 		_ = config.LoadFromFile(cfg, ws.ConfigPath)

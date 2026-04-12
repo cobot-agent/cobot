@@ -16,12 +16,26 @@ var memoryCmd = &cobra.Command{
 	Short: "Search and inspect memory palace",
 }
 
+func getCurrentWorkspaceMemoryDir() (string, error) {
+	m, err := workspace.NewManager()
+	if err != nil {
+		return "", fmt.Errorf("create workspace manager: %w", err)
+	}
+	ws := m.Current()
+	return ws.MemoryDir(), nil
+}
+
 var memorySearchCmd = &cobra.Command{
 	Use:   "search [query]",
 	Short: "Search memory",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client, cleanup, err := daemon.StartOrConnect(context.Background(), workspace.GlobalMemoryDir())
+		memoryDir, err := getCurrentWorkspaceMemoryDir()
+		if err != nil {
+			return err
+		}
+
+		client, cleanup, err := daemon.StartOrConnect(context.Background(), memoryDir)
 		if err != nil {
 			return err
 		}
@@ -54,7 +68,12 @@ var memoryStoreCmd = &cobra.Command{
 	Short: "Store information in memory palace",
 	Args:  cobra.ExactArgs(3),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client, cleanup, err := daemon.StartOrConnect(context.Background(), workspace.GlobalMemoryDir())
+		memoryDir, err := getCurrentWorkspaceMemoryDir()
+		if err != nil {
+			return err
+		}
+
+		client, cleanup, err := daemon.StartOrConnect(context.Background(), memoryDir)
 		if err != nil {
 			return err
 		}
@@ -92,7 +111,12 @@ var memoryStatusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show memory palace overview",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client, cleanup, err := daemon.StartOrConnect(context.Background(), workspace.GlobalMemoryDir())
+		memoryDir, err := getCurrentWorkspaceMemoryDir()
+		if err != nil {
+			return err
+		}
+
+		client, cleanup, err := daemon.StartOrConnect(context.Background(), memoryDir)
 		if err != nil {
 			return err
 		}
@@ -103,7 +127,12 @@ var memoryStatusCmd = &cobra.Command{
 			return err
 		}
 
-		fmt.Fprintf(cmd.OutOrStdout(), "Memory Palace: %d wings\n", len(wings))
+		m, err := workspace.NewManager()
+		if err != nil {
+			return fmt.Errorf("create workspace manager: %w", err)
+		}
+		ws := m.Current()
+		fmt.Fprintf(cmd.OutOrStdout(), "Memory Palace for workspace '%s': %d wings\n", ws.Name, len(wings))
 		for _, w := range wings {
 			rooms, _ := client.GetRooms(context.Background(), w.ID)
 			fmt.Fprintf(cmd.OutOrStdout(), "  Wing: %s (%s) — %d rooms\n", w.Name, w.ID, len(rooms))

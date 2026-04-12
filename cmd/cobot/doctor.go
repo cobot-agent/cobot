@@ -7,7 +7,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/cobot-agent/cobot/internal/persona"
 	"github.com/cobot-agent/cobot/internal/workspace"
 	"github.com/cobot-agent/cobot/internal/xdg"
 )
@@ -20,6 +19,14 @@ var doctorCmd = &cobra.Command{
 
 		fmt.Println("Cobot Personal Agent Doctor")
 		fmt.Println("===========================")
+
+		manager, err := workspace.NewManager()
+		if err != nil {
+			fmt.Printf("  [ERROR] Failed to create workspace manager: %v\n", err)
+			return err
+		}
+
+		ws := manager.Current()
 
 		configDir := xdg.CobotConfigDir()
 		configPath := filepath.Join(configDir, "config.yaml")
@@ -59,28 +66,34 @@ var doctorCmd = &cobra.Command{
 			ok = false
 		}
 
+		fmt.Println("\nCurrent workspace:")
+		fmt.Printf("  Name: %s (%s)\n", ws.Name, ws.ID[:8])
+		fmt.Printf("  Type: %s\n", ws.Type)
+		if ws.Root != "" {
+			fmt.Printf("  Root: %s\n", ws.Root)
+		}
+
 		fmt.Println("\nPersona files:")
-		p := persona.New()
-		if _, err := os.Stat(p.GetSoulPath()); err == nil {
-			fmt.Printf("  [OK] SOUL:   %s\n", p.GetSoulPath())
+		if _, err := os.Stat(ws.GetSoulPath()); err == nil {
+			fmt.Printf("  [OK] SOUL:   %s\n", ws.GetSoulPath())
 		} else {
-			fmt.Printf("  [MISSING] SOUL:   %s\n", p.GetSoulPath())
+			fmt.Printf("  [MISSING] SOUL:   %s\n", ws.GetSoulPath())
 		}
-		if _, err := os.Stat(p.GetUserPath()); err == nil {
-			fmt.Printf("  [OK] USER:   %s\n", p.GetUserPath())
+		if _, err := os.Stat(ws.GetUserPath()); err == nil {
+			fmt.Printf("  [OK] USER:   %s\n", ws.GetUserPath())
 		} else {
-			fmt.Printf("  [MISSING] USER:   %s\n", p.GetUserPath())
+			fmt.Printf("  [MISSING] USER:   %s\n", ws.GetUserPath())
 		}
-		if _, err := os.Stat(p.GetMemoryPath()); err == nil {
-			fmt.Printf("  [OK] MEMORY: %s\n", p.GetMemoryPath())
+		if _, err := os.Stat(ws.GetMemoryMdPath()); err == nil {
+			fmt.Printf("  [OK] MEMORY: %s\n", ws.GetMemoryMdPath())
 		} else {
-			fmt.Printf("  [MISSING] MEMORY: %s\n", p.GetMemoryPath())
+			fmt.Printf("  [MISSING] MEMORY: %s\n", ws.GetMemoryMdPath())
 		}
 
 		fmt.Printf("\nData directory: %s\n", dataDir)
 		if info, err := os.Stat(dataDir); err == nil && info.IsDir() {
 			fmt.Println("  [OK] Directory exists")
-			memDir := workspace.GlobalMemoryDir()
+			memDir := ws.MemoryDir()
 			if info, err := os.Stat(memDir); err == nil && info.IsDir() {
 				fmt.Printf("  [OK] Memory dir: %s\n", memDir)
 			} else {

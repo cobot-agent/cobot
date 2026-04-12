@@ -44,10 +44,6 @@ func init() {
 }
 
 func loadConfig() (*cobot.Config, error) {
-	if err := workspace.EnsureGlobalWorkspace(); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
-	}
-
 	cfg := cobot.DefaultConfig()
 
 	if cfgPath != "" {
@@ -73,11 +69,14 @@ func loadConfig() (*cobot.Config, error) {
 			fmt.Fprintf(os.Stderr, "warning: %v\n", err)
 		}
 	} else {
-		ws, err := workspace.DiscoverOrGlobal(".")
+		m, err := workspace.NewManager()
 		if err == nil {
-			cfg.Workspace = ws.Root
-			if err := config.LoadWorkspaceConfig(cfg, ws.Root); err != nil {
-				fmt.Fprintf(os.Stderr, "warning: %v\n", err)
+			ws, err := workspace.DiscoverOrCurrent(".", m)
+			if err == nil {
+				cfg.Workspace = ws.Root
+				if err := config.LoadWorkspaceConfig(cfg, ws.Root); err != nil {
+					fmt.Fprintf(os.Stderr, "warning: %v\n", err)
+				}
 			}
 		}
 	}

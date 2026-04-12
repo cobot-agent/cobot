@@ -6,62 +6,69 @@ import (
 	"testing"
 
 	"github.com/cobot-agent/cobot/internal/workspace"
-	"github.com/cobot-agent/cobot/internal/xdg"
 )
 
-func TestNew(t *testing.T) {
-	p := New()
-	if p == nil {
-		t.Fatal("New() returned nil")
+func setupTestWorkspace(t *testing.T) *workspace.Workspace {
+	tmpDir := t.TempDir()
+	ws := &workspace.Workspace{
+		ID:        "test-id",
+		Name:      "test",
+		Type:      workspace.WorkspaceTypeCustom,
+		ConfigDir: filepath.Join(tmpDir, "config"),
+		DataDir:   filepath.Join(tmpDir, "data"),
 	}
-	if p.ConfigDir == "" {
-		t.Error("ConfigDir should not be empty")
+	if err := ws.EnsureDirs(); err != nil {
+		t.Fatalf("Failed to create workspace dirs: %v", err)
 	}
-	if p.DataDir == "" {
-		t.Error("DataDir should not be empty")
+	return ws
+}
+
+func TestNewService(t *testing.T) {
+	ws := setupTestWorkspace(t)
+	svc := NewService(ws)
+
+	if svc == nil {
+		t.Fatal("NewService() returned nil")
+	}
+	if svc.ws != ws {
+		t.Error("Service should hold reference to workspace")
 	}
 }
 
 func TestEnsureFiles(t *testing.T) {
-	if err := workspace.EnsureGlobalWorkspace(); err != nil {
-		t.Fatalf("Failed to ensure global workspace: %v", err)
-	}
+	ws := setupTestWorkspace(t)
+	svc := NewService(ws)
 
-	p := New()
+	os.Remove(ws.GetSoulPath())
+	os.Remove(ws.GetUserPath())
+	os.Remove(ws.GetMemoryMdPath())
 
-	os.Remove(p.GetSoulPath())
-	os.Remove(p.GetUserPath())
-	os.Remove(p.GetMemoryPath())
-
-	if err := p.EnsureFiles(); err != nil {
+	if err := svc.EnsureFiles(); err != nil {
 		t.Fatalf("EnsureFiles failed: %v", err)
 	}
 
-	if _, err := os.Stat(p.GetSoulPath()); err != nil {
+	if _, err := os.Stat(ws.GetSoulPath()); err != nil {
 		t.Errorf("SOUL.md was not created: %v", err)
 	}
-	if _, err := os.Stat(p.GetUserPath()); err != nil {
+	if _, err := os.Stat(ws.GetUserPath()); err != nil {
 		t.Errorf("USER.md was not created: %v", err)
 	}
-	if _, err := os.Stat(p.GetMemoryPath()); err != nil {
+	if _, err := os.Stat(ws.GetMemoryMdPath()); err != nil {
 		t.Errorf("MEMORY.md was not created: %v", err)
 	}
 }
 
 func TestLoadAndSave(t *testing.T) {
-	if err := workspace.EnsureGlobalWorkspace(); err != nil {
-		t.Fatalf("Failed to ensure global workspace: %v", err)
-	}
-
-	p := New()
-	p.EnsureFiles()
+	ws := setupTestWorkspace(t)
+	svc := NewService(ws)
+	svc.EnsureFiles()
 
 	testSoul := "# Test SOUL\n\nTest content"
-	if err := p.SaveSoul(testSoul); err != nil {
+	if err := svc.SaveSoul(testSoul); err != nil {
 		t.Errorf("SaveSoul failed: %v", err)
 	}
 
-	loadedSoul, err := p.LoadSoul()
+	loadedSoul, err := svc.LoadSoul()
 	if err != nil {
 		t.Errorf("LoadSoul failed: %v", err)
 	}
@@ -70,11 +77,11 @@ func TestLoadAndSave(t *testing.T) {
 	}
 
 	testUser := "# Test USER\n\nTest content"
-	if err := p.SaveUser(testUser); err != nil {
+	if err := svc.SaveUser(testUser); err != nil {
 		t.Errorf("SaveUser failed: %v", err)
 	}
 
-	loadedUser, err := p.LoadUser()
+	loadedUser, err := svc.LoadUser()
 	if err != nil {
 		t.Errorf("LoadUser failed: %v", err)
 	}
@@ -83,11 +90,11 @@ func TestLoadAndSave(t *testing.T) {
 	}
 
 	testMemory := "# Test MEMORY\n\nTest content"
-	if err := p.SaveMemory(testMemory); err != nil {
+	if err := svc.SaveMemory(testMemory); err != nil {
 		t.Errorf("SaveMemory failed: %v", err)
 	}
 
-	loadedMemory, err := p.LoadMemory()
+	loadedMemory, err := svc.LoadMemory()
 	if err != nil {
 		t.Errorf("LoadMemory failed: %v", err)
 	}
@@ -97,13 +104,14 @@ func TestLoadAndSave(t *testing.T) {
 }
 
 func TestLoadDefaults(t *testing.T) {
-	p := New()
+	ws := setupTestWorkspace(t)
+	svc := NewService(ws)
 
-	os.Remove(p.GetSoulPath())
-	os.Remove(p.GetUserPath())
-	os.Remove(p.GetMemoryPath())
+	os.Remove(ws.GetSoulPath())
+	os.Remove(ws.GetUserPath())
+	os.Remove(ws.GetMemoryMdPath())
 
-	soul, err := p.LoadSoul()
+	soul, err := svc.LoadSoul()
 	if err != nil {
 		t.Errorf("LoadSoul with missing file failed: %v", err)
 	}
@@ -111,7 +119,7 @@ func TestLoadDefaults(t *testing.T) {
 		t.Error("LoadSoul should return default content when file doesn't exist")
 	}
 
-	user, err := p.LoadUser()
+	user, err := svc.LoadUser()
 	if err != nil {
 		t.Errorf("LoadUser with missing file failed: %v", err)
 	}
@@ -119,7 +127,7 @@ func TestLoadDefaults(t *testing.T) {
 		t.Error("LoadUser should return default content when file doesn't exist")
 	}
 
-	memory, err := p.LoadMemory()
+	memory, err := svc.LoadMemory()
 	if err != nil {
 		t.Errorf("LoadMemory with missing file failed: %v", err)
 	}
@@ -129,9 +137,10 @@ func TestLoadDefaults(t *testing.T) {
 }
 
 func TestGetPaths(t *testing.T) {
-	p := New()
+	ws := setupTestWorkspace(t)
+	svc := NewService(ws)
 
-	soulPath := p.GetSoulPath()
+	soulPath := svc.GetSoulPath()
 	if soulPath == "" {
 		t.Error("GetSoulPath returned empty string")
 	}
@@ -139,31 +148,39 @@ func TestGetPaths(t *testing.T) {
 		t.Errorf("GetSoulPath should return absolute path, got: %s", soulPath)
 	}
 
-	userPath := p.GetUserPath()
+	userPath := svc.GetUserPath()
 	if userPath == "" {
 		t.Error("GetUserPath returned empty string")
 	}
 
-	memoryPath := p.GetMemoryPath()
+	memoryPath := svc.GetMemoryPath()
 	if memoryPath == "" {
 		t.Error("GetMemoryPath returned empty string")
 	}
 }
 
 func TestFileLocations(t *testing.T) {
-	p := New()
+	ws := setupTestWorkspace(t)
+	svc := NewService(ws)
 
-	configDir := xdg.CobotConfigDir()
-
-	if p.GetSoulPath() != filepath.Join(configDir, "SOUL.md") {
-		t.Errorf("SOUL.md should be in config dir")
+	if svc.GetSoulPath() != filepath.Join(ws.ConfigDir, "SOUL.md") {
+		t.Errorf("SOUL.md should be in workspace config dir")
 	}
 
-	if p.GetUserPath() != filepath.Join(configDir, "USER.md") {
-		t.Errorf("USER.md should be in config dir")
+	if svc.GetUserPath() != filepath.Join(ws.ConfigDir, "USER.md") {
+		t.Errorf("USER.md should be in workspace config dir")
 	}
 
-	if p.GetMemoryPath() != filepath.Join(configDir, "MEMORY.md") {
-		t.Errorf("MEMORY.md should be in config dir")
+	if svc.GetMemoryPath() != filepath.Join(ws.ConfigDir, "MEMORY.md") {
+		t.Errorf("MEMORY.md should be in workspace config dir")
+	}
+}
+
+func TestWorkspaceReference(t *testing.T) {
+	ws := setupTestWorkspace(t)
+	svc := NewService(ws)
+
+	if svc.Workspace() != ws {
+		t.Error("Workspace() should return the workspace reference")
 	}
 }

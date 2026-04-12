@@ -17,24 +17,33 @@ var personaCmd = &cobra.Command{
 	Long:  "Manage SOUL.md, USER.md, and MEMORY.md files that define the agent's personality and user profile.",
 }
 
+func getPersonaService() (*persona.Service, error) {
+	m, err := workspace.NewManager()
+	if err != nil {
+		return nil, fmt.Errorf("create workspace manager: %w", err)
+	}
+	ws := m.Current()
+	return persona.NewService(ws), nil
+}
+
 var personaInitCmd = &cobra.Command{
 	Use:   "init",
 	Short: "Initialize persona files",
-	Long:  "Create SOUL.md, USER.md, and MEMORY.md in the global config directory if they don't exist.",
+	Long:  "Create SOUL.md, USER.md, and MEMORY.md in the current workspace if they don't exist.",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if err := workspace.EnsureGlobalWorkspace(); err != nil {
-			return fmt.Errorf("ensure global workspace: %w", err)
+		svc, err := getPersonaService()
+		if err != nil {
+			return err
 		}
 
-		p := persona.New()
-		if err := p.EnsureFiles(); err != nil {
+		if err := svc.EnsureFiles(); err != nil {
 			return fmt.Errorf("ensure persona files: %w", err)
 		}
 
 		fmt.Println("Persona files initialized:")
-		fmt.Printf("  SOUL:   %s\n", p.GetSoulPath())
-		fmt.Printf("  USER:   %s\n", p.GetUserPath())
-		fmt.Printf("  MEMORY: %s\n", p.GetMemoryPath())
+		fmt.Printf("  SOUL:   %s\n", svc.GetSoulPath())
+		fmt.Printf("  USER:   %s\n", svc.GetUserPath())
+		fmt.Printf("  MEMORY: %s\n", svc.GetMemoryPath())
 		return nil
 	},
 }
@@ -45,21 +54,21 @@ var personaEditCmd = &cobra.Command{
 	Long:  "Open a persona file (SOUL.md, USER.md, or MEMORY.md) in your default editor.",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if err := workspace.EnsureGlobalWorkspace(); err != nil {
-			return fmt.Errorf("ensure global workspace: %w", err)
+		svc, err := getPersonaService()
+		if err != nil {
+			return err
 		}
 
-		p := persona.New()
-		p.EnsureFiles()
+		svc.EnsureFiles()
 
 		var path string
 		switch args[0] {
 		case "soul":
-			path = p.GetSoulPath()
+			path = svc.GetSoulPath()
 		case "user":
-			path = p.GetUserPath()
+			path = svc.GetUserPath()
 		case "memory":
-			path = p.GetMemoryPath()
+			path = svc.GetMemoryPath()
 		default:
 			return fmt.Errorf("unknown persona file: %s (valid: soul, user, memory)", args[0])
 		}
@@ -88,17 +97,19 @@ var personaShowCmd = &cobra.Command{
 	Long:  "Display the contents of a persona file (SOUL.md, USER.md, or MEMORY.md).",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		p := persona.New()
+		svc, err := getPersonaService()
+		if err != nil {
+			return err
+		}
 
 		var content string
-		var err error
 		switch args[0] {
 		case "soul":
-			content, err = p.LoadSoul()
+			content, err = svc.LoadSoul()
 		case "user":
-			content, err = p.LoadUser()
+			content, err = svc.LoadUser()
 		case "memory":
-			content, err = p.LoadMemory()
+			content, err = svc.LoadMemory()
 		default:
 			return fmt.Errorf("unknown persona file: %s (valid: soul, user, memory)", args[0])
 		}

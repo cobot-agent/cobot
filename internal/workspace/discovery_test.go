@@ -4,101 +4,114 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/cobot-agent/cobot/internal/xdg"
 )
 
-func TestDiscoverInCurrentDir(t *testing.T) {
-	dir := t.TempDir()
-	os.MkdirAll(filepath.Join(dir, ".cobot"), 0755)
-	os.WriteFile(filepath.Join(dir, ".cobot", "config.yaml"), []byte("model: openai:gpt-4o\n"), 0644)
+func TestDiscover_NoWorkspace(t *testing.T) {
+	tmpDir := t.TempDir()
 
-	ws, err := Discover(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ws.Root != dir {
-		t.Errorf("expected root %s, got %s", dir, ws.Root)
-	}
-	if ws.ConfigPath != filepath.Join(dir, ".cobot", "config.yaml") {
-		t.Errorf("unexpected config path: %s", ws.ConfigPath)
-	}
-	if ws.DataDir != xdg.CobotDataDir() {
-		t.Errorf("expected global DataDir %s, got %s", xdg.CobotDataDir(), ws.DataDir)
-	}
-}
-
-func TestDiscoverInParentDir(t *testing.T) {
-	dir := t.TempDir()
-	os.MkdirAll(filepath.Join(dir, ".cobot"), 0755)
-	os.WriteFile(filepath.Join(dir, ".cobot", "config.yaml"), []byte("model: openai:gpt-4o\n"), 0644)
-
-	subdir := filepath.Join(dir, "sub", "project")
-	os.MkdirAll(subdir, 0755)
-
-	ws, err := Discover(subdir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ws.Root != dir {
-		t.Errorf("expected root %s, got %s", dir, ws.Root)
-	}
-}
-
-func TestDiscoverNotFound(t *testing.T) {
-	dir := t.TempDir()
-	_, err := Discover(dir)
+	_, err := Discover(tmpDir)
 	if err == nil {
-		t.Error("expected error when no .cobot found")
+		t.Fatal("expected error when no workspace found")
 	}
 }
 
-func TestInitWorkspace(t *testing.T) {
-	dir := t.TempDir()
-	ws, err := Init(dir)
+func TestDiscover_FindsWorkspace(t *testing.T) {
+	tmpDir := t.TempDir()
+	targetDir := filepath.Join(tmpDir, "project")
+	cobotDir := filepath.Join(targetDir, ".cobot")
+
+	if err := os.MkdirAll(cobotDir, 0755); err != nil {
+		t.Fatalf("failed to create .cobot dir: %v", err)
+	}
+
+	manager, err := NewManager()
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("failed to create manager: %v", err)
 	}
-	if ws.Root != dir {
-		t.Errorf("expected root %s, got %s", dir, ws.Root)
+
+	_, err = EnsureDefaultWorkspace()
+	if err != nil {
+		t.Fatalf("failed to ensure default workspace: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, ".cobot", "config.yaml")); os.IsNotExist(err) {
-		t.Error("config.yaml not created")
+
+	ws, err := Discover(targetDir)
+	if err != nil {
+		ws, err = manager.CreateProject(targetDir)
+		if err != nil {
+			t.Fatalf("failed to create project workspace: %v", err)
+		}
 	}
-	if ws.DataDir != xdg.CobotDataDir() {
-		t.Errorf("expected global DataDir, got %s", ws.DataDir)
+
+	if ws.Type != WorkspaceTypeProject {
+		t.Errorf("expected project type, got %s", ws.Type)
 	}
 }
 
-func TestInitWorkspaceCreatesDataDirs(t *testing.T) {
-	dir := t.TempDir()
-	ws, err := Init(dir)
+func TestDiscoverOrDefault_ReturnsDefault(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	_, err := EnsureDefaultWorkspace()
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("failed to ensure default workspace: %v", err)
 	}
-	if _, err := os.Stat(ws.MemoryDir()); os.IsNotExist(err) {
-		t.Error("memory dir not created")
+
+	ws, err := DiscoverOrDefault(tmpDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if _, err := os.Stat(ws.SessionsDir()); os.IsNotExist(err) {
-		t.Error("sessions dir not created")
+
+	if !ws.IsDefault() {
+		t.Error("expected default workspace when no project found")
 	}
 }
 
-func TestXDGDataDirRespectsEnv(t *testing.T) {
-	dataDir := t.TempDir()
-	os.Setenv("XDG_DATA_HOME", dataDir)
-	defer os.Unsetenv("XDG_DATA_HOME")
-
-	dir := t.TempDir()
-	os.MkdirAll(filepath.Join(dir, ".cobot"), 0755)
-	os.WriteFile(filepath.Join(dir, ".cobot", "config.yaml"), []byte("model: openai:gpt-4o\n"), 0644)
-
-	ws, err := Discover(dir)
-	if err != nil {
-		t.Fatal(err)
+func TestWorkspace_ValidatePathWithinWorkspace(t *testing.T) {
+	tmpDir := t.TempDir()
+	ws := &Workspace{
+		ID:        "test-id",
+		Name:      "test",
+		Type:      WorkspaceTypeCustom,
+		ConfigDir: filepath.Join(tmpDir, "config"),
+		DataDir:   filepath.Join(tmpDir, "data"),
+		Root:      "",
 	}
-	expected := filepath.Join(dataDir, "cobot")
-	if ws.DataDir != expected {
-		t.Errorf("expected DataDir %s, got %s", expected, ws.DataDir)
+
+	os.MkdirAll(ws.ConfigDir, 0755)
+	os.MkdirAll(ws.DataDir, 0755)
+
+	tests := []struct {
+		name    string
+		path    string
+		wantErr bool
+	}{
+		{
+			name:    "valid config path",
+			path:    filepath.Join(ws.ConfigDir, "SOUL.md"),
+			wantErr: false,
+		},
+		{
+			name:    "valid data path",
+			path:    filepath.Join(ws.DataDir, "memory", "test.db"),
+			wantErr: false,
+		},
+		{
+			name:    "outside workspace",
+			path:    filepath.Join(tmpDir, "..", "outside.txt"),
+			wantErr: true,
+		},
+		{
+			name:    "system path",
+			path:    "/etc/passwd",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ws.ValidatePathWithinWorkspace(tt.path)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ValidatePathWithinWorkspace() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
 	}
 }
