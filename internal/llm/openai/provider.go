@@ -10,7 +10,9 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
+	"github.com/cobot-agent/cobot/internal/debug"
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
@@ -93,7 +95,11 @@ func (p *Provider) doRequest(ctx context.Context, body chatRequest) (io.ReadClos
 		return nil, fmt.Errorf("openai: marshal request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.baseURL+"/chat/completions", bytes.NewReader(jsonBody))
+	url := p.baseURL + "/chat/completions"
+	debug.Request("openai", "POST", url, len(jsonBody))
+
+	start := time.Now()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(jsonBody))
 	if err != nil {
 		return nil, fmt.Errorf("openai: create request: %w", err)
 	}
@@ -104,12 +110,17 @@ func (p *Provider) doRequest(ctx context.Context, body chatRequest) (io.ReadClos
 	if err != nil {
 		return nil, fmt.Errorf("openai: request failed: %w", err)
 	}
+
+	elapsed := time.Since(start)
+
 	if resp.StatusCode != http.StatusOK {
 		defer resp.Body.Close()
 		respData, _ := io.ReadAll(resp.Body)
+		debug.Response("openai", resp.StatusCode, len(respData), elapsed)
 		return nil, fmt.Errorf("openai: API error %d: %s", resp.StatusCode, string(respData))
 	}
 
+	debug.Response("openai", resp.StatusCode, 0, elapsed)
 	return resp.Body, nil
 }
 

@@ -9,7 +9,9 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
+	"github.com/cobot-agent/cobot/internal/debug"
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
@@ -106,7 +108,11 @@ func (p *Provider) doRequest(ctx context.Context, body messagesRequest) (io.Read
 		return nil, fmt.Errorf("anthropic: marshal request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.baseURL+"/v1/messages", bytes.NewReader(jsonBody))
+	url := p.baseURL + "/v1/messages"
+	debug.Request("anthropic", "POST", url, len(jsonBody))
+
+	start := time.Now()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(jsonBody))
 	if err != nil {
 		return nil, fmt.Errorf("anthropic: create request: %w", err)
 	}
@@ -118,11 +124,17 @@ func (p *Provider) doRequest(ctx context.Context, body messagesRequest) (io.Read
 	if err != nil {
 		return nil, fmt.Errorf("anthropic: request failed: %w", err)
 	}
+
+	elapsed := time.Since(start)
+
 	if resp.StatusCode != http.StatusOK {
 		defer resp.Body.Close()
 		data, _ := io.ReadAll(resp.Body)
+		debug.Response("anthropic", resp.StatusCode, len(data), elapsed)
 		return nil, fmt.Errorf("anthropic: API error %d: %s", resp.StatusCode, string(data))
 	}
+
+	debug.Response("anthropic", resp.StatusCode, 0, elapsed)
 	return resp.Body, nil
 }
 
