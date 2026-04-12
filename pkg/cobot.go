@@ -3,6 +3,8 @@ package cobot
 import (
 	"context"
 	"fmt"
+
+	acp "github.com/cobot-agent/cobot/acp"
 )
 
 type AgentCore interface {
@@ -85,4 +87,18 @@ func (a *Agent) RegisterTool(tool Tool) error {
 
 func (a *Agent) Close() error {
 	return a.core.Close()
+}
+
+// ServeACP starts an ACP server on the provided address and blocks until the
+// context is canceled or the server stops.
+// It delegates to the internal ACP scaffolding to obtain or create a server
+// and then starts serving on the given address.
+func (a *Agent) ServeACP(ctx context.Context, addr string) error {
+	// Use the public acp scaffold. Pass the public Agent as the scaffold's input
+	// so the server has a representative reference.
+	server := acp.NewServer(a)
+	if server == nil {
+		return fmt.Errorf("ACP server scaffold not available")
+	}
+	return server.Serve(ctx, addr)
 }
