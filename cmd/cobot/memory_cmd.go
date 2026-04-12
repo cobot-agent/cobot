@@ -3,12 +3,11 @@ package main
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 
 	"github.com/spf13/cobra"
 
 	"github.com/cobot-agent/cobot/internal/memory"
-	"github.com/cobot-agent/cobot/internal/xdg"
+	"github.com/cobot-agent/cobot/internal/workspace"
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
@@ -22,8 +21,7 @@ var memorySearchCmd = &cobra.Command{
 	Short: "Search memory",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		dataDir := filepath.Join(xdg.DataHome(), "cobot", "memory")
-		store, err := memory.OpenStore(dataDir)
+		store, err := memory.OpenStore(workspace.GlobalMemoryDir())
 		if err != nil {
 			return err
 		}
@@ -55,8 +53,7 @@ var memoryStatusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show memory palace overview",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		dataDir := filepath.Join(xdg.DataHome(), "cobot", "memory")
-		store, err := memory.OpenStore(dataDir)
+		store, err := memory.OpenStore(workspace.GlobalMemoryDir())
 		if err != nil {
 			return err
 		}
@@ -80,7 +77,7 @@ var memoryStatusCmd = &cobra.Command{
 }
 
 func init() {
-	memorySearchCmd.Flags().StringP("wing", "w", "", "Filter by wing ID")
+	memorySearchCmd.Flags().String("wing", "", "Filter by wing ID")
 	memoryCmd.AddCommand(memorySearchCmd)
 	memoryCmd.AddCommand(memoryStatusCmd)
 	rootCmd.AddCommand(memoryCmd)

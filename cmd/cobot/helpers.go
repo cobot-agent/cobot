@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/cobot-agent/cobot/internal/agent"
@@ -11,7 +10,7 @@ import (
 	"github.com/cobot-agent/cobot/internal/llm/openai"
 	"github.com/cobot-agent/cobot/internal/memory"
 	"github.com/cobot-agent/cobot/internal/tools/builtin"
-	"github.com/cobot-agent/cobot/internal/xdg"
+	"github.com/cobot-agent/cobot/internal/workspace"
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
@@ -50,6 +49,10 @@ func initProvider(cfg *cobot.Config) (cobot.Provider, error) {
 }
 
 func initAgent(cfg *cobot.Config, requireProvider bool) (*agent.Agent, func(), error) {
+	if err := workspace.EnsureGlobalWorkspace(); err != nil {
+		return nil, nil, fmt.Errorf("ensure global workspace: %w", err)
+	}
+
 	a := agent.New(cfg)
 
 	provider, err := initProvider(cfg)
@@ -62,11 +65,8 @@ func initAgent(cfg *cobot.Config, requireProvider bool) (*agent.Agent, func(), e
 		a.SetProvider(provider)
 	}
 
-	memDir := filepath.Join(xdg.DataHome(), "cobot", "memory")
-	var memStore *memory.Store
-	if ms, err := memory.OpenStore(memDir); err == nil {
-		memStore = ms
-		a.SetMemoryStore(memStore)
+	if ms, err := memory.OpenStore(workspace.GlobalMemoryDir()); err == nil {
+		a.SetMemoryStore(ms)
 	} else {
 		fmt.Fprintf(os.Stderr, "warning: failed to open memory store: %v\n", err)
 	}
@@ -75,9 +75,5 @@ func initAgent(cfg *cobot.Config, requireProvider bool) (*agent.Agent, func(), e
 	a.RegisterTool(builtin.NewWriteFileTool())
 	a.RegisterTool(builtin.NewShellExecTool())
 
-	cleanup := func() {
-		a.Close()
-	}
-
-	return a, cleanup, nil
+	return a, func() { a.Close() }, nil
 }

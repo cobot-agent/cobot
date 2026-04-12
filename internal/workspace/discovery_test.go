@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/cobot-agent/cobot/internal/xdg"
 )
 
 func TestDiscoverInCurrentDir(t *testing.T) {
@@ -21,8 +23,8 @@ func TestDiscoverInCurrentDir(t *testing.T) {
 	if ws.ConfigPath != filepath.Join(dir, ".cobot", "config.yaml") {
 		t.Errorf("unexpected config path: %s", ws.ConfigPath)
 	}
-	if ws.DataDir == "" {
-		t.Error("expected non-empty DataDir")
+	if ws.DataDir != xdg.CobotDataDir() {
+		t.Errorf("expected global DataDir %s, got %s", xdg.CobotDataDir(), ws.DataDir)
 	}
 }
 
@@ -63,8 +65,8 @@ func TestInitWorkspace(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, ".cobot", "config.yaml")); os.IsNotExist(err) {
 		t.Error("config.yaml not created")
 	}
-	if ws.DataDir == "" {
-		t.Error("expected non-empty DataDir")
+	if ws.DataDir != xdg.CobotDataDir() {
+		t.Errorf("expected global DataDir, got %s", ws.DataDir)
 	}
 }
 
@@ -95,8 +97,8 @@ func TestXDGDataDirRespectsEnv(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	expected := filepath.Join(dataDir, "cobot", "workspaces")
-	if ws.DataDir[:len(expected)] != expected {
-		t.Errorf("expected DataDir under %s, got %s", expected, ws.DataDir)
+	expected := filepath.Join(dataDir, "cobot")
+	if ws.DataDir != expected {
+		t.Errorf("expected DataDir %s, got %s", expected, ws.DataDir)
 	}
 }
