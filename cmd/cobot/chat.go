@@ -20,6 +20,16 @@ var chatCmd = &cobra.Command{
 			return err
 		}
 
+		// Apply per-chat flags (model override and system prompt) if provided
+		if m, _ := cmd.Flags().GetString("model"); m != "" {
+			// Local per-chat model override
+			ApplyChatFlags(cfg, m, "")
+		}
+		if p, _ := cmd.Flags().GetString("prompt"); p != "" {
+			// Local per-chat system prompt override
+			ApplyChatFlags(cfg, "", p)
+		}
+
 		a, cleanup, err := initAgent(cfg, true)
 		if err != nil {
 			return err
@@ -54,6 +64,22 @@ var chatCmd = &cobra.Command{
 	},
 }
 
+// ApplyChatFlags allows per-chat overrides for a running chat session without
+// mutating the global/root defaults. If modelFlag is non-empty, it overrides
+// cfg.Model. If promptFlag is non-empty, it overrides cfg.SystemPrompt.
+// This is intentionally exported to enable unit tests to verify the behavior.
+func ApplyChatFlags(cfg *cobot.Config, modelFlag string, promptFlag string) {
+	if cfg == nil {
+		return
+	}
+	if modelFlag != "" {
+		cfg.Model = modelFlag
+	}
+	if promptFlag != "" {
+		cfg.SystemPrompt = promptFlag
+	}
+}
+
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
@@ -63,4 +89,7 @@ func truncate(s string, n int) string {
 
 func init() {
 	rootCmd.AddCommand(chatCmd)
+	// Local chat session flags (non-persistent)
+	chatCmd.Flags().String("model", "", "Model to use for this chat (overrides root default)")
+	chatCmd.Flags().String("prompt", "", "System prompt template to apply for this chat")
 }

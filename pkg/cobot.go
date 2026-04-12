@@ -1,6 +1,9 @@
 package cobot
 
-import "context"
+import (
+	"context"
+	"fmt"
+)
 
 type AgentCore interface {
 	SetProvider(Provider)
@@ -17,6 +20,19 @@ type Agent struct {
 	memStore MemoryStore
 }
 
+// CoreFactory is a function type that creates an AgentCore from a Config.
+// This is used by NewFromConfig to create a default core without causing import cycles.
+type CoreFactory func(*Config) (AgentCore, error)
+
+// defaultCoreFactory is set by the internal/agent package during initialization.
+var defaultCoreFactory CoreFactory
+
+// RegisterCoreFactory allows the internal/agent package to register its core creation function.
+// This avoids import cycles between pkg and internal packages.
+func RegisterCoreFactory(factory CoreFactory) {
+	defaultCoreFactory = factory
+}
+
 func New(config *Config, core AgentCore) (*Agent, error) {
 	if config == nil {
 		config = DefaultConfig()
@@ -25,6 +41,20 @@ func New(config *Config, core AgentCore) (*Agent, error) {
 		core:   core,
 		config: config,
 	}, nil
+}
+
+// NewFromConfig creates an Agent using a default core internally created from the provided config.
+// This preserves backward compatibility for New(config, core) while offering a simplified API.
+// The default core factory must be registered by calling RegisterCoreFactory before using this function.
+func NewFromConfig(config Config) (*Agent, error) {
+	if defaultCoreFactory == nil {
+		return nil, fmt.Errorf("no core factory registered: call RegisterCoreFactory first")
+	}
+	core, err := defaultCoreFactory(&config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create default core: %w", err)
+	}
+	return New(&config, core)
 }
 
 func (a *Agent) SetProvider(p Provider) {

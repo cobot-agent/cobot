@@ -3,6 +3,7 @@ package agent
 import (
 	"fmt"
 
+	"github.com/cobot-agent/cobot/acp"
 	"github.com/cobot-agent/cobot/internal/memory"
 	"github.com/cobot-agent/cobot/internal/tools"
 	cobot "github.com/cobot-agent/cobot/pkg"
@@ -14,6 +15,8 @@ type Agent struct {
 	tools       *tools.Registry
 	session     *Session
 	memoryStore *memory.Store
+	// ACP server scaffolding. May be nil until initialized.
+	acpServer *acp.Server
 }
 
 func New(config *cobot.Config) *Agent {
@@ -22,6 +25,24 @@ func New(config *cobot.Config) *Agent {
 		tools:   tools.NewRegistry(),
 		session: NewSession(),
 	}
+}
+
+// init registers the core factory with the pkg package.
+// This allows pkg.NewFromConfig to create Agents with default internal/agent cores
+// without causing import cycles.
+func init() {
+	cobot.RegisterCoreFactory(func(config *cobot.Config) (cobot.AgentCore, error) {
+		return New(config), nil
+	})
+}
+
+// getACPServer returns the internal ACP server instance, creating it on first use.
+// This prepares the Agent to host an ACP server without exposing the server publicly yet.
+func (a *Agent) getACPServer() *acp.Server {
+	if a.acpServer == nil {
+		a.acpServer = acp.NewServer(a)
+	}
+	return a.acpServer
 }
 
 func (a *Agent) SetProvider(p cobot.Provider) {
