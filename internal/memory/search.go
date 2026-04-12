@@ -55,11 +55,8 @@ func (s *Store) indexDrawer(ctx context.Context, d *drawerDoc) error {
 }
 
 func (s *Store) searchDrawers(ctx context.Context, query *cobot.SearchQuery) ([]*cobot.SearchResult, error) {
-	mq := bleve.NewMatchQuery(query.Text)
-	mq.SetField("content")
-
-	if query.WingID == "" && query.RoomID == "" && query.HallType == "" {
-		req := bleve.NewSearchRequest(mq)
+	if query.Text == "" && query.WingID == "" && query.RoomID == "" && query.HallType == "" {
+		req := bleve.NewSearchRequest(bleve.NewMatchAllQuery())
 		req.Fields = []string{"content", "wing_id", "room_id"}
 		if query.Limit > 0 {
 			req.Size = query.Limit
@@ -70,7 +67,12 @@ func (s *Store) searchDrawers(ctx context.Context, query *cobot.SearchQuery) ([]
 	}
 
 	bq := bleve.NewBooleanQuery()
-	bq.AddMust(mq)
+
+	if query.Text != "" {
+		mq := bleve.NewMatchQuery(query.Text)
+		mq.SetField("content")
+		bq.AddMust(mq)
+	}
 
 	if query.WingID != "" {
 		wq := bleve.NewTermQuery(query.WingID)

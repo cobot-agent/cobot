@@ -52,8 +52,11 @@ func (s *Store) WakeUpToLayer(ctx context.Context, layer MemoryLayer) (string, e
 	}
 
 	if layer >= L3DeepSearch {
-		sections = append(sections, "## Deep Search")
-		sections = append(sections, "(L3 deep search not yet implemented)")
+		deepResults := s.collectL3DeepSearch(ctx, wings, "")
+		if len(deepResults) > 0 {
+			sections = append(sections, "## Deep Search")
+			sections = append(sections, deepResults...)
+		}
 	}
 
 	return strings.Join(sections, "\n\n"), nil
