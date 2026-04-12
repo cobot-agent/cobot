@@ -14,7 +14,7 @@ func (a *Agent) Prompt(ctx context.Context, message string) (*cobot.ProviderResp
 	}
 
 	debug.Session("prompt", message)
-	a.session.AddMessage(cobot.Message{Role: cobot.RoleUser, Content: message})
+	a.AddMessage(cobot.Message{Role: cobot.RoleUser, Content: message})
 
 	for turn := 0; turn < a.config.MaxTurns; turn++ {
 		msgs := a.buildMessages(ctx)
@@ -34,7 +34,7 @@ func (a *Agent) Prompt(ctx context.Context, message string) (*cobot.ProviderResp
 
 		debug.Agent(turn, "response", fmt.Sprintf("content_len=%d tool_calls=%d stop=%s", len(resp.Content), len(resp.ToolCalls), resp.StopReason))
 
-		a.session.AddMessage(cobot.Message{
+		a.AddMessage(cobot.Message{
 			Role:      cobot.RoleAssistant,
 			Content:   resp.Content,
 			ToolCalls: resp.ToolCalls,
@@ -47,7 +47,7 @@ func (a *Agent) Prompt(ctx context.Context, message string) (*cobot.ProviderResp
 		results := a.tools.ExecuteParallel(ctx, resp.ToolCalls)
 		for _, tr := range results {
 			debug.ToolResult(tr.CallID, len(tr.Output), 0)
-			a.session.AddMessage(cobot.Message{
+			a.AddMessage(cobot.Message{
 				Role:       cobot.RoleTool,
 				ToolResult: tr,
 			})
@@ -67,7 +67,7 @@ func (a *Agent) Stream(ctx context.Context, message string) (<-chan cobot.Event,
 	go func() {
 		defer close(ch)
 		debug.Session("stream", message)
-		a.session.AddMessage(cobot.Message{Role: cobot.RoleUser, Content: message})
+		a.AddMessage(cobot.Message{Role: cobot.RoleUser, Content: message})
 
 		for turn := 0; turn < a.config.MaxTurns; turn++ {
 			msgs := a.buildMessages(ctx)
@@ -105,7 +105,7 @@ func (a *Agent) Stream(ctx context.Context, message string) (<-chan cobot.Event,
 				}
 				if chunk.Done && len(toolCalls) == 0 {
 					debug.Agent(turn, "stream_done", fmt.Sprintf("content_len=%d", len(content)))
-					a.session.AddMessage(cobot.Message{Role: cobot.RoleAssistant, Content: content})
+					a.AddMessage(cobot.Message{Role: cobot.RoleAssistant, Content: content})
 					ch <- cobot.Event{Type: cobot.EventDone, Done: true}
 					return
 				}
@@ -113,11 +113,11 @@ func (a *Agent) Stream(ctx context.Context, message string) (<-chan cobot.Event,
 
 			if len(toolCalls) > 0 {
 				debug.Agent(turn, "stream_tool_calls", fmt.Sprintf("count=%d", len(toolCalls)))
-				a.session.AddMessage(cobot.Message{Role: cobot.RoleAssistant, Content: content, ToolCalls: toolCalls})
+				a.AddMessage(cobot.Message{Role: cobot.RoleAssistant, Content: content, ToolCalls: toolCalls})
 				results := a.tools.ExecuteParallel(ctx, toolCalls)
 				for _, tr := range results {
 					ch <- cobot.Event{Type: cobot.EventToolResult, Content: tr.Output}
-					a.session.AddMessage(cobot.Message{Role: cobot.RoleTool, ToolResult: tr})
+					a.AddMessage(cobot.Message{Role: cobot.RoleTool, ToolResult: tr})
 				}
 			}
 		}
