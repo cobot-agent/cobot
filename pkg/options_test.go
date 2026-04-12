@@ -1,45 +1,113 @@
 package cobot
 
 import (
-	"encoding/json"
+	"path/filepath"
 	"testing"
+	"time"
 )
 
-// Ensure that Tools migration to DefaultTools works when loading JSON config
-func TestConfigMigration_ToolsToDefaultTools_JSON(t *testing.T) {
-	data := []byte(`{"tools": {"builtin": ["cmd1","cmd2"]}}`)
-	var cfg Config
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		t.Fatalf("unmarshal err: %v", err)
+func TestDefaultConfig(t *testing.T) {
+	cfg := DefaultConfig()
+	if cfg.MaxTurns != 50 {
+		t.Errorf("MaxTurns = %d, want 50", cfg.MaxTurns)
 	}
-	// Before migration, DefaultTools should be empty
-	if len(cfg.DefaultTools.Builtin) != 0 || len(cfg.DefaultTools.MCPServers) != 0 {
-		t.Fatalf("expected default_tools to be empty before migrate, got: %#v", cfg.DefaultTools)
+	if cfg.Model != "openai:gpt-4o" {
+		t.Errorf("Model = %q, want %q", cfg.Model, "openai:gpt-4o")
 	}
-	cfg.migrateTools()
-	if len(cfg.DefaultTools.Builtin) != 2 || cfg.DefaultTools.Builtin[0] != "cmd1" {
-		t.Fatalf("migration failed, got: %#v", cfg.DefaultTools)
+	if cfg.APIKeys == nil {
+		t.Error("APIKeys is nil")
+	}
+	if !cfg.Memory.Enabled {
+		t.Error("Memory.Enabled = false, want true")
+	}
+	if !cfg.Memory.IntelligentCuration {
+		t.Error("Memory.IntelligentCuration = false, want true")
+	}
+	if cfg.Memory.CurationInterval != 30*time.Second {
+		t.Errorf("Memory.CurationInterval = %v, want 30s", cfg.Memory.CurationInterval)
+	}
+	if cfg.ConfigPath != "" {
+		t.Errorf("ConfigPath = %q, want empty", cfg.ConfigPath)
+	}
+	if cfg.DataPath != "" {
+		t.Errorf("DataPath = %q, want empty", cfg.DataPath)
 	}
 }
 
-// Ensure that Temperature serializes and deserializes correctly and that JSON includes default_tools when populated
-func TestConfig_Temperature_JSONSerialization(t *testing.T) {
-	cfg := Config{Temperature: 12.5, DefaultTools: ToolsConfig{Builtin: []string{"cmd"}}}
-	b, err := json.Marshal(cfg)
-	if err != nil {
-		t.Fatalf("marshal err: %v", err)
+func TestSandboxConfig_IsAllowed_AllowPaths(t *testing.T) {
+	tmp := t.TempDir()
+	s := &SandboxConfig{
+		AllowPaths: []string{tmp},
 	}
-	// Decode to map for easy assertion
-	var m map[string]interface{}
-	if err := json.Unmarshal(b, &m); err != nil {
-		t.Fatalf("unmarshal back err: %v", err)
+	if !s.IsAllowed(filepath.Join(tmp, "file.txt"), true) {
+		t.Error("expected allowed path to be writable")
 	}
-	if v, ok := m["temperature"]; !ok {
-		t.Fatalf("missing temperature in json: %v", m)
-	} else if v.(float64) != 12.5 {
-		t.Fatalf("temperature mismatch: %v", v)
+	if !s.IsAllowed(filepath.Join(tmp, "file.txt"), false) {
+		t.Error("expected allowed path to be readable")
 	}
-	if _, ok := m["default_tools"]; !ok {
-		t.Fatalf("missing default_tools in json: %v", m)
+	if s.IsAllowed("/nonexistent/path/file.txt", true) {
+		t.Error("expected unrelated path to be denied")
+	}
+}
+
+func TestSandboxConfig_IsAllowed_ReadonlyPaths(t *testing.T) {
+	tmp := t.TempDir()
+	s := &SandboxConfig{
+		ReadonlyPaths: []string{tmp},
+	}
+	if !s.IsAllowed(filepath.Join(tmp, "file.txt"), false) {
+		t.Error("expected readonly path to be readable")
+	}
+	if s.IsAllowed(filepath.Join(tmp, "file.txt"), true) {
+		t.Error("expected readonly path to NOT be writable")
+	}
+}
+
+func TestSandboxConfig_IsAllowed_Root(t *testing.T) {
+	tmp := t.TempDir()
+	s := &SandboxConfig{
+		Root: tmp,
+	}
+	if !s.IsAllowed(filepath.Join(tmp, "sub", "file.txt"), true) {
+		t.Error("expected root subpath to be allowed")
+	}
+}
+
+func TestSandboxConfig_IsAllowed_NoConfig(t *testing.T) {
+	s := &SandboxConfig{}
+	if s.IsAllowed("/some/path", true) {
+		t.Error("expected denied with empty config")
+	}
+}
+
+func TestSandboxConfig_IsBlockedCommand(t *testing.T) {
+	s := &SandboxConfig{
+		BlockedCommands: []string{"rm -rf", "mkfs", "dd if="},
+	}
+	if !s.IsBlockedCommand("rm -rf /") {
+		t.Error("expected 'rm -rf /' to be blocked")
+	}
+	if !s.IsBlockedCommand("sudo mkfs.ext4 /dev/sda1") {
+		t.Error("expected mkfs command to be blocked")
+	}
+	if s.IsBlockedCommand("ls -la") {
+		t.Error("expected 'ls -la' to NOT be blocked")
+	}
+}
+
+func TestSandboxConfig_IsBlockedCommand_Empty(t *testing.T) {
+	s := &SandboxConfig{}
+	if s.IsBlockedCommand("rm -rf /") {
+		t.Error("expected no blocks with empty config")
+	}
+}
+
+func TestIsSubpath(t *testing.T) {
+	tmp := t.TempDir()
+	if !isSubpath(filepath.Join(tmp, "a", "b"), tmp) {
+		t.Error("expected subpath")
+	}
+	if isSubpath("/a/b", "/x/y") {
+		t.Error("expected non-subpath")
 	}
 }
