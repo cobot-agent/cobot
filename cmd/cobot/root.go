@@ -39,9 +39,9 @@ var rootCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.PersistentFlags().StringVarP(&cfgPath, "config", "c", "", "config file path (default: $XDG_CONFIG_HOME/cobot/config.yaml)")
+	rootCmd.PersistentFlags().StringVarP(&cfgPath, "config", "c", "", "config file path (default: $COBOT_CONFIG_PATH/config.yaml or $XDG_CONFIG_HOME/cobot/config.yaml)")
 	rootCmd.PersistentFlags().StringVar(&dataPath, "data", "", "data directory (default: $COBOT_DATA_PATH or ~/.local/share/cobot)")
-	rootCmd.PersistentFlags().StringVarP(&workspacePath, "workspace", "w", "", "workspace name or directory")
+	rootCmd.PersistentFlags().StringVarP(&workspacePath, "workspace", "w", "", "workspace directory")
 	rootCmd.PersistentFlags().StringVarP(&modelName, "model", "m", "", "LLM model (e.g. openai:gpt-4o)")
 	rootCmd.PersistentFlags().BoolVarP(&debugMode, "debug", "d", false, "enable debug logging")
 }
@@ -50,6 +50,7 @@ func loadConfig() (*cobot.Config, error) {
 	if dataPath != "" {
 		os.Setenv("COBOT_DATA_PATH", dataPath)
 	}
+
 	if cfgPath != "" {
 		os.Setenv("COBOT_CONFIG_PATH", filepath.Dir(cfgPath))
 	}
@@ -73,14 +74,18 @@ func loadConfig() (*cobot.Config, error) {
 		}
 	}
 
-	m, err := workspace.NewManager()
-	if err == nil {
-		ws, err := m.ResolveByNameOrDiscover(workspacePath, ".")
+	if workspacePath != "" {
+		cfg.Workspace = workspacePath
+		if err := config.LoadWorkspaceConfig(cfg, workspacePath); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: %v\n", err)
+		}
+	} else {
+		m, err := workspace.NewManager()
 		if err == nil {
-			cfg.Workspace = ws.Config.Name
-			if ws.Definition.Root != "" {
-				cfg.Workspace = ws.Definition.Root
-				if err := config.LoadWorkspaceConfig(cfg, ws.Definition.Root); err != nil {
+			ws, err := workspace.DiscoverOrCurrent(".", m)
+			if err == nil {
+				cfg.Workspace = ws.Root
+				if err := config.LoadWorkspaceConfig(cfg, ws.Root); err != nil {
 					fmt.Fprintf(os.Stderr, "warning: %v\n", err)
 				}
 			}

@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/cobot-agent/cobot/internal/workspace"
 	"github.com/cobot-agent/cobot/internal/xdg"
 )
 
@@ -19,11 +20,13 @@ var doctorCmd = &cobra.Command{
 		fmt.Println("Cobot Personal Agent Doctor")
 		fmt.Println("===========================")
 
-		ws, err := resolveWorkspace()
+		manager, err := workspace.NewManager()
 		if err != nil {
-			fmt.Printf("  [ERROR] Failed to resolve workspace: %v\n", err)
+			fmt.Printf("  [ERROR] Failed to create workspace manager: %v\n", err)
 			return err
 		}
+
+		ws := manager.Current()
 
 		configDir := xdg.ConfigDir()
 		configPath := filepath.Join(configDir, "config.yaml")
@@ -64,10 +67,10 @@ var doctorCmd = &cobra.Command{
 		}
 
 		fmt.Println("\nCurrent workspace:")
-		fmt.Printf("  Name: %s (%s)\n", ws.Config.Name, ws.Config.ID[:8])
-		fmt.Printf("  Type: %s\n", ws.Definition.Type)
-		if ws.Definition.Root != "" {
-			fmt.Printf("  Root: %s\n", ws.Definition.Root)
+		fmt.Printf("  Name: %s (%s)\n", ws.Name, ws.ID[:8])
+		fmt.Printf("  Type: %s\n", ws.Type)
+		if ws.Root != "" {
+			fmt.Printf("  Root: %s\n", ws.Root)
 		}
 
 		fmt.Println("\nPersona files:")

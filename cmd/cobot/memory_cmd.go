@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/cobot-agent/cobot/internal/memory/daemon"
+	"github.com/cobot-agent/cobot/internal/workspace"
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
@@ -16,10 +17,11 @@ var memoryCmd = &cobra.Command{
 }
 
 func getCurrentWorkspaceMemoryDir() (string, error) {
-	ws, err := resolveWorkspace()
+	m, err := workspace.NewManager()
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("create workspace manager: %w", err)
 	}
+	ws := m.Current()
 	return ws.MemoryDir(), nil
 }
 
@@ -125,11 +127,12 @@ var memoryStatusCmd = &cobra.Command{
 			return err
 		}
 
-		ws, err := resolveWorkspace()
+		m, err := workspace.NewManager()
 		if err != nil {
-			return err
+			return fmt.Errorf("create workspace manager: %w", err)
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "Memory Palace for workspace '%s': %d wings\n", ws.Config.Name, len(wings))
+		ws := m.Current()
+		fmt.Fprintf(cmd.OutOrStdout(), "Memory Palace for workspace '%s': %d wings\n", ws.Name, len(wings))
 		for _, w := range wings {
 			rooms, _ := client.GetRooms(context.Background(), w.ID)
 			fmt.Fprintf(cmd.OutOrStdout(), "  Wing: %s (%s) — %d rooms\n", w.Name, w.ID, len(rooms))

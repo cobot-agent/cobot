@@ -47,12 +47,6 @@ func ApplyEnvVars(cfg *cobot.Config) {
 		}
 		cfg.APIKeys["anthropic"] = v
 	}
-	if v := os.Getenv("COBOT_CONFIG_PATH"); v != "" {
-		cfg.ConfigPath = v
-	}
-	if v := os.Getenv("COBOT_DATA_PATH"); v != "" {
-		cfg.DataPath = v
-	}
 }
 
 func LoadWorkspaceConfig(cfg *cobot.Config, workspaceDir string) error {

@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/cobot-agent/cobot/internal/persona"
+	"github.com/cobot-agent/cobot/internal/workspace"
 )
 
 var personaCmd = &cobra.Command{
@@ -17,10 +18,11 @@ var personaCmd = &cobra.Command{
 }
 
 func getPersonaService() (*persona.Service, error) {
-	ws, err := resolveWorkspace()
+	m, err := workspace.NewManager()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create workspace manager: %w", err)
 	}
+	ws := m.Current()
 	return persona.NewService(ws), nil
 }
 

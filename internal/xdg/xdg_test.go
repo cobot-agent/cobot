@@ -6,158 +6,126 @@ import (
 	"testing"
 )
 
-func TestConfigDir_Default(t *testing.T) {
+func TestConfigDirDefault(t *testing.T) {
 	os.Unsetenv("COBOT_CONFIG_PATH")
 	os.Unsetenv("XDG_CONFIG_HOME")
-
 	home, _ := os.UserHomeDir()
 	expected := filepath.Join(home, ".config", "cobot")
-
-	got := ConfigDir()
-	if got != expected {
-		t.Errorf("ConfigDir() = %q, want %q", got, expected)
+	if got := ConfigDir(); got != expected {
+		t.Errorf("expected %s, got %s", expected, got)
 	}
 }
 
-func TestConfigDir_CobotConfigPath(t *testing.T) {
-	os.Unsetenv("XDG_CONFIG_HOME")
-	os.Setenv("COBOT_CONFIG_PATH", "/custom/config")
+func TestConfigDirFromCobotEnv(t *testing.T) {
+	dir := t.TempDir()
+	os.Setenv("COBOT_CONFIG_PATH", dir)
 	defer os.Unsetenv("COBOT_CONFIG_PATH")
-
-	got := ConfigDir()
-	if got != "/custom/config" {
-		t.Errorf("ConfigDir() = %q, want %q", got, "/custom/config")
+	if got := ConfigDir(); got != dir {
+		t.Errorf("expected %s, got %s", dir, got)
 	}
 }
 
-func TestConfigDir_XDGConfigHome(t *testing.T) {
+func TestConfigDirFromXDG(t *testing.T) {
 	os.Unsetenv("COBOT_CONFIG_PATH")
-	os.Setenv("XDG_CONFIG_HOME", "/xdg/config")
+	dir := t.TempDir()
+	os.Setenv("XDG_CONFIG_HOME", dir)
 	defer os.Unsetenv("XDG_CONFIG_HOME")
-
-	got := ConfigDir()
-	if got != "/xdg/config/cobot" {
-		t.Errorf("ConfigDir() = %q, want %q", got, "/xdg/config/cobot")
+	expected := filepath.Join(dir, "cobot")
+	if got := ConfigDir(); got != expected {
+		t.Errorf("expected %s, got %s", expected, got)
 	}
 }
 
-func TestConfigDir_CobotOverridesXDG(t *testing.T) {
-	os.Setenv("XDG_CONFIG_HOME", "/xdg/config")
-	os.Setenv("COBOT_CONFIG_PATH", "/custom/config")
-	defer os.Unsetenv("XDG_CONFIG_HOME")
+func TestConfigDirCobotOverridesXDG(t *testing.T) {
+	cobotDir := t.TempDir()
+	xdgDir := t.TempDir()
+	os.Setenv("COBOT_CONFIG_PATH", cobotDir)
+	os.Setenv("XDG_CONFIG_HOME", xdgDir)
 	defer os.Unsetenv("COBOT_CONFIG_PATH")
-
-	got := ConfigDir()
-	if got != "/custom/config" {
-		t.Errorf("ConfigDir() = %q, want %q", got, "/custom/config")
+	defer os.Unsetenv("XDG_CONFIG_HOME")
+	if got := ConfigDir(); got != cobotDir {
+		t.Errorf("expected %s, got %s", cobotDir, got)
 	}
 }
 
-func TestDataDir_Default(t *testing.T) {
+func TestDataDirDefault(t *testing.T) {
 	os.Unsetenv("COBOT_DATA_PATH")
 	os.Unsetenv("XDG_DATA_HOME")
-
 	home, _ := os.UserHomeDir()
 	expected := filepath.Join(home, ".local", "share", "cobot")
-
-	got := DataDir()
-	if got != expected {
-		t.Errorf("DataDir() = %q, want %q", got, expected)
+	if got := DataDir(); got != expected {
+		t.Errorf("expected %s, got %s", expected, got)
 	}
 }
 
-func TestDataDir_CobotDataPath(t *testing.T) {
-	os.Unsetenv("XDG_DATA_HOME")
-	os.Setenv("COBOT_DATA_PATH", "/custom/data")
+func TestDataDirFromCobotEnv(t *testing.T) {
+	dir := t.TempDir()
+	os.Setenv("COBOT_DATA_PATH", dir)
 	defer os.Unsetenv("COBOT_DATA_PATH")
-
-	got := DataDir()
-	if got != "/custom/data" {
-		t.Errorf("DataDir() = %q, want %q", got, "/custom/data")
+	if got := DataDir(); got != dir {
+		t.Errorf("expected %s, got %s", dir, got)
 	}
 }
 
-func TestDataDir_XDGDataHome(t *testing.T) {
+func TestDataDirFromXDG(t *testing.T) {
 	os.Unsetenv("COBOT_DATA_PATH")
-	os.Setenv("XDG_DATA_HOME", "/xdg/data")
+	dir := t.TempDir()
+	os.Setenv("XDG_DATA_HOME", dir)
 	defer os.Unsetenv("XDG_DATA_HOME")
-
-	got := DataDir()
-	if got != "/xdg/data/cobot" {
-		t.Errorf("DataDir() = %q, want %q", got, "/xdg/data/cobot")
+	expected := filepath.Join(dir, "cobot")
+	if got := DataDir(); got != expected {
+		t.Errorf("expected %s, got %s", expected, got)
 	}
 }
 
-func TestDataDir_CobotOverridesXDG(t *testing.T) {
-	os.Setenv("XDG_DATA_HOME", "/xdg/data")
-	os.Setenv("COBOT_DATA_PATH", "/custom/data")
-	defer os.Unsetenv("XDG_DATA_HOME")
+func TestDataDirCobotOverridesXDG(t *testing.T) {
+	cobotDir := t.TempDir()
+	xdgDir := t.TempDir()
+	os.Setenv("COBOT_DATA_PATH", cobotDir)
+	os.Setenv("XDG_DATA_HOME", xdgDir)
 	defer os.Unsetenv("COBOT_DATA_PATH")
-
-	got := DataDir()
-	if got != "/custom/data" {
-		t.Errorf("DataDir() = %q, want %q", got, "/custom/data")
+	defer os.Unsetenv("XDG_DATA_HOME")
+	if got := DataDir(); got != cobotDir {
+		t.Errorf("expected %s, got %s", cobotDir, got)
 	}
 }
 
 func TestGlobalConfigPath(t *testing.T) {
-	os.Unsetenv("COBOT_CONFIG_PATH")
-	os.Setenv("XDG_CONFIG_HOME", "/test")
-	defer os.Unsetenv("XDG_CONFIG_HOME")
-
-	got := GlobalConfigPath()
-	if got != "/test/cobot/config.yaml" {
-		t.Errorf("GlobalConfigPath() = %q, want %q", got, "/test/cobot/config.yaml")
+	dir := t.TempDir()
+	os.Setenv("COBOT_CONFIG_PATH", dir)
+	defer os.Unsetenv("COBOT_CONFIG_PATH")
+	expected := filepath.Join(dir, "config.yaml")
+	if got := GlobalConfigPath(); got != expected {
+		t.Errorf("expected %s, got %s", expected, got)
 	}
 }
 
 func TestMCPRegistryDir(t *testing.T) {
-	os.Unsetenv("COBOT_CONFIG_PATH")
-	os.Setenv("XDG_CONFIG_HOME", "/test")
-	defer os.Unsetenv("XDG_CONFIG_HOME")
-
-	got := MCPRegistryDir()
-	if got != "/test/cobot/mcp" {
-		t.Errorf("MCPRegistryDir() = %q, want %q", got, "/test/cobot/mcp")
+	dir := t.TempDir()
+	os.Setenv("COBOT_CONFIG_PATH", dir)
+	defer os.Unsetenv("COBOT_CONFIG_PATH")
+	expected := filepath.Join(dir, "mcp")
+	if got := MCPRegistryDir(); got != expected {
+		t.Errorf("expected %s, got %s", expected, got)
 	}
 }
 
 func TestSkillsRegistryDir(t *testing.T) {
-	os.Unsetenv("COBOT_CONFIG_PATH")
-	os.Setenv("XDG_CONFIG_HOME", "/test")
-	defer os.Unsetenv("XDG_CONFIG_HOME")
-
-	got := SkillsRegistryDir()
-	if got != "/test/cobot/skills" {
-		t.Errorf("SkillsRegistryDir() = %q, want %q", got, "/test/cobot/skills")
+	dir := t.TempDir()
+	os.Setenv("COBOT_CONFIG_PATH", dir)
+	defer os.Unsetenv("COBOT_CONFIG_PATH")
+	expected := filepath.Join(dir, "skills")
+	if got := SkillsRegistryDir(); got != expected {
+		t.Errorf("expected %s, got %s", expected, got)
 	}
 }
 
 func TestWorkspaceDefinitionsDir(t *testing.T) {
-	os.Unsetenv("COBOT_CONFIG_PATH")
-	os.Setenv("XDG_CONFIG_HOME", "/test")
-	defer os.Unsetenv("XDG_CONFIG_HOME")
-
-	got := WorkspaceDefinitionsDir()
-	if got != "/test/cobot/workspaces" {
-		t.Errorf("WorkspaceDefinitionsDir() = %q, want %q", got, "/test/cobot/workspaces")
-	}
-}
-
-func TestDerivedDirs_UseCobotConfigPath(t *testing.T) {
-	os.Setenv("COBOT_CONFIG_PATH", "/my/config")
+	dir := t.TempDir()
+	os.Setenv("COBOT_CONFIG_PATH", dir)
 	defer os.Unsetenv("COBOT_CONFIG_PATH")
-
-	if got := GlobalConfigPath(); got != "/my/config/config.yaml" {
-		t.Errorf("GlobalConfigPath() = %q, want %q", got, "/my/config/config.yaml")
-	}
-	if got := MCPRegistryDir(); got != "/my/config/mcp" {
-		t.Errorf("MCPRegistryDir() = %q, want %q", got, "/my/config/mcp")
-	}
-	if got := SkillsRegistryDir(); got != "/my/config/skills" {
-		t.Errorf("SkillsRegistryDir() = %q, want %q", got, "/my/config/skills")
-	}
-	if got := WorkspaceDefinitionsDir(); got != "/my/config/workspaces" {
-		t.Errorf("WorkspaceDefinitionsDir() = %q, want %q", got, "/my/config/workspaces")
+	expected := filepath.Join(dir, "workspaces")
+	if got := WorkspaceDefinitionsDir(); got != expected {
+		t.Errorf("expected %s, got %s", expected, got)
 	}
 }

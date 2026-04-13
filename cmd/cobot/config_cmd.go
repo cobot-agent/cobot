@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/cobot-agent/cobot/internal/config"
+	"github.com/cobot-agent/cobot/internal/workspace"
 	cobot "github.com/cobot-agent/cobot/pkg"
 	"github.com/spf13/cobra"
 )
@@ -60,14 +61,6 @@ var configGetCmd = &cobra.Command{
 	},
 }
 
-func getWorkspaceConfigPath() (string, error) {
-	ws, err := resolveWorkspace()
-	if err != nil {
-		return "", err
-	}
-	return ws.ConfigPath(), nil
-}
-
 var configSetCmd = &cobra.Command{
 	Use:   "set <key> <value>",
 	Short: "Set a config value",
@@ -76,19 +69,20 @@ var configSetCmd = &cobra.Command{
 		key := args[0]
 		value := args[1]
 
-		configPath, err := getWorkspaceConfigPath()
+		m, err := workspace.NewManager()
 		if err != nil {
-			return err
+			return fmt.Errorf("create workspace manager: %w", err)
 		}
+		ws := m.Current()
 
 		cfg := cobot.DefaultConfig()
-		_ = config.LoadFromFile(cfg, configPath)
+		_ = config.LoadFromFile(cfg, ws.ConfigPath)
 
 		if err := setConfigValue(cfg, key, value); err != nil {
 			return err
 		}
 
-		if err := config.SaveToFile(cfg, configPath); err != nil {
+		if err := config.SaveToFile(cfg, ws.ConfigPath); err != nil {
 			return fmt.Errorf("saving config: %w", err)
 		}
 
@@ -104,18 +98,19 @@ var configInitCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		force, _ := cmd.Flags().GetBool("force")
 
-		configPath, err := getWorkspaceConfigPath()
+		m, err := workspace.NewManager()
 		if err != nil {
-			return err
+			return fmt.Errorf("create workspace manager: %w", err)
 		}
+		ws := m.Current()
 
-		if _, err := os.Stat(configPath); err == nil && !force {
-			return fmt.Errorf("config already exists at %s (use --force to overwrite)", configPath)
+		if _, err := os.Stat(ws.ConfigPath); err == nil && !force {
+			return fmt.Errorf("config already exists at %s (use --force to overwrite)", ws.ConfigPath)
 		}
 
 		cfg := cobot.DefaultConfig()
 
-		_ = config.LoadFromFile(cfg, configPath)
+		_ = config.LoadFromFile(cfg, ws.ConfigPath)
 
 		interactive, _ := cmd.Flags().GetBool("interactive")
 		if interactive {
@@ -124,11 +119,11 @@ var configInitCmd = &cobra.Command{
 			}
 		}
 
-		if err := config.SaveToFile(cfg, configPath); err != nil {
+		if err := config.SaveToFile(cfg, ws.ConfigPath); err != nil {
 			return fmt.Errorf("saving config: %w", err)
 		}
 
-		fmt.Fprintf(cmd.OutOrStdout(), "Configuration initialized at %s\n", configPath)
+		fmt.Fprintf(cmd.OutOrStdout(), "Configuration initialized at %s\n", ws.ConfigPath)
 		return nil
 	},
 }
@@ -137,14 +132,15 @@ var configEditCmd = &cobra.Command{
 	Use:   "edit",
 	Short: "Edit configuration file in default editor",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		configPath, err := getWorkspaceConfigPath()
+		m, err := workspace.NewManager()
 		if err != nil {
-			return err
+			return fmt.Errorf("create workspace manager: %w", err)
 		}
+		ws := m.Current()
 
-		if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		if _, err := os.Stat(ws.ConfigPath); os.IsNotExist(err) {
 			cfg := cobot.DefaultConfig()
-			if err := config.SaveToFile(cfg, configPath); err != nil {
+			if err := config.SaveToFile(cfg, ws.ConfigPath); err != nil {
 				return fmt.Errorf("creating config: %w", err)
 			}
 		}
@@ -154,7 +150,7 @@ var configEditCmd = &cobra.Command{
 			editor = "vi"
 		}
 
-		execCmd := execCommand(editor, configPath)
+		execCmd := execCommand(editor, ws.ConfigPath)
 		execCmd.Stdin = os.Stdin
 		execCmd.Stdout = os.Stdout
 		execCmd.Stderr = os.Stderr
@@ -171,13 +167,14 @@ var configValidateCmd = &cobra.Command{
 	Use:   "validate",
 	Short: "Validate configuration file",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		configPath, err := getWorkspaceConfigPath()
+		m, err := workspace.NewManager()
 		if err != nil {
-			return err
+			return fmt.Errorf("create workspace manager: %w", err)
 		}
+		ws := m.Current()
 
 		cfg := cobot.DefaultConfig()
-		if err := config.LoadFromFile(cfg, configPath); err != nil {
+		if err := config.LoadFromFile(cfg, ws.ConfigPath); err != nil {
 			return fmt.Errorf("invalid config: %w", err)
 		}
 
@@ -207,13 +204,14 @@ var configSetProviderCmd = &cobra.Command{
 		baseURL, _ := cmd.Flags().GetString("base-url")
 		headerFlags, _ := cmd.Flags().GetStringArray("header")
 
-		configPath, err := getWorkspaceConfigPath()
+		m, err := workspace.NewManager()
 		if err != nil {
-			return err
+			return fmt.Errorf("create workspace manager: %w", err)
 		}
+		ws := m.Current()
 
 		cfg := cobot.DefaultConfig()
-		_ = config.LoadFromFile(cfg, configPath)
+		_ = config.LoadFromFile(cfg, ws.ConfigPath)
 
 		if cfg.Providers == nil {
 			cfg.Providers = make(map[string]cobot.ProviderConfig)
@@ -239,7 +237,7 @@ var configSetProviderCmd = &cobra.Command{
 
 		cfg.Providers[providerName] = pc
 
-		if err := config.SaveToFile(cfg, configPath); err != nil {
+		if err := config.SaveToFile(cfg, ws.ConfigPath); err != nil {
 			return fmt.Errorf("saving config: %w", err)
 		}
 
@@ -265,20 +263,21 @@ var configSetApiKeyCmd = &cobra.Command{
 		provider := args[0]
 		apiKey := args[1]
 
-		configPath, err := getWorkspaceConfigPath()
+		m, err := workspace.NewManager()
 		if err != nil {
-			return err
+			return fmt.Errorf("create workspace manager: %w", err)
 		}
+		ws := m.Current()
 
 		cfg := cobot.DefaultConfig()
-		_ = config.LoadFromFile(cfg, configPath)
+		_ = config.LoadFromFile(cfg, ws.ConfigPath)
 
 		if cfg.APIKeys == nil {
 			cfg.APIKeys = make(map[string]string)
 		}
 		cfg.APIKeys[provider] = apiKey
 
-		if err := config.SaveToFile(cfg, configPath); err != nil {
+		if err := config.SaveToFile(cfg, ws.ConfigPath); err != nil {
 			return fmt.Errorf("saving config: %w", err)
 		}
 
