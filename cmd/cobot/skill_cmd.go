@@ -14,8 +14,6 @@ import (
 	"github.com/cobot-agent/cobot/internal/xdg"
 )
 
-var skillScope string
-
 var skillCmd = &cobra.Command{
 	Use:   "skill",
 	Short: "Manage skills",
@@ -26,9 +24,15 @@ var skillListCmd = &cobra.Command{
 	Short:   "List skills",
 	Aliases: []string{"ls"},
 	RunE: func(cmd *cobra.Command, args []string) error {
-		scope, _ := cmd.Flags().GetString("scope")
+		globalFlag, _ := cmd.Flags().GetBool("global")
+		workspaceFlag, _ := cmd.Flags().GetBool("workspace")
 
-		if scope == "" || scope == "global" {
+		if !globalFlag && !workspaceFlag {
+			globalFlag = true
+			workspaceFlag = true
+		}
+
+		if globalFlag {
 			globalDir := xdg.SkillsRegistryDir()
 			globalSkills, err := skills.LoadRegistry(globalDir)
 			if err != nil {
@@ -47,24 +51,24 @@ var skillListCmd = &cobra.Command{
 			}
 		}
 
-		if scope == "" || scope == "workspace" {
+		if workspaceFlag {
 			m, err := workspace.NewManager()
 			if err != nil {
-				if scope == "workspace" {
+				if workspaceFlag {
 					return fmt.Errorf("create workspace manager: %w", err)
 				}
 				return nil
 			}
 			ws, err := m.ResolveByNameOrDiscover("", ".")
 			if err != nil {
-				if scope == "workspace" {
+				if workspaceFlag {
 					return fmt.Errorf("resolve workspace: %w", err)
 				}
 				return nil
 			}
 			wsSkills, err := skills.LoadRegistry(ws.SkillsDir())
 			if err != nil {
-				if scope == "workspace" {
+				if workspaceFlag {
 					return fmt.Errorf("load workspace skills: %w", err)
 				}
 				return nil
@@ -77,7 +81,7 @@ var skillListCmd = &cobra.Command{
 						fmt.Fprintf(cmd.OutOrStdout(), "    %s\n", s.Description)
 					}
 				}
-			} else if scope == "workspace" {
+			} else if workspaceFlag {
 				fmt.Fprintln(cmd.OutOrStdout(), "\nNo workspace skills found.")
 			}
 		}
@@ -224,7 +228,8 @@ var skillShowCmd = &cobra.Command{
 }
 
 func init() {
-	skillListCmd.Flags().String("scope", "", "Scope to list: global, workspace (default: both)")
+	skillListCmd.Flags().Bool("global", false, "List global skills only")
+	skillListCmd.Flags().Bool("workspace", false, "List workspace skills only")
 	skillAddCmd.Flags().StringP("file", "f", "", "Skill file to add")
 
 	skillCmd.AddCommand(skillListCmd)
