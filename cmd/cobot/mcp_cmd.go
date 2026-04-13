@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -143,6 +145,48 @@ var mcpShowCmd = &cobra.Command{
 	},
 }
 
+var mcpTestCmd = &cobra.Command{
+	Use:   "test <name>",
+	Short: "Test connection to an MCP server",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		name := args[0]
+		entries, err := mcp.LoadRegistry(xdg.MCPRegistryDir())
+		if err != nil {
+			return err
+		}
+
+		entry, ok := entries[name]
+		if !ok {
+			return fmt.Errorf("MCP server '%s' not found", name)
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		mgr := mcp.NewMCPManager()
+		defer mgr.Close()
+
+		if err := mgr.ConnectFromRegistry(ctx, name, entry); err != nil {
+			fmt.Fprintf(cmd.OutOrStdout(), "Connection failed: %v\n", err)
+			return nil
+		}
+		defer mgr.Disconnect(ctx, name)
+
+		tools, err := mgr.ListTools(ctx, name)
+		if err != nil {
+			fmt.Fprintf(cmd.OutOrStdout(), "Connected but failed to list tools: %v\n", err)
+			return nil
+		}
+
+		fmt.Fprintf(cmd.OutOrStdout(), "Connection successful! %d tools available.\n", len(tools))
+		for _, tool := range tools {
+			fmt.Fprintf(cmd.OutOrStdout(), "  - %s\n", tool.Name)
+		}
+		return nil
+	},
+}
+
 func init() {
 	mcpAddCmd.Flags().StringP("file", "f", "", "YAML file to register")
 
@@ -150,5 +194,6 @@ func init() {
 	mcpCmd.AddCommand(mcpAddCmd)
 	mcpCmd.AddCommand(mcpRemoveCmd)
 	mcpCmd.AddCommand(mcpShowCmd)
+	mcpCmd.AddCommand(mcpTestCmd)
 	rootCmd.AddCommand(mcpCmd)
 }

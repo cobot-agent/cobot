@@ -171,6 +171,58 @@ var skillRemoveCmd = &cobra.Command{
 	},
 }
 
+var skillShowCmd = &cobra.Command{
+	Use:   "show <name>",
+	Short: "Show skill details",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		name := args[0]
+
+		globalDir := xdg.SkillsRegistryDir()
+		skill, err := skills.LoadByName(globalDir, name)
+
+		if err != nil {
+			m, wsErr := workspace.NewManager()
+			if wsErr != nil {
+				return fmt.Errorf("skill '%s' not found in global registry", name)
+			}
+			ws, wsErr := m.ResolveByNameOrDiscover("", ".")
+			if wsErr != nil {
+				return fmt.Errorf("skill '%s' not found in global registry", name)
+			}
+			skill, err = skills.LoadByName(ws.SkillsDir(), name)
+			if err != nil {
+				return fmt.Errorf("skill '%s' not found in global or workspace registry", name)
+			}
+		}
+
+		fmt.Fprintf(cmd.OutOrStdout(), "Name:        %s\n", skill.Name)
+		fmt.Fprintf(cmd.OutOrStdout(), "Format:      %s\n", skill.Format)
+		if skill.Description != "" {
+			fmt.Fprintf(cmd.OutOrStdout(), "Description: %s\n", skill.Description)
+		}
+		if skill.Trigger != "" {
+			fmt.Fprintf(cmd.OutOrStdout(), "Trigger:     %s\n", skill.Trigger)
+		}
+
+		switch skill.Format {
+		case skills.FormatYAML:
+			fmt.Fprintf(cmd.OutOrStdout(), "Steps:       %d\n", len(skill.Steps))
+		case skills.FormatMarkdown, skills.FormatDirectory:
+			if skill.Content != "" {
+				content := skill.Content
+				if len(content) > 200 {
+					content = content[:200] + "..."
+				}
+				fmt.Fprintln(cmd.OutOrStdout(), "\nContent:")
+				fmt.Fprint(cmd.OutOrStdout(), content)
+			}
+		}
+
+		return nil
+	},
+}
+
 func init() {
 	skillListCmd.Flags().String("scope", "", "Scope to list: global, workspace (default: both)")
 	skillAddCmd.Flags().StringP("file", "f", "", "Skill file to add")
@@ -178,5 +230,6 @@ func init() {
 	skillCmd.AddCommand(skillListCmd)
 	skillCmd.AddCommand(skillAddCmd)
 	skillCmd.AddCommand(skillRemoveCmd)
+	skillCmd.AddCommand(skillShowCmd)
 	rootCmd.AddCommand(skillCmd)
 }
