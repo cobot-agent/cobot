@@ -30,7 +30,7 @@ var chatCmd = &cobra.Command{
 			ApplyChatFlags(cfg, "", p)
 		}
 
-		a, cleanup, err := initAgent(cfg, true)
+		a, _, cleanup, err := initAgent(cfg, true)
 		if err != nil {
 			return err
 		}

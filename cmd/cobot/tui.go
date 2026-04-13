@@ -189,7 +189,7 @@ var tuiCmd = &cobra.Command{
 			return err
 		}
 
-		a, cleanup, err := initAgent(cfg, false)
+		a, _, cleanup, err := initAgent(cfg, false)
 		if err != nil {
 			return err
 		}
