@@ -74,13 +74,21 @@ func loadConfig() (*cobot.Config, error) {
 		}
 	}
 
-	if workspacePath != "" {
-		cfg.Workspace = workspacePath
+	// Workspace resolution priority: CLI flag > env var > project discovery > default.
+	// Apply env vars first so COBOT_WORKSPACE is available, then resolve workspace
+	// using the correct priority.
+	config.ApplyEnvVars(cfg)
+
+	// Determine workspace name: CLI flag takes highest priority, then env var
+	// (already applied to cfg.Workspace by ApplyEnvVars), then discovery/default.
+	wsName := workspacePath
+	if wsName == "" {
+		wsName = cfg.Workspace
 	}
 
 	m, err := workspace.NewManager()
 	if err == nil {
-		ws, err := m.ResolveByNameOrDiscover(workspacePath, ".")
+		ws, err := m.ResolveByNameOrDiscover(wsName, ".")
 		if err == nil {
 			cfg.Workspace = ws.Definition.Root
 			if ws.Definition.Root != "" {
@@ -90,8 +98,6 @@ func loadConfig() (*cobot.Config, error) {
 			}
 		}
 	}
-
-	config.ApplyEnvVars(cfg)
 
 	if modelName != "" {
 		cfg.Model = modelName

@@ -8,9 +8,11 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/cobot-agent/cobot/internal/agent"
 	"github.com/cobot-agent/cobot/internal/tools"
 	"github.com/cobot-agent/cobot/internal/workspace"
 	cobot "github.com/cobot-agent/cobot/pkg"
+	"gopkg.in/yaml.v3"
 )
 
 type WorkspaceConfigUpdateTool struct {
@@ -173,14 +175,135 @@ func (t *PersonaUpdateTool) Execute(ctx context.Context, args json.RawMessage) (
 	return fmt.Sprintf("%s updated", strings.ToLower(a.File)), nil
 }
 
+type AgentConfigUpdateTool struct {
+	workspace *workspace.Workspace
+}
+
+func (t *AgentConfigUpdateTool) Name() string { return "agent_config_update" }
+func (t *AgentConfigUpdateTool) Description() string {
+	return "Update an agent's configuration file in the workspace"
+}
+
+func (t *AgentConfigUpdateTool) Parameters() json.RawMessage {
+	return json.RawMessage(`{
+		"type": "object",
+		"properties": {
+			"agent": {"type": "string", "description": "Agent name"},
+			"model": {"type": "string", "description": "LLM model override"},
+			"system_prompt": {"type": "string", "description": "System prompt or .md file ref"},
+			"enabled_mcp": {"type": "array", "items": {"type": "string"}, "description": "MCP servers to enable"},
+			"enabled_skills": {"type": "array", "items": {"type": "string"}, "description": "Skills to enable"},
+			"max_turns": {"type": "integer", "description": "Max turns override"}
+		},
+		"required": ["agent"]
+	}`)
+}
+
+func (t *AgentConfigUpdateTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
+	var params struct {
+		Agent         string    `json:"agent"`
+		Model         *string   `json:"model"`
+		SystemPrompt  *string   `json:"system_prompt"`
+		EnabledMCP    *[]string `json:"enabled_mcp"`
+		EnabledSkills *[]string `json:"enabled_skills"`
+		MaxTurns      *int      `json:"max_turns"`
+	}
+	if err := json.Unmarshal(args, &params); err != nil {
+		return "", fmt.Errorf("parse arguments: %w", err)
+	}
+
+	path := filepath.Join(t.workspace.AgentsDir(), params.Agent+".yaml")
+	cfg, err := agent.LoadAgentConfig(path)
+	if err != nil {
+		return "", fmt.Errorf("load agent config: %w", err)
+	}
+
+	if params.Model != nil {
+		cfg.Model = *params.Model
+	}
+	if params.SystemPrompt != nil {
+		cfg.SystemPrompt = *params.SystemPrompt
+	}
+	if params.EnabledMCP != nil {
+		cfg.EnabledMCP = *params.EnabledMCP
+	}
+	if params.EnabledSkills != nil {
+		cfg.EnabledSkills = *params.EnabledSkills
+	}
+	if params.MaxTurns != nil {
+		cfg.MaxTurns = *params.MaxTurns
+	}
+
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return "", fmt.Errorf("marshal agent config: %w", err)
+	}
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return "", fmt.Errorf("write agent config: %w", err)
+	}
+	return fmt.Sprintf("agent config updated: %s", params.Agent), nil
+}
+
+type SkillUpdateTool struct {
+	workspace *workspace.Workspace
+}
+
+func (t *SkillUpdateTool) Name() string { return "skill_update" }
+func (t *SkillUpdateTool) Description() string {
+	return "Update an existing skill in the workspace skills directory"
+}
+
+func (t *SkillUpdateTool) Parameters() json.RawMessage {
+	return json.RawMessage(`{
+		"type": "object",
+		"properties": {
+			"name": {"type": "string", "description": "Skill name"},
+			"content": {"type": "string", "description": "New content for the skill file"}
+		},
+		"required": ["name", "content"]
+	}`)
+}
+
+func (t *SkillUpdateTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
+	var params struct {
+		Name    string `json:"name"`
+		Content string `json:"content"`
+	}
+	if err := json.Unmarshal(args, &params); err != nil {
+		return "", fmt.Errorf("parse arguments: %w", err)
+	}
+
+	dir := t.workspace.SkillsDir()
+	var found string
+	for _, ext := range []string{".yaml", ".yml", ".md"} {
+		candidate := filepath.Join(dir, params.Name+ext)
+		if _, err := os.Stat(candidate); err == nil {
+			found = candidate
+			break
+		}
+	}
+	if found == "" {
+		return "", fmt.Errorf("skill not found: %s", params.Name)
+	}
+
+	if err := os.WriteFile(found, []byte(params.Content), 0644); err != nil {
+		return "", fmt.Errorf("write skill file: %w", err)
+	}
+	return fmt.Sprintf("skill updated: %s", filepath.Base(found)), nil
+}
+
 func RegisterWorkspaceTools(registry *tools.Registry, ws *workspace.Workspace) {
 	registry.Register(&WorkspaceConfigUpdateTool{workspace: ws})
 	registry.Register(&SkillCreateTool{workspace: ws})
 	registry.Register(&PersonaUpdateTool{workspace: ws})
+	registry.Register(&AgentConfigUpdateTool{workspace: ws})
+	registry.Register(&SkillUpdateTool{workspace: ws})
 }
 
 var (
 	_ cobot.Tool = (*WorkspaceConfigUpdateTool)(nil)
 	_ cobot.Tool = (*SkillCreateTool)(nil)
 	_ cobot.Tool = (*PersonaUpdateTool)(nil)
+	_ cobot.Tool = (*AgentConfigUpdateTool)(nil)
+	_ cobot.Tool = (*SkillUpdateTool)(nil)
 )

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os/exec"
 	"sync"
 
@@ -152,7 +153,37 @@ func (m *MCPManager) ToolAdapters(ctx context.Context, serverName string) ([]*MC
 	return adapters, nil
 }
 
+func (m *MCPManager) ConnectSSE(ctx context.Context, name string, entry *RegistryEntry) error {
+	httpClient := &http.Client{}
+	if len(entry.Headers) > 0 {
+		httpClient.Transport = &headerTransport{
+			base:    http.DefaultTransport,
+			headers: entry.Headers,
+		}
+	}
+
+	transport := &mcp.SSEClientTransport{Endpoint: entry.URL, HTTPClient: httpClient}
+	session, err := m.client.Connect(ctx, transport, nil)
+	if err != nil {
+		return fmt.Errorf("connect to server %q: %w", name, err)
+	}
+
+	m.sessions[name] = session
+	return nil
+}
+
 func (m *MCPManager) ConnectFromRegistry(ctx context.Context, name string, entry *RegistryEntry) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if _, exists := m.sessions[name]; exists {
+		return fmt.Errorf("server %q already connected", name)
+	}
+
+	if entry.Transport == "sse" || entry.Transport == "http" {
+		return m.ConnectSSE(ctx, name, entry)
+	}
+
 	var env []string
 	for k, v := range entry.Env {
 		env = append(env, fmt.Sprintf("%s=%s", k, v))
@@ -164,7 +195,20 @@ func (m *MCPManager) ConnectFromRegistry(ctx context.Context, name string, entry
 		Env:     env,
 	}
 
-	return m.Connect(ctx, name, cfg)
+	cmd := exec.Command(cfg.Command, cfg.Args...)
+	if len(cfg.Env) > 0 {
+		cmd.Env = cfg.Env
+	}
+
+	transport := &mcp.CommandTransport{Command: cmd}
+	session, err := m.client.Connect(ctx, transport, nil)
+	if err != nil {
+		return fmt.Errorf("connect to server %q: %w", name, err)
+	}
+
+	m.sessions[name] = session
+	m.configs[name] = cfg
+	return nil
 }
 
 func (m *MCPManager) ConnectEnabled(ctx context.Context, registry map[string]*RegistryEntry, enabled []string) error {
@@ -204,4 +248,16 @@ func extractText(contents []mcp.Content) string {
 		}
 	}
 	return text
+}
+
+type headerTransport struct {
+	base    http.RoundTripper
+	headers map[string]string
+}
+
+func (t *headerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	for k, v := range t.headers {
+		req.Header.Set(k, v)
+	}
+	return t.base.RoundTrip(req)
 }

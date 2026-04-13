@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/cobot-agent/cobot/internal/agent"
@@ -80,6 +81,16 @@ func resolveSandboxRoot(ws *workspace.Workspace) string {
 	return ws.DataDir
 }
 
+func resolveSystemPrompt(value string, ws *workspace.Workspace) string {
+	if strings.HasSuffix(value, ".md") {
+		path := filepath.Join(ws.DataDir, value)
+		if data, err := os.ReadFile(path); err == nil {
+			return string(data)
+		}
+	}
+	return value
+}
+
 func resolveAgentConfig(ws *workspace.Workspace) (*agent.AgentConfig, error) {
 	configs, err := agent.LoadAgentConfigs(ws.AgentsDir())
 	if err != nil {
@@ -97,8 +108,12 @@ func resolveAgentConfig(ws *workspace.Workspace) (*agent.AgentConfig, error) {
 	return nil, nil
 }
 
-func connectMCPServers(a *agent.Agent, ws *workspace.Workspace) error {
-	if len(ws.Config.EnabledMCP) == 0 {
+func connectMCPServers(a *agent.Agent, ws *workspace.Workspace, agentCfg *agent.AgentConfig) error {
+	enabled := ws.Config.EnabledMCP
+	if agentCfg != nil && len(agentCfg.EnabledMCP) > 0 {
+		enabled = agentCfg.EnabledMCP
+	}
+	if len(enabled) == 0 {
 		return nil
 	}
 	registry, err := mcp.LoadRegistry(xdg.MCPRegistryDir())
@@ -106,10 +121,10 @@ func connectMCPServers(a *agent.Agent, ws *workspace.Workspace) error {
 		return err
 	}
 	mgr := mcp.NewMCPManager()
-	if err := mgr.ConnectEnabled(context.Background(), registry, ws.Config.EnabledMCP); err != nil {
+	if err := mgr.ConnectEnabled(context.Background(), registry, enabled); err != nil {
 		return err
 	}
-	for _, name := range ws.Config.EnabledMCP {
+	for _, name := range enabled {
 		adapters, err := mgr.ToolAdapters(context.Background(), name)
 		if err != nil {
 			continue
@@ -177,6 +192,11 @@ func initAgent(cfg *cobot.Config, requireProvider bool) (*agent.Agent, *workspac
 
 	a := agent.New(cfg)
 
+	if agentCfg != nil && agentCfg.SystemPrompt != "" {
+		prompt := resolveSystemPrompt(agentCfg.SystemPrompt, ws)
+		a.SetSystemPrompt(prompt)
+	}
+
 	provider, err := initProvider(cfg)
 	if err != nil {
 		if requireProvider {
@@ -196,19 +216,33 @@ func initAgent(cfg *cobot.Config, requireProvider bool) (*agent.Agent, *workspac
 	}
 
 	sandboxRoot := resolveSandboxRoot(ws)
+	sandboxCfg := ws.Config.Sandbox
+	if agentCfg != nil && agentCfg.Sandbox != nil {
+		if agentCfg.Sandbox.Root != "" {
+			sandboxCfg.Root = agentCfg.Sandbox.Root
+			sandboxRoot = agentCfg.Sandbox.Root
+		}
+		if len(agentCfg.Sandbox.AllowPaths) > 0 {
+			sandboxCfg.AllowPaths = agentCfg.Sandbox.AllowPaths
+		}
+		if len(agentCfg.Sandbox.BlockedCommands) > 0 {
+			sandboxCfg.BlockedCommands = agentCfg.Sandbox.BlockedCommands
+		}
+	}
 	sandbox := &builtin.WorkspaceSandbox{
-		Root:          ws.Config.Sandbox.Root,
-		AllowPaths:    ws.Config.Sandbox.AllowPaths,
-		ReadonlyPaths: ws.Config.Sandbox.ReadonlyPaths,
+		Root:          sandboxCfg.Root,
+		AllowPaths:    sandboxCfg.AllowPaths,
+		ReadonlyPaths: sandboxCfg.ReadonlyPaths,
 	}
 	a.RegisterTool(builtin.NewReadFileTool(builtin.WithReadSandbox(sandbox)))
 	a.RegisterTool(builtin.NewWriteFileTool(builtin.WithWriteSandbox(sandbox)))
 	a.RegisterTool(builtin.NewShellExecTool(
 		builtin.WithShellWorkdir(sandboxRoot),
-		builtin.WithShellBlockedCommands(ws.Config.Sandbox.BlockedCommands),
+		builtin.WithShellBlockedCommands(sandboxCfg.BlockedCommands),
+		builtin.WithShellAllowNetwork(sandboxCfg.AllowNetwork),
 	))
 
-	if err := connectMCPServers(a, ws); err != nil {
+	if err := connectMCPServers(a, ws, agentCfg); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: MCP: %v\n", err)
 	}
 

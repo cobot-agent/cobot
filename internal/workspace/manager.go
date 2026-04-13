@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"sort"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/cobot-agent/cobot/internal/debug"
 	"github.com/cobot-agent/cobot/internal/xdg"
 )
@@ -173,6 +175,16 @@ func (m *Manager) Discover(startDir string) (*Workspace, error) {
 		info, err := os.Stat(cobotDir)
 		if err == nil && info.IsDir() {
 			projectName := filepath.Base(dir)
+
+			workspaceYAMLPath := filepath.Join(dir, ".cobot", "workspace.yaml")
+			if data, err := os.ReadFile(workspaceYAMLPath); err == nil {
+				var cfg struct {
+					Name string `yaml:"name"`
+				}
+				if err := yaml.Unmarshal(data, &cfg); err == nil && cfg.Name != "" {
+					projectName = cfg.Name
+				}
+			}
 
 			defPath := filepath.Join(m.definitionsDir, projectName+".yaml")
 			if def, err := loadDefinition(defPath); err == nil {

@@ -18,6 +18,7 @@ type shellExecArgs struct {
 type ShellExecTool struct {
 	workdir         string
 	blockedCommands []string
+	allowNetwork    bool
 }
 
 type ShellExecToolOption func(*ShellExecTool)
@@ -30,8 +31,19 @@ func WithShellBlockedCommands(blocked []string) ShellExecToolOption {
 	return func(t *ShellExecTool) { t.blockedCommands = blocked }
 }
 
+func WithShellAllowNetwork(allow bool) ShellExecToolOption {
+	return func(t *ShellExecTool) { t.allowNetwork = allow }
+}
+
+var networkCommands = []string{
+	"curl", "wget", "ssh", "scp", "sftp", "nc", "ncat", "netcat",
+	"telnet", "ftp", "rsync", "ping", "nslookup", "dig", "host",
+}
+
 func NewShellExecTool(opts ...ShellExecToolOption) *ShellExecTool {
-	t := &ShellExecTool{}
+	t := &ShellExecTool{
+		allowNetwork: true,
+	}
 	for _, opt := range opts {
 		opt(t)
 	}
@@ -58,6 +70,15 @@ func (t *ShellExecTool) Execute(ctx context.Context, args json.RawMessage) (stri
 	for _, blocked := range t.blockedCommands {
 		if strings.HasPrefix(a.Command, blocked+" ") || a.Command == blocked {
 			return "", fmt.Errorf("command %q is blocked", blocked)
+		}
+	}
+	if !t.allowNetwork {
+		for _, nc := range networkCommands {
+			if strings.HasPrefix(a.Command, nc+" ") || a.Command == nc ||
+				strings.Contains(a.Command, " "+nc+" ") || strings.Contains(a.Command, "|"+nc+" ") ||
+				strings.Contains(a.Command, "| "+nc+" ") {
+				return "", fmt.Errorf("network command %q is blocked (allow_network is false)", nc)
+			}
 		}
 	}
 	cmd := exec.CommandContext(ctx, "sh", "-c", a.Command)
