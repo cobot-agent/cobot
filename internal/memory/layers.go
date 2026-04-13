@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 
 	cobot "github.com/cobot-agent/cobot/pkg"
@@ -59,7 +60,14 @@ func (s *Store) WakeUpToLayer(ctx context.Context, layer MemoryLayer) (string, e
 		}
 	}
 
-	return strings.Join(sections, "\n\n"), nil
+	var b strings.Builder
+	for i, sec := range sections {
+		if i > 0 {
+			b.WriteString("\n\n")
+		}
+		b.WriteString(sec)
+	}
+	return b.String(), nil
 }
 
 func (s *Store) collectL1Facts(ctx context.Context, wings []*cobot.Wing) []string {
@@ -67,6 +75,7 @@ func (s *Store) collectL1Facts(ctx context.Context, wings []*cobot.Wing) []strin
 	for _, w := range wings {
 		rooms, err := s.GetRooms(ctx, w.ID)
 		if err != nil {
+			slog.Warn("failed to get rooms", "wing", w.ID, "error", err)
 			continue
 		}
 		for _, r := range rooms {
@@ -75,6 +84,7 @@ func (s *Store) collectL1Facts(ctx context.Context, wings []*cobot.Wing) []strin
 			}
 			closets, err := s.GetClosets(ctx, r.ID)
 			if err != nil {
+				slog.Warn("failed to get closets", "room", r.ID, "error", err)
 				continue
 			}
 			for _, c := range closets {
@@ -92,6 +102,7 @@ func (s *Store) collectL2RoomRecall(ctx context.Context, wings []*cobot.Wing) []
 	for _, w := range wings {
 		rooms, err := s.GetRooms(ctx, w.ID)
 		if err != nil {
+			slog.Warn("failed to get rooms", "wing", w.ID, "error", err)
 			continue
 		}
 		for _, r := range rooms {

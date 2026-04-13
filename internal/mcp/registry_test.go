@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/cobot-agent/cobot/internal/config"
 )
 
 func TestLoadRegistryMultipleFiles(t *testing.T) {
@@ -171,14 +173,14 @@ command: echo
 }
 
 func TestExpandEnvNoVars(t *testing.T) {
-	result := expandEnv("plain string")
+	result := config.ExpandEnvVars("plain string")
 	if result != "plain string" {
 		t.Fatalf("expected 'plain string', got %q", result)
 	}
 }
 
 func TestExpandEnvUndefinedVar(t *testing.T) {
-	result := expandEnv("${UNDEFINED_VAR_12345}")
+	result := config.ExpandEnvVars("${UNDEFINED_VAR_12345}")
 	if result != "" {
 		t.Fatalf("expected empty string for undefined var, got %q", result)
 	}

@@ -16,6 +16,8 @@ import (
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
+var _ cobot.Provider = (*Provider)(nil)
+
 const maxScannerBuffer = 256 * 1024 // 256KB
 
 type Provider struct {

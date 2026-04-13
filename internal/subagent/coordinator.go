@@ -69,8 +69,8 @@ func (c *Coordinator) Gather(ctx context.Context, ids []string) []*Result {
 }
 
 func (c *Coordinator) CancelAll() {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	for _, sa := range c.subagents {
 		select {
 		case <-sa.Done():

@@ -73,92 +73,65 @@ func (s *Service) EnsureFiles() error {
 	return nil
 }
 
-func (s *Service) EnsureSoulFile() error {
-	path := s.ws.GetSoulPath()
+func (s *Service) ensureFile(path string, content string) error {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
-		if err := os.WriteFile(path, []byte(defaultSoulContent), 0644); err != nil {
-			return fmt.Errorf("write soul file: %w", err)
+		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+func (s *Service) EnsureSoulFile() error {
+	return s.ensureFile(s.ws.GetSoulPath(), defaultSoulContent)
 }
 
 func (s *Service) EnsureUserFile() error {
-	path := s.ws.GetUserPath()
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		if err := os.WriteFile(path, []byte(defaultUserContent), 0644); err != nil {
-			return fmt.Errorf("write user file: %w", err)
-		}
-	}
-	return nil
+	return s.ensureFile(s.ws.GetUserPath(), defaultUserContent)
 }
 
 func (s *Service) EnsureMemoryFile() error {
-	path := s.ws.GetMemoryMdPath()
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		if err := os.WriteFile(path, []byte(defaultMemoryContent), 0644); err != nil {
-			return fmt.Errorf("write memory file: %w", err)
-		}
-	}
-	return nil
+	return s.ensureFile(s.ws.GetMemoryMdPath(), defaultMemoryContent)
 }
 
 func (s *Service) LoadSoul() (string, error) {
-	path := s.ws.GetSoulPath()
-	content, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return defaultSoulContent, nil
-		}
-		return "", fmt.Errorf("read soul file: %w", err)
-	}
-	return string(content), nil
+	return s.loadFile(s.ws.GetSoulPath(), defaultSoulContent)
 }
 
 func (s *Service) LoadUser() (string, error) {
-	path := s.ws.GetUserPath()
-	content, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return defaultUserContent, nil
-		}
-		return "", fmt.Errorf("read user file: %w", err)
-	}
-	return string(content), nil
+	return s.loadFile(s.ws.GetUserPath(), defaultUserContent)
 }
 
 func (s *Service) LoadMemory() (string, error) {
-	path := s.ws.GetMemoryMdPath()
+	return s.loadFile(s.ws.GetMemoryMdPath(), defaultMemoryContent)
+}
+
+func (s *Service) loadFile(path string, defaultContent string) (string, error) {
 	content, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return defaultMemoryContent, nil
+			return defaultContent, nil
 		}
-		return "", fmt.Errorf("read memory file: %w", err)
+		return "", fmt.Errorf("read file: %w", err)
 	}
 	return string(content), nil
 }
 
 func (s *Service) SaveSoul(content string) error {
-	path := s.ws.GetSoulPath()
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		return fmt.Errorf("write soul file: %w", err)
-	}
-	return nil
+	return s.saveFile(s.ws.GetSoulPath(), content)
 }
 
 func (s *Service) SaveUser(content string) error {
-	path := s.ws.GetUserPath()
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		return fmt.Errorf("write user file: %w", err)
-	}
-	return nil
+	return s.saveFile(s.ws.GetUserPath(), content)
 }
 
 func (s *Service) SaveMemory(content string) error {
-	path := s.ws.GetMemoryMdPath()
+	return s.saveFile(s.ws.GetMemoryMdPath(), content)
+}
+
+func (s *Service) saveFile(path string, content string) error {
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		return fmt.Errorf("write memory file: %w", err)
+		return fmt.Errorf("write file: %w", err)
 	}
 	return nil
 }

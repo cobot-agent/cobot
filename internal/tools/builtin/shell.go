@@ -67,16 +67,31 @@ func (t *ShellExecTool) Execute(ctx context.Context, args json.RawMessage) (stri
 	if err := json.Unmarshal(args, &a); err != nil {
 		return "", err
 	}
+	cmdStr := a.Command
+	fields := strings.Fields(cmdStr)
+	if len(fields) == 0 {
+		return "", fmt.Errorf("empty command")
+	}
+	baseCmd := fields[0]
+
 	for _, blocked := range t.blockedCommands {
-		if strings.HasPrefix(a.Command, blocked+" ") || a.Command == blocked {
+		if baseCmd == blocked || strings.HasPrefix(cmdStr, blocked+" ") || cmdStr == blocked {
+			return "", fmt.Errorf("command %q is blocked", blocked)
+		}
+		if strings.Contains(cmdStr, "|"+blocked) || strings.Contains(cmdStr, ">"+blocked) || strings.Contains(cmdStr, "<"+blocked) || strings.Contains(cmdStr, "; "+blocked) {
+			return "", fmt.Errorf("command %q is blocked", blocked)
+		}
+		if strings.Contains(cmdStr, "$("+blocked) || strings.Contains(cmdStr, "`"+blocked+"`") {
 			return "", fmt.Errorf("command %q is blocked", blocked)
 		}
 	}
 	if !t.allowNetwork {
 		for _, nc := range networkCommands {
-			if strings.HasPrefix(a.Command, nc+" ") || a.Command == nc ||
-				strings.Contains(a.Command, " "+nc+" ") || strings.Contains(a.Command, "|"+nc+" ") ||
-				strings.Contains(a.Command, "| "+nc+" ") {
+			if baseCmd == nc || strings.HasPrefix(cmdStr, nc+" ") || cmdStr == nc ||
+				strings.Contains(cmdStr, " "+nc+" ") || strings.Contains(cmdStr, "|"+nc+" ") ||
+				strings.Contains(cmdStr, "| "+nc+" ") || strings.Contains(cmdStr, ">"+nc) ||
+				strings.Contains(cmdStr, "<"+nc) || strings.Contains(cmdStr, "; "+nc) ||
+				strings.Contains(cmdStr, "$("+nc) || strings.Contains(cmdStr, "`"+nc+"`") {
 				return "", fmt.Errorf("network command %q is blocked (allow_network is false)", nc)
 			}
 		}

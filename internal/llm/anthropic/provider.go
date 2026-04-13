@@ -21,6 +21,8 @@ type Provider struct {
 	client  *http.Client
 }
 
+var _ cobot.Provider = (*Provider)(nil)
+
 func NewProvider(apiKey, baseURL string) *Provider {
 	baseURL = strings.TrimRight(baseURL, "/")
 	if baseURL == "" {

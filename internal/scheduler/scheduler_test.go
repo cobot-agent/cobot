@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"context"
 	"testing"
 
 	"github.com/cobot-agent/cobot/internal/agent"
@@ -9,7 +10,7 @@ import (
 
 func TestNewScheduler(t *testing.T) {
 	a := agent.New(cobot.DefaultConfig())
-	s := New(a)
+	s := New(context.Background(), a)
 	if s == nil {
 		t.Fatal("expected scheduler")
 	}
@@ -17,7 +18,7 @@ func TestNewScheduler(t *testing.T) {
 
 func TestAddTask(t *testing.T) {
 	a := agent.New(cobot.DefaultConfig())
-	s := New(a)
+	s := New(context.Background(), a)
 
 	err := s.AddTask(&Task{
 		Name:     "test",
@@ -39,7 +40,7 @@ func TestAddTask(t *testing.T) {
 
 func TestAddTaskDuplicate(t *testing.T) {
 	a := agent.New(cobot.DefaultConfig())
-	s := New(a)
+	s := New(context.Background(), a)
 
 	s.AddTask(&Task{Name: "dup", Schedule: "0 0 * * * *", Prompt: "x"})
 	err := s.AddTask(&Task{Name: "dup", Schedule: "0 0 * * * *", Prompt: "y"})
@@ -50,7 +51,7 @@ func TestAddTaskDuplicate(t *testing.T) {
 
 func TestRemoveTask(t *testing.T) {
 	a := agent.New(cobot.DefaultConfig())
-	s := New(a)
+	s := New(context.Background(), a)
 
 	s.AddTask(&Task{Name: "remove-me", Schedule: "0 0 * * * *", Prompt: "x"})
 	err := s.RemoveTask("remove-me")
@@ -64,7 +65,7 @@ func TestRemoveTask(t *testing.T) {
 
 func TestRemoveTaskNotFound(t *testing.T) {
 	a := agent.New(cobot.DefaultConfig())
-	s := New(a)
+	s := New(context.Background(), a)
 
 	err := s.RemoveTask("nonexistent")
 	if err == nil {
@@ -74,7 +75,7 @@ func TestRemoveTaskNotFound(t *testing.T) {
 
 func TestAddTaskBadSchedule(t *testing.T) {
 	a := agent.New(cobot.DefaultConfig())
-	s := New(a)
+	s := New(context.Background(), a)
 
 	err := s.AddTask(&Task{Name: "bad", Schedule: "not-a-cron", Prompt: "x"})
 	if err == nil {

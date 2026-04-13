@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os/exec"
 	"sync"
+	"time"
 
 	mcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -32,8 +34,8 @@ func NewMCPManager() *MCPManager {
 
 	return &MCPManager{
 		client:   client,
-		sessions: make(map[string]*mcp.ClientSession),
-		configs:  make(map[string]ServerConfig),
+		sessions: make(map[string]*mcp.ClientSession, 4),
+		configs:  make(map[string]ServerConfig, 4),
 	}
 }
 
@@ -154,7 +156,7 @@ func (m *MCPManager) ToolAdapters(ctx context.Context, serverName string) ([]*MC
 }
 
 func (m *MCPManager) ConnectSSE(ctx context.Context, name string, entry *RegistryEntry) error {
-	httpClient := &http.Client{}
+	httpClient := &http.Client{Timeout: 30 * time.Second}
 	if len(entry.Headers) > 0 {
 		httpClient.Transport = &headerTransport{
 			base:    http.DefaultTransport,
@@ -230,7 +232,9 @@ func (m *MCPManager) Close() {
 
 	for name, session := range m.sessions {
 		if session != nil {
-			session.Close()
+			if err := session.Close(); err != nil {
+				slog.Warn("failed to close MCP session", "name", name, "error", err)
+			}
 		}
 		delete(m.sessions, name)
 		delete(m.configs, name)

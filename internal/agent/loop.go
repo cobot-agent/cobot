@@ -64,7 +64,9 @@ func (a *Agent) Stream(ctx context.Context, message string) (<-chan cobot.Event,
 
 	ch := make(chan cobot.Event, 64)
 
+	a.streamWg.Add(1)
 	go func() {
+		defer a.streamWg.Done()
 		defer close(ch)
 		a.streamMu.Lock()
 		defer a.streamMu.Unlock()

@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 
+	"github.com/cobot-agent/cobot/internal/config"
 	"gopkg.in/yaml.v3"
 )
 
@@ -19,15 +19,6 @@ type RegistryEntry struct {
 	Env         map[string]string `yaml:"env,omitempty"`
 	URL         string            `yaml:"url,omitempty"`
 	Headers     map[string]string `yaml:"headers,omitempty"`
-}
-
-var envVarRe = regexp.MustCompile(`\$\{(\w+)\}`)
-
-func expandEnv(s string) string {
-	return envVarRe.ReplaceAllStringFunc(s, func(match string) string {
-		varName := strings.Trim(match, "${}")
-		return os.Getenv(varName)
-	})
 }
 
 func LoadRegistry(dir string) (map[string]*RegistryEntry, error) {
@@ -61,10 +52,10 @@ func LoadRegistry(dir string) (map[string]*RegistryEntry, error) {
 		}
 
 		for k, v := range entry.Env {
-			entry.Env[k] = expandEnv(v)
+			entry.Env[k] = config.ExpandEnvVars(v)
 		}
 		for k, v := range entry.Headers {
-			entry.Headers[k] = expandEnv(v)
+			entry.Headers[k] = config.ExpandEnvVars(v)
 		}
 
 		entries[entry.Name] = &entry

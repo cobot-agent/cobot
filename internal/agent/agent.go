@@ -21,6 +21,7 @@ type Agent struct {
 	systemPrompt string
 	sysPromptMu  sync.RWMutex
 	streamMu     sync.Mutex // serializes concurrent Stream calls
+	streamWg     sync.WaitGroup
 }
 
 func New(config *cobot.Config) *Agent {

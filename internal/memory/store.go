@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
@@ -25,7 +26,10 @@ func OpenStore(memoryDir string) (*Store, error) {
 		return nil, err
 	}
 	bleveDir := filepath.Join(memoryDir, "bleve")
-	os.MkdirAll(bleveDir, 0755)
+	if err := os.MkdirAll(bleveDir, 0755); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("create bleve dir: %w", err)
+	}
 	s := &Store{db: db, bleveDir: bleveDir}
 	idx, err := s.openIndex()
 	if err != nil {
