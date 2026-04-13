@@ -66,6 +66,8 @@ func (a *Agent) Stream(ctx context.Context, message string) (<-chan cobot.Event,
 
 	go func() {
 		defer close(ch)
+		a.streamMu.Lock()
+		defer a.streamMu.Unlock()
 		debug.Session("stream", message)
 		a.AddMessage(cobot.Message{Role: cobot.RoleUser, Content: message})
 

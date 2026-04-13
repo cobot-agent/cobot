@@ -20,6 +20,7 @@ type Agent struct {
 	acpServer    *acp.Server
 	systemPrompt string
 	sysPromptMu  sync.RWMutex
+	streamMu     sync.Mutex // serializes concurrent Stream calls
 }
 
 func New(config *cobot.Config) *Agent {
@@ -46,6 +47,12 @@ func (a *Agent) getACPServer() *acp.Server {
 		a.acpServer = acp.NewServer(a)
 	}
 	return a.acpServer
+}
+
+func (a *Agent) SetSystemPrompt(prompt string) {
+	a.sysPromptMu.Lock()
+	defer a.sysPromptMu.Unlock()
+	a.systemPrompt = prompt
 }
 
 func (a *Agent) SetProvider(p cobot.Provider) {

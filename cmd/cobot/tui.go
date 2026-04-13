@@ -23,6 +23,7 @@ type tuiModel struct {
 	streaming    bool
 	streamCh     <-chan cobot.Event
 	streamCancel context.CancelFunc
+	pending      []string
 	width        int
 	height       int
 }
@@ -65,7 +66,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.streamCancel()
 				m.streaming = false
 				m.messages = append(m.messages, "")
-				return m, nil
+				return m, m.drainPending()
 			}
 			return m, tea.Quit
 		case tea.KeyEnter:
@@ -76,30 +77,45 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if text == "/quit" || text == "/exit" {
 				return m, tea.Quit
 			}
-			m.messages = append(m.messages, fmt.Sprintf("> %s", text))
 			m.input.SetValue("")
-			m.streaming = true
-			ctx, cancel := context.WithCancel(context.Background())
-			m.streamCancel = cancel
-			ch, err := m.agent.Stream(ctx, text)
-			if err != nil {
-				cancel()
-				return m, func() tea.Msg { return streamMsg{err: err} }
+			if m.streaming {
+				m.pending = append(m.pending, text)
+				m.messages = append(m.messages, fmt.Sprintf("> %s (queued)", text))
+				return m, nil
 			}
-			m.streamCh = ch
-			return m, m.readNextEvent()
+			return m, m.startStream(text)
 		}
 
 	case streamMsg:
 		return m.handleStreamMsg(msg)
 	}
 
-	if m.streaming {
-		return m, nil
-	}
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
 	return m, cmd
+}
+
+func (m *tuiModel) startStream(text string) tea.Cmd {
+	m.messages = append(m.messages, fmt.Sprintf("> %s", text))
+	m.streaming = true
+	ctx, cancel := context.WithCancel(context.Background())
+	m.streamCancel = cancel
+	ch, err := m.agent.Stream(ctx, text)
+	if err != nil {
+		cancel()
+		return func() tea.Msg { return streamMsg{err: err} }
+	}
+	m.streamCh = ch
+	return m.readNextEvent()
+}
+
+func (m *tuiModel) drainPending() tea.Cmd {
+	if len(m.pending) == 0 {
+		return nil
+	}
+	next := m.pending[0]
+	m.pending = m.pending[1:]
+	return m.startStream(next)
 }
 
 func (m tuiModel) readNextEvent() tea.Cmd {
@@ -128,14 +144,14 @@ func (m tuiModel) handleStreamMsg(msg streamMsg) (tea.Model, tea.Cmd) {
 		m.streamCancel = nil
 		m.streamCh = nil
 		m.messages = append(m.messages, fmt.Sprintf("Error: %v", msg.err))
-		return m, nil
+		return m, m.drainPending()
 	}
 	if msg.done {
 		m.streaming = false
 		m.streamCancel = nil
 		m.streamCh = nil
 		m.messages = append(m.messages, "")
-		return m, nil
+		return m, m.drainPending()
 	}
 
 	switch msg.eventType {
@@ -173,6 +189,9 @@ func (m tuiModel) View() string {
 	}
 	if m.streaming {
 		b.WriteString(lipgloss.NewStyle().Faint(true).Render("Thinking..."))
+		if len(m.pending) > 0 {
+			b.WriteString(lipgloss.NewStyle().Faint(true).Render(fmt.Sprintf(" (%d queued)", len(m.pending))))
+		}
 		b.WriteString("\n")
 	}
 	b.WriteString("\n")
