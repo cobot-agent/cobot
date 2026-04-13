@@ -152,6 +152,34 @@ func (m *MCPManager) ToolAdapters(ctx context.Context, serverName string) ([]*MC
 	return adapters, nil
 }
 
+func (m *MCPManager) ConnectFromRegistry(ctx context.Context, name string, entry *RegistryEntry) error {
+	var env []string
+	for k, v := range entry.Env {
+		env = append(env, fmt.Sprintf("%s=%s", k, v))
+	}
+
+	cfg := ServerConfig{
+		Command: entry.Command,
+		Args:    entry.Args,
+		Env:     env,
+	}
+
+	return m.Connect(ctx, name, cfg)
+}
+
+func (m *MCPManager) ConnectEnabled(ctx context.Context, registry map[string]*RegistryEntry, enabled []string) error {
+	for _, name := range enabled {
+		entry, ok := registry[name]
+		if !ok {
+			return fmt.Errorf("server %q not found in registry", name)
+		}
+		if err := m.ConnectFromRegistry(ctx, name, entry); err != nil {
+			return fmt.Errorf("connect server %q: %w", name, err)
+		}
+	}
+	return nil
+}
+
 func (m *MCPManager) Close() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
