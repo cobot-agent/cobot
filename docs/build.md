@@ -1,6 +1,6 @@
 # Build and Development Guide
 
-This guide covers the build system, development workflow, and release process for Cobot Personal Agent.
+This guide covers the build system, development workflow, and release process for Cobot.
 
 ## Build System
 

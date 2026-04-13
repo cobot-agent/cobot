@@ -6,7 +6,7 @@
 
 **Architecture:** Plugin-based LLM providers behind a common interface, a think→act→observe agent loop with tool execution, layered config from flags/env/file/defaults, and directory-scoped workspace discovery.
 
-**Tech Stack:** Go 1.24, cobra (CLI), spf13/pflag (flags), gopkg.in/yaml.v3 (config), net/http (LLM API calls)
+**Tech Stack:** Go 1.26, cobra (CLI), spf13/pflag (flags), gopkg.in/yaml.v3 (config), net/http (LLM API calls)
 
 **Design Spec:** `docs/specs/2026-04-12-cobot-agent-system-design.md`
 

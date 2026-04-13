@@ -1,6 +1,6 @@
 # Verification Guide
 
-This guide covers how to verify that Cobot Personal Agent is correctly built, configured, and functioning.
+This guide covers how to verify that Cobot is correctly built, configured, and functioning.
 
 ## Pre-Flight Checks
 
@@ -80,8 +80,8 @@ cobot doctor
 
 Expected output:
 ```
-Cobot Personal Agent Doctor
-===========================
+Cobot Agent Doctor
+==================
 
 Config directory: /Users/you/.config/cobot
   [OK] Directory exists
@@ -89,14 +89,24 @@ Config directory: /Users/you/.config/cobot
   [OK] Model: openai:gpt-4o
   [OK] API keys configured: [openai]
 
-Persona files:
-  [OK] SOUL:   /Users/you/.config/cobot/SOUL.md
-  [OK] USER:   /Users/you/.config/cobot/USER.md
-  [OK] MEMORY: /Users/you/.config/cobot/MEMORY.md
+MCP registry: /Users/you/.config/cobot/mcp/
+  [OK] Directory exists
+
+Skills registry: /Users/you/.config/cobot/skills/
+  [OK] Directory exists
+
+Workspaces: /Users/you/.config/cobot/workspaces/
+  [OK] default.yaml exists
 
 Data directory: /Users/you/.local/share/cobot
   [OK] Directory exists
-  [OK] Memory dir: /Users/you/.local/share/cobot/memory
+
+Default workspace: /Users/you/.local/share/cobot/default
+  [OK] workspace.yaml
+  [OK] SOUL.md
+  [OK] USER.md
+  [OK] MEMORY.md
+  [OK] Memory dir: /Users/you/.local/share/cobot/default/memory
 
 All critical checks passed!
 ```
@@ -107,17 +117,25 @@ All critical checks passed!
 # Run setup (safe to run multiple times)
 cobot setup
 
-# Verify files created
+# Verify config structure
 ls -la ~/.config/cobot/
+ls -la ~/.config/cobot/mcp/
+ls -la ~/.config/cobot/skills/
+ls -la ~/.config/cobot/workspaces/
+
+# Verify data structure
 ls -la ~/.local/share/cobot/
+ls -la ~/.local/share/cobot/default/
 ```
 
 Expected files:
-- `~/.config/cobot/config.yaml`
-- `~/.config/cobot/SOUL.md`
-- `~/.config/cobot/USER.md`
-- `~/.config/cobot/MEMORY.md`
-- `~/.local/share/cobot/memory/`
+- `~/.config/cobot/config.yaml` — Global config
+- `~/.config/cobot/workspaces/default.yaml` — Default workspace definition
+- `~/.local/share/cobot/default/workspace.yaml` — Workspace runtime config
+- `~/.local/share/cobot/default/SOUL.md` — Bot personality
+- `~/.local/share/cobot/default/USER.md` — User profile
+- `~/.local/share/cobot/default/MEMORY.md` — Consolidated memories
+- `~/.local/share/cobot/default/memory/` — MemPalace storage
 
 ### 3. API Key Configuration
 
@@ -135,19 +153,32 @@ cobot config get apikey.openai
 # Test help
 cobot --help
 
+# Test workspace commands
+cobot workspace list
+cobot workspace show default
+
 # Test persona commands
 cobot persona show soul
 cobot persona show user
 
 # Test memory commands
 cobot memory status
+
+# Test MCP commands
+cobot mcp list
+
+# Test skills commands
+cobot skill list
 ```
 
 ### 5. Chat Test (requires API key)
 
 ```bash
-# One-shot test (non-interactive)
+# One-shot test with default workspace
 cobot chat "Say 'Cobot is working' and nothing else"
+
+# One-shot test with specific workspace
+cobot chat -w default "Say 'Cobot is working' and nothing else"
 ```
 
 Expected: Response containing "Cobot is working"
@@ -169,17 +200,35 @@ ls -la ~/.local/share/cobot/
 ### File Permissions
 
 ```bash
-# Config files should be readable/writable by user
+# Config files should be readable/writable by user (agent-immutable, CLI-managed)
 ls -l ~/.config/cobot/
 
-# Data directories should be accessible
+# Data directories should be accessible (agent-mutable)
 ls -ld ~/.local/share/cobot/
-ls -ld ~/.local/share/cobot/memory/
+ls -ld ~/.local/share/cobot/default/
+ls -ld ~/.local/share/cobot/default/memory/
 ```
 
 ## Integration Verification
 
-### 1. Memory Persistence
+### 1. Workspace Management
+
+```bash
+# List workspaces
+cobot workspace list
+
+# Create a new workspace
+cobot workspace create test-ws
+
+# Verify it was created
+cobot workspace show test-ws
+ls -la ~/.local/share/cobot/test-ws/
+
+# Delete the test workspace
+cobot workspace delete test-ws
+```
+
+### 2. Memory Persistence
 
 ```bash
 # Store something in memory (via chat)
@@ -191,26 +240,50 @@ cobot memory search "favorite color"
 
 Expected: Search returns the conversation about favorite color.
 
-### 2. Cross-Directory Operation
+### 3. Workspace Isolation
 
 ```bash
-# Test from different directories
-cd /tmp
-cobot memory status
+# Create two workspaces
+cobot workspace create ws-a
+cobot workspace create ws-b
 
-cd ~
-cobot memory status
+# Chat in ws-a
+cobot chat -w ws-a "Remember: project A uses PostgreSQL"
 
-cd /var/tmp
-cobot memory status
+# Search in ws-a — should find it
+cobot memory search "PostgreSQL" -w ws-a
+
+# Search in ws-b — should NOT find it
+cobot memory search "PostgreSQL" -w ws-b
+
+# Clean up
+cobot workspace delete ws-a
+cobot workspace delete ws-b
 ```
 
-Expected: Same memory status from all directories (global memory).
+Expected: Memory is isolated per workspace.
 
-### 3. Persona Persistence
+### 4. Project Discovery
 
 ```bash
-# Edit SOUL
+# Create a project workspace
+mkdir -p /tmp/test-project/.cobot
+echo 'workspace: test-project' > /tmp/test-project/.cobot/workspace.yaml
+cobot workspace create test-project
+
+# Running cobot from inside the project should auto-discover the workspace
+cd /tmp/test-project
+cobot workspace show  # Should show test-project
+
+# Clean up
+cobot workspace delete test-project
+rm -rf /tmp/test-project
+```
+
+### 5. Persona Persistence
+
+```bash
+# Edit SOUL in default workspace
 cobot persona edit soul
 # (add "I love testing" to the file)
 

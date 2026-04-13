@@ -663,6 +663,10 @@ type SubAgentResult struct {
 
 ## 8. Workspace System
 
+> **⚠️ DEPRECATED**: This section describes the original project-based workspace model.
+> The canonical workspace architecture is defined in [`config-skills-mcp-workspace-design.md`](2026-04-12-config-skills-mcp-workspace-design.md).
+> Key differences: registry-based MCP/Skills, multi-workspace with runtime selection (no persistent "current workspace"), multi-agent per workspace, two-tier mutability (config immutable / data mutable), sandbox enforcement.
+
 ### Directory Structure
 
 ```
