@@ -55,7 +55,10 @@ func initAgent(cfg *cobot.Config, requireProvider bool) (*agent.Agent, func(), e
 		return nil, nil, fmt.Errorf("create workspace manager: %w", err)
 	}
 
-	ws := manager.Current()
+	ws, err := manager.ResolveByNameOrDiscover("", ".")
+	if err != nil {
+		return nil, nil, fmt.Errorf("resolve workspace: %w", err)
+	}
 	if err := ws.EnsureDirs(); err != nil {
 		return nil, nil, fmt.Errorf("ensure workspace dirs: %w", err)
 	}

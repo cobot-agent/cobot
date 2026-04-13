@@ -22,7 +22,10 @@ func getPersonaService() (*persona.Service, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create workspace manager: %w", err)
 	}
-	ws := m.Current()
+	ws, err := m.ResolveByNameOrDiscover("", ".")
+	if err != nil {
+		return nil, fmt.Errorf("resolve workspace: %w", err)
+	}
 	return persona.NewService(ws), nil
 }
 

@@ -31,7 +31,10 @@ var setupCmd = &cobra.Command{
 			return fmt.Errorf("create workspace manager: %w", err)
 		}
 
-		ws := manager.Current()
+		ws, err := manager.ResolveByNameOrDiscover("", ".")
+		if err != nil {
+			return fmt.Errorf("resolve workspace: %w", err)
+		}
 		if err := ws.EnsureDirs(); err != nil {
 			return fmt.Errorf("ensure workspace dirs: %w", err)
 		}
@@ -77,7 +80,7 @@ var setupCmd = &cobra.Command{
 
 		fmt.Println()
 		fmt.Printf("Config saved to %s\n", configPath)
-		fmt.Printf("Workspace: %s (%s)\n", ws.Name, ws.ID[:8])
+		fmt.Printf("Workspace: %s (%s)\n", ws.Config.Name, ws.Config.ID[:8])
 		fmt.Printf("SOUL:   %s\n", svc.GetSoulPath())
 		fmt.Printf("USER:   %s\n", svc.GetUserPath())
 		fmt.Printf("MEMORY: %s\n", svc.GetMemoryPath())
@@ -90,7 +93,7 @@ var setupCmd = &cobra.Command{
 		fmt.Println("Workspace commands:")
 		fmt.Println("  cobot workspace list")
 		fmt.Println("  cobot workspace create <name>")
-		fmt.Println("  cobot workspace switch <name>")
+		fmt.Println("  cobot workspace show")
 		return nil
 	},
 }

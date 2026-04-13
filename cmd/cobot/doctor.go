@@ -26,7 +26,10 @@ var doctorCmd = &cobra.Command{
 			return err
 		}
 
-		ws := manager.Current()
+		ws, err := manager.ResolveByNameOrDiscover("", ".")
+		if err != nil {
+			return fmt.Errorf("resolve workspace: %w", err)
+		}
 
 		configDir := xdg.ConfigDir()
 		configPath := filepath.Join(configDir, "config.yaml")
@@ -67,10 +70,10 @@ var doctorCmd = &cobra.Command{
 		}
 
 		fmt.Println("\nCurrent workspace:")
-		fmt.Printf("  Name: %s (%s)\n", ws.Name, ws.ID[:8])
-		fmt.Printf("  Type: %s\n", ws.Type)
-		if ws.Root != "" {
-			fmt.Printf("  Root: %s\n", ws.Root)
+		fmt.Printf("  Name: %s (%s)\n", ws.Config.Name, ws.Config.ID[:8])
+		fmt.Printf("  Type: %s\n", ws.Definition.Type)
+		if ws.Definition.Root != "" {
+			fmt.Printf("  Root: %s\n", ws.Definition.Root)
 		}
 
 		fmt.Println("\nPersona files:")
