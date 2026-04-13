@@ -15,8 +15,7 @@ var toolsListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List available tools",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := loadConfig()
-		if err != nil {
+		if _, err := loadConfig(); err != nil {
 			return err
 		}
 
@@ -28,13 +27,6 @@ var toolsListCmd = &cobra.Command{
 		fmt.Fprintf(cmd.OutOrStdout(), "Built-in tools (%d):\n", len(builtinTools))
 		for _, name := range builtinTools {
 			fmt.Fprintf(cmd.OutOrStdout(), "  %s\n", name)
-		}
-
-		if cfg.Tools.MCPServers != nil {
-			fmt.Fprintf(cmd.OutOrStdout(), "\nMCP servers (%d):\n", len(cfg.Tools.MCPServers))
-			for name, srv := range cfg.Tools.MCPServers {
-				fmt.Fprintf(cmd.OutOrStdout(), "  %s (%s)\n", name, srv.Transport)
-			}
 		}
 
 		return nil

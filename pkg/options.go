@@ -1,32 +1,94 @@
 package cobot
 
-import "time"
+import (
+	"path/filepath"
+	"strings"
+	"time"
+)
 
 type Config struct {
-	ConfigPath  string  `yaml:"config_path"`
-	Workspace   string  `yaml:"workspace"`
-	Model       string  `yaml:"model"`
-	Temperature float64 `yaml:"temperature" json:"temperature,omitempty"`
-	// Migration-friendly: new default tool set; old configs may use `tools`.
-	DefaultTools ToolsConfig               `yaml:"default_tools" json:"default_tools,omitempty"`
-	Tools        ToolsConfig               `yaml:"tools,omitempty" json:"tools,omitempty"`
+	ConfigPath   string                    `yaml:"config_path,omitempty"`
+	DataPath     string                    `yaml:"data_path,omitempty"`
+	Workspace    string                    `yaml:"workspace,omitempty"`
+	Model        string                    `yaml:"model"`
+	Temperature  float64                   `yaml:"temperature,omitempty"`
 	MaxTurns     int                       `yaml:"max_turns"`
-	SystemPrompt string                    `yaml:"system_prompt"`
-	Verbose      bool                      `yaml:"verbose"`
-	APIKeys      map[string]string         `yaml:"api_keys"`
-	Providers    map[string]ProviderConfig `yaml:"providers"`
-	Memory       MemoryConfig              `yaml:"memory"`
+	SystemPrompt string                    `yaml:"system_prompt,omitempty"`
+	Verbose      bool                      `yaml:"verbose,omitempty"`
+	APIKeys      map[string]string         `yaml:"api_keys,omitempty"`
+	Providers    map[string]ProviderConfig `yaml:"providers,omitempty"`
+	Memory       MemoryConfig              `yaml:"memory,omitempty"`
 }
 
-// migrateTools preserves backward compatibility by migrating legacy
-// 'Tools' data into the new 'DefaultTools' field when the new field is empty.
-func (c *Config) migrateTools() {
-	// If there is no data in DefaultTools, but there is data in Tools, copy it over.
-	if len(c.DefaultTools.Builtin) == 0 && len(c.DefaultTools.MCPServers) == 0 {
-		if len(c.Tools.Builtin) > 0 || len(c.Tools.MCPServers) > 0 {
-			c.DefaultTools = c.Tools
+type SandboxConfig struct {
+	Root            string   `yaml:"root"`
+	AllowPaths      []string `yaml:"allow_paths,omitempty"`
+	ReadonlyPaths   []string `yaml:"readonly_paths,omitempty"`
+	AllowNetwork    bool     `yaml:"allow_network"`
+	BlockedCommands []string `yaml:"blocked_commands,omitempty"`
+}
+
+func (s *SandboxConfig) IsAllowed(path string, write bool) bool {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return false
+	}
+
+	for _, rp := range s.ReadonlyPaths {
+		absRP, err := filepath.Abs(rp)
+		if err != nil {
+			continue
+		}
+		rel, err := filepath.Rel(absRP, absPath)
+		if err != nil {
+			continue
+		}
+		if !strings.HasPrefix(rel, "..") {
+			if write {
+				return false
+			}
+			return true
 		}
 	}
+
+	for _, ap := range s.AllowPaths {
+		absAP, err := filepath.Abs(ap)
+		if err != nil {
+			continue
+		}
+		rel, err := filepath.Rel(absAP, absPath)
+		if err != nil {
+			continue
+		}
+		if !strings.HasPrefix(rel, "..") {
+			return true
+		}
+	}
+
+	if s.Root != "" {
+		absRoot, err := filepath.Abs(s.Root)
+		if err != nil {
+			return false
+		}
+		rel, err := filepath.Rel(absRoot, absPath)
+		if err != nil {
+			return false
+		}
+		if !strings.HasPrefix(rel, "..") {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (s *SandboxConfig) IsBlockedCommand(cmd string) bool {
+	for _, blocked := range s.BlockedCommands {
+		if strings.Contains(cmd, blocked) {
+			return true
+		}
+	}
+	return false
 }
 
 type MemoryConfig struct {
@@ -40,20 +102,6 @@ type MemoryConfig struct {
 type ProviderConfig struct {
 	BaseURL string            `yaml:"base_url"`
 	Headers map[string]string `yaml:"headers"`
-}
-
-type ToolsConfig struct {
-	Builtin    []string                   `yaml:"builtin"`
-	MCPServers map[string]MCPServerConfig `yaml:"mcp_servers"`
-}
-
-type MCPServerConfig struct {
-	Transport string            `yaml:"transport"`
-	Command   string            `yaml:"command"`
-	Args      []string          `yaml:"args"`
-	Env       map[string]string `yaml:"env"`
-	URL       string            `yaml:"url"`
-	Headers   map[string]string `yaml:"headers"`
 }
 
 func DefaultConfig() *Config {
