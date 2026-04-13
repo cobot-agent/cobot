@@ -77,7 +77,9 @@ type HTTPHeader struct {
 
 type NewSessionRequest struct {
 	CWD        string      `json:"cwd"`
-	MCPServers []MCPServer `json:"mcpServers"`
+	Workspace  string      `json:"workspace,omitempty"`
+	Agent      string      `json:"agent,omitempty"`
+	MCPServers []MCPServer `json:"mcpServers,omitempty"`
 }
 
 type NewSessionResponse struct {

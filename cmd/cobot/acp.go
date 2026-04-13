@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/cobot-agent/cobot/internal/acp"
+	"github.com/cobot-agent/cobot/internal/workspace"
 )
 
 var acpCmd = &cobra.Command{
@@ -31,7 +32,12 @@ var acpServeCmd = &cobra.Command{
 		}
 		defer cleanup()
 
-		srv := acp.NewACPServer(a)
+		wsMgr, err := workspace.NewManager()
+		if err != nil {
+			return err
+		}
+
+		srv := acp.NewACPServer(a, wsMgr)
 
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()

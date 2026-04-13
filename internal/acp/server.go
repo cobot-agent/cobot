@@ -9,17 +9,20 @@ import (
 	"github.com/creachadair/jrpc2/handler"
 
 	"github.com/cobot-agent/cobot/internal/agent"
+	"github.com/cobot-agent/cobot/internal/workspace"
 )
 
 type ACPServer struct {
 	agent    *agent.Agent
 	sessions *SessionStore
+	wsMgr    *workspace.Manager
 }
 
-func NewACPServer(a *agent.Agent) *ACPServer {
+func NewACPServer(a *agent.Agent, wsMgr *workspace.Manager) *ACPServer {
 	return &ACPServer{
 		agent:    a,
 		sessions: NewSessionStore(),
+		wsMgr:    wsMgr,
 	}
 }
 

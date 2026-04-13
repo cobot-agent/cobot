@@ -26,13 +26,21 @@ func (s *ACPServer) handleInitialize(ctx context.Context, req acpapi.InitializeR
 }
 
 func (s *ACPServer) handleSessionNew(ctx context.Context, req acpapi.NewSessionRequest) (acpapi.NewSessionResponse, error) {
+	if req.Workspace != "" && s.wsMgr != nil {
+		if _, err := s.wsMgr.Resolve(req.Workspace); err != nil {
+			return acpapi.NewSessionResponse{}, jrpc2.Errorf(jrpc2.InvalidParams, "workspace not found: %s", req.Workspace)
+		}
+	}
+
 	id := newSessionID()
 	sessCtx, cancel := context.WithCancel(context.Background())
 	s.sessions.Put(&Session{
-		ID:       id,
-		CWD:      req.CWD,
-		Ctx:      sessCtx,
-		CancelFn: cancel,
+		ID:        id,
+		CWD:       req.CWD,
+		Workspace: req.Workspace,
+		Agent:     req.Agent,
+		Ctx:       sessCtx,
+		CancelFn:  cancel,
 	})
 	return acpapi.NewSessionResponse{
 		SessionID: id,

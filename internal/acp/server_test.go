@@ -15,7 +15,7 @@ import (
 func newTestServer(t *testing.T) (*ACPServer, server.Local) {
 	t.Helper()
 	a := agentpkg.New(cobot.DefaultConfig())
-	s := NewACPServer(a)
+	s := NewACPServer(a, nil)
 	loc := server.NewLocal(s.handlerMap(), nil)
 	t.Cleanup(func() { loc.Close() })
 	return s, loc
