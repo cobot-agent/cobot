@@ -3,7 +3,9 @@ package builtin
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os/exec"
+	"strings"
 
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
@@ -13,10 +15,27 @@ type shellExecArgs struct {
 	Dir     string `json:"dir,omitempty"`
 }
 
-type ShellExecTool struct{}
+type ShellExecTool struct {
+	workdir         string
+	blockedCommands []string
+}
 
-func NewShellExecTool() *ShellExecTool {
-	return &ShellExecTool{}
+type ShellExecToolOption func(*ShellExecTool)
+
+func WithShellWorkdir(workdir string) ShellExecToolOption {
+	return func(t *ShellExecTool) { t.workdir = workdir }
+}
+
+func WithShellBlockedCommands(blocked []string) ShellExecToolOption {
+	return func(t *ShellExecTool) { t.blockedCommands = blocked }
+}
+
+func NewShellExecTool(opts ...ShellExecToolOption) *ShellExecTool {
+	t := &ShellExecTool{}
+	for _, opt := range opts {
+		opt(t)
+	}
+	return t
 }
 
 func (t *ShellExecTool) Name() string {
@@ -36,8 +55,15 @@ func (t *ShellExecTool) Execute(ctx context.Context, args json.RawMessage) (stri
 	if err := json.Unmarshal(args, &a); err != nil {
 		return "", err
 	}
+	for _, blocked := range t.blockedCommands {
+		if strings.HasPrefix(a.Command, blocked+" ") || a.Command == blocked {
+			return "", fmt.Errorf("command %q is blocked", blocked)
+		}
+	}
 	cmd := exec.CommandContext(ctx, "sh", "-c", a.Command)
-	if a.Dir != "" {
+	if t.workdir != "" {
+		cmd.Dir = t.workdir
+	} else if a.Dir != "" {
 		cmd.Dir = a.Dir
 	}
 	out, err := cmd.CombinedOutput()
