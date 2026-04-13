@@ -214,6 +214,8 @@ func initAgent(cfg *cobot.Config, requireProvider bool) (*agent.Agent, *workspac
 
 	loadAndRegisterSkills(a, ws, agentCfg)
 
+	builtin.RegisterWorkspaceTools(a.ToolRegistry(), ws)
+
 	cleanup := func() {
 		a.Close()
 		if memCleanup != nil {
