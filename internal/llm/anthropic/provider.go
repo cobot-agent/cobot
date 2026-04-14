@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"sort"
 	"strings"
@@ -24,6 +25,18 @@ type Provider struct {
 
 var _ cobot.Provider = (*Provider)(nil)
 
+// defaultTransport provides sensible timeouts for LLM API calls:
+// connection + TLS are bounded, but no overall response-body timeout
+// so long streaming responses are not interrupted.
+var defaultTransport = &http.Transport{
+	DialContext: (&net.Dialer{
+		Timeout:   30 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}).DialContext,
+	TLSHandshakeTimeout:   10 * time.Second,
+	ResponseHeaderTimeout: 2 * time.Minute,
+}
+
 func NewProvider(apiKey, baseURL string) *Provider {
 	baseURL = strings.TrimRight(baseURL, "/")
 	if baseURL == "" {
@@ -32,7 +45,7 @@ func NewProvider(apiKey, baseURL string) *Provider {
 	return &Provider{
 		apiKey:  apiKey,
 		baseURL: baseURL,
-		client:  &http.Client{},
+		client:  &http.Client{Transport: defaultTransport},
 	}
 }
 
