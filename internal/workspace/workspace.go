@@ -165,10 +165,18 @@ func (w *Workspace) ValidatePath(path string) error {
 	if err != nil {
 		return fmt.Errorf("resolve path: %w", err)
 	}
+	realPath, symErr := filepath.EvalSymlinks(absPath)
+	if symErr == nil {
+		absPath = realPath
+	}
 
 	dataDir, err := filepath.Abs(w.DataDir)
 	if err != nil {
 		return fmt.Errorf("resolve data dir: %w", err)
+	}
+	realDataDir, symErr := filepath.EvalSymlinks(dataDir)
+	if symErr == nil {
+		dataDir = realDataDir
 	}
 	if isSubpath(absPath, dataDir) {
 		return nil
@@ -178,6 +186,10 @@ func (w *Workspace) ValidatePath(path string) error {
 		rootDir, err := filepath.Abs(w.Definition.Root)
 		if err != nil {
 			return fmt.Errorf("resolve root dir: %w", err)
+		}
+		realRootDir, symErr := filepath.EvalSymlinks(rootDir)
+		if symErr == nil {
+			rootDir = realRootDir
 		}
 		if isSubpath(absPath, rootDir) {
 			return nil

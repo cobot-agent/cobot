@@ -20,24 +20,50 @@ func (s *WorkspaceSandbox) IsAllowed(path string, write bool) bool {
 	if err != nil {
 		return false
 	}
+	realPath, symErr := filepath.EvalSymlinks(absPath)
+	if symErr == nil {
+		absPath = realPath
+	}
 
+	readonlyMatched := false
 	for _, p := range s.ReadonlyPaths {
 		absP, _ := filepath.Abs(p)
+		realP, symErr := filepath.EvalSymlinks(absP)
+		if symErr == nil {
+			absP = realP
+		}
 		if isSubpath(absPath, absP) {
-			return !write
+			readonlyMatched = true
+			if write {
+				return false
+			}
 		}
 	}
 
 	for _, p := range s.AllowPaths {
 		absP, _ := filepath.Abs(p)
+		realP, symErr := filepath.EvalSymlinks(absP)
+		if symErr == nil {
+			absP = realP
+		}
 		if isSubpath(absPath, absP) {
+			if readonlyMatched && write {
+				return false
+			}
 			return true
 		}
 	}
 
 	if s.Root != "" {
 		absRoot, _ := filepath.Abs(s.Root)
+		realRoot, symErr := filepath.EvalSymlinks(absRoot)
+		if symErr == nil {
+			absRoot = realRoot
+		}
 		if isSubpath(absPath, absRoot) {
+			if readonlyMatched && write {
+				return false
+			}
 			return true
 		}
 	}

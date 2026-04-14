@@ -33,21 +33,30 @@ func (s *SandboxConfig) IsAllowed(path string, write bool) bool {
 	if err != nil {
 		return false
 	}
+	realPath, symErr := filepath.EvalSymlinks(absPath)
+	if symErr == nil {
+		absPath = realPath
+	}
 
+	readonlyMatched := false
 	for _, rp := range s.ReadonlyPaths {
 		absRP, err := filepath.Abs(rp)
 		if err != nil {
 			continue
+		}
+		realRP, symErr := filepath.EvalSymlinks(absRP)
+		if symErr == nil {
+			absRP = realRP
 		}
 		rel, err := filepath.Rel(absRP, absPath)
 		if err != nil {
 			continue
 		}
 		if !strings.HasPrefix(rel, "..") {
+			readonlyMatched = true
 			if write {
 				return false
 			}
-			return true
 		}
 	}
 
@@ -56,11 +65,18 @@ func (s *SandboxConfig) IsAllowed(path string, write bool) bool {
 		if err != nil {
 			continue
 		}
+		realAP, symErr := filepath.EvalSymlinks(absAP)
+		if symErr == nil {
+			absAP = realAP
+		}
 		rel, err := filepath.Rel(absAP, absPath)
 		if err != nil {
 			continue
 		}
 		if !strings.HasPrefix(rel, "..") {
+			if readonlyMatched && write {
+				return false
+			}
 			return true
 		}
 	}
@@ -70,11 +86,18 @@ func (s *SandboxConfig) IsAllowed(path string, write bool) bool {
 		if err != nil {
 			return false
 		}
+		realRoot, symErr := filepath.EvalSymlinks(absRoot)
+		if symErr == nil {
+			absRoot = realRoot
+		}
 		rel, err := filepath.Rel(absRoot, absPath)
 		if err != nil {
 			return false
 		}
 		if !strings.HasPrefix(rel, "..") {
+			if readonlyMatched && write {
+				return false
+			}
 			return true
 		}
 	}
