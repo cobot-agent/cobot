@@ -108,6 +108,9 @@ func (t *SkillCreateTool) Execute(ctx context.Context, args json.RawMessage) (st
 	if a.Name == "" {
 		return "", fmt.Errorf("name is required")
 	}
+	if strings.Contains(a.Name, "/") || strings.Contains(a.Name, "\\") || strings.Contains(a.Name, "..") {
+		return "", fmt.Errorf("invalid skill name: must not contain path separators or parent directory references")
+	}
 	if a.Format != "yaml" && a.Format != "markdown" {
 		return "", fmt.Errorf("format must be \"yaml\" or \"markdown\"")
 	}
@@ -211,6 +214,9 @@ func (t *AgentConfigUpdateTool) Execute(ctx context.Context, args json.RawMessag
 	if err := json.Unmarshal(args, &params); err != nil {
 		return "", fmt.Errorf("parse arguments: %w", err)
 	}
+	if strings.Contains(params.Agent, "/") || strings.Contains(params.Agent, "\\") || strings.Contains(params.Agent, "..") {
+		return "", fmt.Errorf("invalid agent name: must not contain path separators or parent directory references")
+	}
 
 	path := filepath.Join(t.workspace.AgentsDir(), params.Agent+".yaml")
 	cfg, err := agent.LoadAgentConfig(path)
@@ -271,6 +277,9 @@ func (t *SkillUpdateTool) Execute(ctx context.Context, args json.RawMessage) (st
 	}
 	if err := json.Unmarshal(args, &params); err != nil {
 		return "", fmt.Errorf("parse arguments: %w", err)
+	}
+	if strings.Contains(params.Name, "/") || strings.Contains(params.Name, "\\") || strings.Contains(params.Name, "..") {
+		return "", fmt.Errorf("invalid skill name: must not contain path separators or parent directory references")
 	}
 
 	dir := t.workspace.SkillsDir()
