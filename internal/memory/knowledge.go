@@ -9,11 +9,18 @@ import (
 	"github.com/dgraph-io/badger/v4"
 )
 
+// tripleKey builds a collision-free Badger key for a knowledge triple using
+// NUL bytes as separators. NUL cannot appear in valid Go strings, so the key
+// space is unambiguous even when subject/predicate/object contain colons.
+func tripleKey(subject, predicate, object string) string {
+	return prefixKG + subject + "\x00" + predicate + "\x00" + object
+}
+
 func (s *Store) AddTriple(ctx context.Context, triple *cobot.Triple) error {
 	if triple.ValidFrom.IsZero() {
 		triple.ValidFrom = time.Now()
 	}
-	key := prefixKG + triple.Subject + ":" + triple.Predicate + ":" + triple.Object
+	key := tripleKey(triple.Subject, triple.Predicate, triple.Object)
 	data, err := marshal(triple)
 	if err != nil {
 		return err
@@ -24,7 +31,7 @@ func (s *Store) AddTriple(ctx context.Context, triple *cobot.Triple) error {
 }
 
 func (s *Store) Invalidate(ctx context.Context, subject, predicate, object string, ended time.Time) error {
-	key := prefixKG + subject + ":" + predicate + ":" + object
+	key := tripleKey(subject, predicate, object)
 	return s.db.Update(func(txn *badger.Txn) error {
 		item, err := txn.Get([]byte(key))
 		if err != nil {
@@ -46,7 +53,7 @@ func (s *Store) Invalidate(ctx context.Context, subject, predicate, object strin
 }
 
 func (s *Store) Query(ctx context.Context, entity string, asOf *time.Time) ([]*cobot.Triple, error) {
-	prefix := []byte(prefixKG + entity + ":")
+	prefix := []byte(prefixKG + entity + "\x00")
 	var results []*cobot.Triple
 	err := s.db.View(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
@@ -75,7 +82,7 @@ func (s *Store) Query(ctx context.Context, entity string, asOf *time.Time) ([]*c
 }
 
 func (s *Store) Timeline(ctx context.Context, entity string) ([]*cobot.Triple, error) {
-	prefix := []byte(prefixKG + entity + ":")
+	prefix := []byte(prefixKG + entity + "\x00")
 	var results []*cobot.Triple
 	err := s.db.View(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
