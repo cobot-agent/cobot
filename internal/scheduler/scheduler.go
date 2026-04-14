@@ -46,8 +46,9 @@ func (s *Scheduler) Start() error {
 	if err := s.loadTasks(); err != nil {
 		slog.Warn("scheduler: failed to load persisted tasks", "error", err)
 	}
-	// Register all persisted & enabled tasks.
-	s.mu.RLock()
+	// Register all persisted & enabled tasks under a write lock
+	// (registerCron writes to s.ids).
+	s.mu.Lock()
 	for _, task := range s.tasks {
 		if task.Enabled {
 			if err := s.registerCron(task); err != nil {
@@ -55,7 +56,7 @@ func (s *Scheduler) Start() error {
 			}
 		}
 	}
-	s.mu.RUnlock()
+	s.mu.Unlock()
 
 	s.cron.Start()
 	return nil
@@ -69,11 +70,17 @@ func (s *Scheduler) AddTask(task *Task) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// Check both ids and tasks to avoid duplicates after loadTasks
+	// (loadTasks populates s.tasks but not s.ids before Start).
 	if _, exists := s.ids[task.Name]; exists {
 		return fmt.Errorf("task %q already exists", task.Name)
 	}
+	if _, exists := s.tasks[task.Name]; exists {
+		return fmt.Errorf("task %q already exists", task.Name)
+	}
 
-	// Default enabled to true for new tasks.
+	// Default enabled to true only when it's the zero value (not explicitly set).
+	// This respects callers who intentionally set Enabled=false.
 	if !task.Enabled {
 		task.Enabled = true
 	}
@@ -196,10 +203,18 @@ func (s *Scheduler) executeTask(task *Task) {
 
 		// Handle output.
 		if task.Output == "memory" && s.agent.MemoryStore() != nil {
-			s.agent.MemoryStore().Store(taskCtx, resp.Content, "scheduler", task.Name)
+			if _, err := s.agent.MemoryStore().Store(taskCtx, resp.Content, "scheduler", task.Name); err != nil {
+				slog.Error("scheduler: failed to store task output to memory", "name", task.Name, "error", err)
+				result.Error = fmt.Sprintf("memory store: %v", err)
+			}
 		}
 		if task.OutputPath != "" {
-			_ = os.WriteFile(task.OutputPath, []byte(resp.Content), 0644)
+			if err := os.WriteFile(task.OutputPath, []byte(resp.Content), 0644); err != nil {
+				slog.Error("scheduler: failed to write task output file", "name", task.Name, "path", task.OutputPath, "error", err)
+				if result.Error == "" {
+					result.Error = fmt.Sprintf("write file: %v", err)
+				}
+			}
 		}
 	}
 
@@ -223,6 +238,10 @@ func (s *Scheduler) persistTasks() {
 	if s.dir == "" {
 		return
 	}
+	if err := os.MkdirAll(s.dir, 0755); err != nil {
+		slog.Error("scheduler: create scheduler dir", "error", err)
+		return
+	}
 	tasks := make([]*Task, 0, len(s.tasks))
 	for _, t := range s.tasks {
 		tasks = append(tasks, t)
@@ -233,10 +252,6 @@ func (s *Scheduler) persistTasks() {
 		return
 	}
 	path := filepath.Join(s.dir, tasksFile)
-	if err := os.MkdirAll(s.dir, 0755); err != nil {
-		slog.Error("scheduler: create scheduler dir", "error", err)
-		return
-	}
 	if err := os.WriteFile(path, data, 0644); err != nil {
 		slog.Error("scheduler: persist tasks", "error", err)
 	}

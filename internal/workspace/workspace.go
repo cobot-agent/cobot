@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"gopkg.in/yaml.v3"
 
+	"github.com/cobot-agent/cobot/internal/util"
 	"github.com/cobot-agent/cobot/internal/xdg"
 )
 
@@ -160,36 +161,18 @@ func (w *Workspace) SaveConfig() error {
 	return nil
 }
 
-func evalSymlinks(path string) string {
-	realPath, err := filepath.EvalSymlinks(path)
-	if err == nil {
-		return realPath
-	}
-	dir := filepath.Dir(path)
-	tail := filepath.Base(path)
-	for len(dir) > 0 && dir != "/" {
-		realDir, err := filepath.EvalSymlinks(dir)
-		if err == nil {
-			return filepath.Join(realDir, tail)
-		}
-		tail = filepath.Base(dir) + "/" + tail
-		dir = filepath.Dir(dir)
-	}
-	return path
-}
-
 func (w *Workspace) ValidatePath(path string) error {
 	absPath, err := filepath.Abs(path)
 	if err != nil {
 		return fmt.Errorf("resolve path: %w", err)
 	}
-	absPath = evalSymlinks(absPath)
+	absPath = util.EvalSymlinks(absPath)
 
 	dataDir, err := filepath.Abs(w.DataDir)
 	if err != nil {
 		return fmt.Errorf("resolve data dir: %w", err)
 	}
-	dataDir = evalSymlinks(dataDir)
+	dataDir = util.EvalSymlinks(dataDir)
 	if isSubpath(absPath, dataDir) {
 		return nil
 	}
@@ -199,7 +182,7 @@ func (w *Workspace) ValidatePath(path string) error {
 		if err != nil {
 			return fmt.Errorf("resolve root dir: %w", err)
 		}
-		rootDir = evalSymlinks(rootDir)
+		rootDir = util.EvalSymlinks(rootDir)
 		if isSubpath(absPath, rootDir) {
 			return nil
 		}

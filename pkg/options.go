@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/cobot-agent/cobot/internal/util"
 )
 
 type Config struct {
@@ -28,30 +30,12 @@ type SandboxConfig struct {
 	BlockedCommands []string `yaml:"blocked_commands,omitempty"`
 }
 
-func evalSymlinks(path string) string {
-	realPath, err := filepath.EvalSymlinks(path)
-	if err == nil {
-		return realPath
-	}
-	dir := filepath.Dir(path)
-	tail := filepath.Base(path)
-	for len(dir) > 0 && dir != "/" {
-		realDir, err := filepath.EvalSymlinks(dir)
-		if err == nil {
-			return filepath.Join(realDir, tail)
-		}
-		tail = filepath.Base(dir) + "/" + tail
-		dir = filepath.Dir(dir)
-	}
-	return path
-}
-
 func (s *SandboxConfig) IsAllowed(path string, write bool) bool {
 	absPath, err := filepath.Abs(path)
 	if err != nil {
 		return false
 	}
-	absPath = evalSymlinks(absPath)
+	absPath = util.EvalSymlinks(absPath)
 
 	readonlyMatched := false
 	for _, rp := range s.ReadonlyPaths {
@@ -59,7 +43,7 @@ func (s *SandboxConfig) IsAllowed(path string, write bool) bool {
 		if err != nil {
 			continue
 		}
-		absRP = evalSymlinks(absRP)
+		absRP = util.EvalSymlinks(absRP)
 		rel, err := filepath.Rel(absRP, absPath)
 		if err != nil {
 			continue
@@ -77,7 +61,7 @@ func (s *SandboxConfig) IsAllowed(path string, write bool) bool {
 		if err != nil {
 			continue
 		}
-		absAP = evalSymlinks(absAP)
+		absAP = util.EvalSymlinks(absAP)
 		rel, err := filepath.Rel(absAP, absPath)
 		if err != nil {
 			continue
@@ -95,7 +79,7 @@ func (s *SandboxConfig) IsAllowed(path string, write bool) bool {
 		if err != nil {
 			return false
 		}
-		absRoot = evalSymlinks(absRoot)
+		absRoot = util.EvalSymlinks(absRoot)
 		rel, err := filepath.Rel(absRoot, absPath)
 		if err != nil {
 			return false

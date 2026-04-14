@@ -33,6 +33,9 @@ func (a *Agent) Prompt(ctx context.Context, message string) (*cobot.ProviderResp
 		return nil, cobot.ErrProviderNotConfigured
 	}
 
+	// Derive from agentCtx so agent cancellation propagates.
+	ctx = a.deriveCtx(ctx)
+
 	debug.Session("prompt", message)
 	a.AddMessage(cobot.Message{Role: cobot.RoleUser, Content: message})
 
@@ -68,6 +71,9 @@ func (a *Agent) Stream(ctx context.Context, message string) (<-chan cobot.Event,
 	if a.provider == nil {
 		return nil, cobot.ErrProviderNotConfigured
 	}
+
+	// Derive from agentCtx so agent cancellation propagates.
+	ctx = a.deriveCtx(ctx)
 
 	ch := make(chan cobot.Event, 64)
 

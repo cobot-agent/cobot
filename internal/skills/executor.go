@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/cobot-agent/cobot/internal/agent"
@@ -23,6 +25,11 @@ func (e *Executor) Execute(ctx context.Context, skill *Skill, input string) (str
 	for i, step := range skill.Steps {
 		var result string
 		var err error
+
+		// #11: A step must have exactly one of Tool or Prompt set, not both.
+		if step.Tool != "" && step.Prompt != "" {
+			return "", fmt.Errorf("step %d: cannot specify both tool %q and prompt; a step must use one or the other", i, step.Tool)
+		}
 
 		if step.Tool != "" {
 			// Tool-based step: execute a tool directly
@@ -62,6 +69,14 @@ func (e *Executor) Execute(ctx context.Context, skill *Skill, input string) (str
 }
 
 func (e *Executor) executeTool(ctx context.Context, step Step, skill *Skill, isFirst bool, input string) (string, error) {
+	// #12: Built-in "script" tool fallback — executes script files from the
+	// skill's scripts/ directory when no registered tool named "script" exists.
+	// This allows directory-format skills to run shell scripts without requiring
+	// an explicit script tool registration.
+	if step.Tool == "script" {
+		return e.executeScriptTool(ctx, step, skill, isFirst, input)
+	}
+
 	reg := e.agent.ToolRegistry()
 
 	// Build tool arguments from step.Args, inject input on first step
@@ -71,13 +86,6 @@ func (e *Executor) executeTool(ctx context.Context, step Step, skill *Skill, isF
 	}
 	if isFirst && input != "" {
 		args["input"] = input
-	}
-
-	// For script tools, resolve the file path relative to the skill directory
-	if step.Tool == "script" && skill.Dir != "" {
-		if file, ok := args["file"]; ok {
-			args["file"] = fmt.Sprintf("%s/scripts/%s", skill.Dir, file)
-		}
 	}
 
 	argsJSON, err := json.Marshal(args)
@@ -91,4 +99,62 @@ func (e *Executor) executeTool(ctx context.Context, step Step, skill *Skill, isF
 	}
 
 	return tool.Execute(ctx, argsJSON)
+}
+
+// executeScriptTool handles the built-in "script" tool which runs executable
+// files from the skill's scripts/ directory. If the script file is not found
+// or is not executable, a descriptive error is returned.
+func (e *Executor) executeScriptTool(ctx context.Context, step Step, skill *Skill, isFirst bool, input string) (string, error) {
+	args := step.Args
+	if args == nil {
+		args = make(map[string]any)
+	}
+	if isFirst && input != "" {
+		args["input"] = input
+	}
+
+	// Resolve the script file path relative to the skill directory.
+	fileName, _ := args["file"].(string)
+	if fileName == "" {
+		return "", fmt.Errorf("script step: missing required \"file\" argument")
+	}
+
+	var scriptPath string
+	if skill.Dir != "" {
+		scriptPath = fmt.Sprintf("%s/scripts/%s", skill.Dir, fileName)
+	} else {
+		scriptPath = fileName
+	}
+
+	// Verify the script file exists and is executable.
+	info, err := os.Stat(scriptPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", fmt.Errorf("script step: script file not found: %s", scriptPath)
+		}
+		return "", fmt.Errorf("script step: cannot access script file %s: %w", scriptPath, err)
+	}
+	if info.IsDir() {
+		return "", fmt.Errorf("script step: %s is a directory, not a script file", scriptPath)
+	}
+
+	// Build command arguments: pass remaining args (excluding "file") as CLI args.
+	var cmdArgs []string
+	for k, v := range args {
+		if k == "file" {
+			continue
+		}
+		cmdArgs = append(cmdArgs, fmt.Sprintf("--%s=%v", k, v))
+	}
+
+	cmd := exec.CommandContext(ctx, scriptPath, cmdArgs...)
+	if isFirst && input != "" {
+		cmd.Stdin = strings.NewReader(input)
+	}
+
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return string(out), fmt.Errorf("script %s failed: %w\noutput:\n%s", scriptPath, err, string(out))
+	}
+	return string(out), nil
 }

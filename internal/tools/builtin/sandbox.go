@@ -2,7 +2,8 @@ package builtin
 
 import (
 	"path/filepath"
-	"strings"
+
+	"github.com/cobot-agent/cobot/internal/util"
 )
 
 type SandboxChecker interface {
@@ -15,36 +16,18 @@ type WorkspaceSandbox struct {
 	ReadonlyPaths []string
 }
 
-func evalSymlinks(path string) string {
-	realPath, err := filepath.EvalSymlinks(path)
-	if err == nil {
-		return realPath
-	}
-	dir := filepath.Dir(path)
-	tail := filepath.Base(path)
-	for len(dir) > 0 && dir != "/" {
-		realDir, err := filepath.EvalSymlinks(dir)
-		if err == nil {
-			return filepath.Join(realDir, tail)
-		}
-		tail = filepath.Base(dir) + "/" + tail
-		dir = filepath.Dir(dir)
-	}
-	return path
-}
-
 func (s *WorkspaceSandbox) IsAllowed(path string, write bool) bool {
 	absPath, err := filepath.Abs(path)
 	if err != nil {
 		return false
 	}
-	absPath = evalSymlinks(absPath)
+	absPath = util.EvalSymlinks(absPath)
 
 	readonlyMatched := false
 	for _, p := range s.ReadonlyPaths {
 		absP, _ := filepath.Abs(p)
-		absP = evalSymlinks(absP)
-		if isSubpath(absPath, absP) {
+		absP = util.EvalSymlinks(absP)
+		if util.IsSubpath(absPath, absP) {
 			if write {
 				return false
 			}
@@ -57,33 +40,19 @@ func (s *WorkspaceSandbox) IsAllowed(path string, write bool) bool {
 
 	for _, p := range s.AllowPaths {
 		absP, _ := filepath.Abs(p)
-		absP = evalSymlinks(absP)
-		if isSubpath(absPath, absP) {
-			if readonlyMatched && write {
-				return false
-			}
+		absP = util.EvalSymlinks(absP)
+		if util.IsSubpath(absPath, absP) {
 			return true
 		}
 	}
 
 	if s.Root != "" {
 		absRoot, _ := filepath.Abs(s.Root)
-		absRoot = evalSymlinks(absRoot)
-		if isSubpath(absPath, absRoot) {
-			if readonlyMatched && write {
-				return false
-			}
+		absRoot = util.EvalSymlinks(absRoot)
+		if util.IsSubpath(absPath, absRoot) {
 			return true
 		}
 	}
 
 	return false
-}
-
-func isSubpath(path, base string) bool {
-	rel, err := filepath.Rel(base, path)
-	if err != nil {
-		return false
-	}
-	return !strings.HasPrefix(rel, "..")
 }

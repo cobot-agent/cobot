@@ -82,7 +82,7 @@ func (t *ShellExecTool) Execute(ctx context.Context, args json.RawMessage) (stri
 	if len(fields) == 0 {
 		return "", fmt.Errorf("empty command")
 	}
-	baseCmd := fields[0]
+	baseCmd := filepath.Base(fields[0])
 
 	for _, blocked := range t.blockedCommands {
 		if baseCmd == blocked || strings.HasPrefix(cmdStr, blocked+" ") || cmdStr == blocked {
@@ -106,6 +106,11 @@ func (t *ShellExecTool) Execute(ctx context.Context, args json.RawMessage) (stri
 			}
 		}
 	}
+	if t.timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, t.timeout)
+		defer cancel()
+	}
 	cmd := exec.CommandContext(ctx, "sh", "-c", a.Command)
 	if a.Dir != "" {
 		if t.workdir != "" {
@@ -127,11 +132,6 @@ func (t *ShellExecTool) Execute(ctx context.Context, args json.RawMessage) (stri
 		}
 	} else if t.workdir != "" {
 		cmd.Dir = t.workdir
-	}
-	if t.timeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, t.timeout)
-		defer cancel()
 	}
 	out, err := cmd.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {

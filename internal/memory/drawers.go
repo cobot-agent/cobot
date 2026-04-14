@@ -3,6 +3,7 @@ package memory
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	cobot "github.com/cobot-agent/cobot/pkg"
@@ -59,7 +60,7 @@ func (s *Store) DeleteDrawer(ctx context.Context, id string) error {
 	if s.bleveIdx != nil {
 		if ierr := s.bleveIdx.Delete(id); ierr != nil {
 			// Log but don't fail — Bleve out-of-sync is recoverable
-			fmt.Printf("memory: bleve delete for %s: %v\n", id, ierr)
+			slog.Warn("memory: bleve delete failed", "id", id, "error", ierr)
 		}
 	}
 	return nil

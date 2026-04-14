@@ -3,7 +3,6 @@ package acp
 import (
 	"context"
 	"strings"
-	"time"
 
 	"github.com/creachadair/jrpc2"
 
@@ -53,7 +52,7 @@ func (s *ACPServer) handleSessionPrompt(ctx context.Context, req acpapi.PromptRe
 	if !ok {
 		return acpapi.PromptResponse{}, jrpc2.Errorf(jrpc2.InvalidParams, "session not found: %s", req.SessionID)
 	}
-	sess.LastActive = time.Now()
+	s.sessions.UpdateLastActive(req.SessionID)
 
 	var parts []string
 	for _, block := range req.Prompt {

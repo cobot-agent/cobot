@@ -156,23 +156,26 @@ func (m *MCPManager) ToolAdapters(ctx context.Context, serverName string) ([]*MC
 }
 
 func (m *MCPManager) connectSSE(ctx context.Context, entry *RegistryEntry) (*mcp.ClientSession, error) {
-	httpClient := &http.Client{Timeout: 30 * time.Second}
-	if len(entry.Headers) > 0 {
-		httpClient.Transport = &headerTransport{
-			base:    http.DefaultTransport,
-			headers: entry.Headers,
-		}
+	// Use transport-level timeouts only — Client.Timeout would kill long-lived SSE streams.
+	transport := &headerTransport{
+		base: &http.Transport{
+			// Keep-alive and TLS handshake timeouts for connection setup.
+			TLSHandshakeTimeout:   30 * time.Second,
+			ResponseHeaderTimeout: 30 * time.Second,
+		},
+		headers: entry.Headers,
 	}
+	httpClient := &http.Client{Transport: transport}
 
-	transport := &mcp.SSEClientTransport{Endpoint: entry.URL, HTTPClient: httpClient}
-	session, err := m.client.Connect(ctx, transport, nil)
+	sseTransport := &mcp.SSEClientTransport{Endpoint: entry.URL, HTTPClient: httpClient}
+	session, err := m.client.Connect(ctx, sseTransport, nil)
 	if err != nil {
 		return nil, fmt.Errorf("SSE connect: %w", err)
 	}
 	return session, nil
 }
 
-func (m *MCPManager) connectStdio(entry *RegistryEntry) (*mcp.ClientSession, *ServerConfig, error) {
+func (m *MCPManager) connectStdio(ctx context.Context, entry *RegistryEntry) (*mcp.ClientSession, *ServerConfig, error) {
 	var env []string
 	for k, v := range entry.Env {
 		env = append(env, fmt.Sprintf("%s=%s", k, v))
@@ -190,7 +193,7 @@ func (m *MCPManager) connectStdio(entry *RegistryEntry) (*mcp.ClientSession, *Se
 	}
 
 	transport := &mcp.CommandTransport{Command: cmd}
-	session, err := m.client.Connect(context.Background(), transport, nil)
+	session, err := m.client.Connect(ctx, transport, nil)
 	if err != nil {
 		return nil, nil, fmt.Errorf("stdio connect: %w", err)
 	}
@@ -217,7 +220,7 @@ func (m *MCPManager) ConnectFromRegistry(ctx context.Context, name string, entry
 		}
 		session = s
 	} else {
-		s, c, err := m.connectStdio(entry)
+		s, c, err := m.connectStdio(ctx, entry)
 		if err != nil {
 			return fmt.Errorf("connect to server %q: %w", name, err)
 		}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/cobot-agent/cobot/acp"
 	"github.com/cobot-agent/cobot/internal/memory"
@@ -114,11 +115,45 @@ func (a *Agent) Provider() cobot.Provider {
 	return a.provider
 }
 
+// deriveCtx returns a context derived from agentCtx that also cancels if the
+// supplied ctx cancels. This ensures that agent-level cancellation (via Close)
+// propagates into all in-flight Prompt/Stream calls.
+func (a *Agent) deriveCtx(ctx context.Context) context.Context {
+	derived, derivedCancel := context.WithCancel(a.agentCtx)
+
+	merged, mergedCancel := context.WithCancel(derived)
+
+	go func() {
+		select {
+		case <-ctx.Done():
+			derivedCancel()
+			mergedCancel()
+		case <-a.agentCtx.Done():
+		case <-merged.Done():
+			derivedCancel()
+		}
+	}()
+
+	return merged
+}
+
 func (a *Agent) Close() error {
 	if a.agentCancel != nil {
 		a.agentCancel()
 	}
-	a.streamWg.Wait()
+
+	done := make(chan struct{})
+	go func() {
+		a.streamWg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		// Force proceed after timeout rather than blocking indefinitely.
+	}
+
 	if a.memoryAgent != nil {
 		a.memoryAgent.Stop()
 	}

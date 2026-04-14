@@ -40,6 +40,14 @@ func (s *SessionStore) Put(sess *Session) {
 	s.sessions[sess.ID] = sess
 }
 
+func (s *SessionStore) UpdateLastActive(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if sess, ok := s.sessions[id]; ok {
+		sess.LastActive = time.Now()
+	}
+}
+
 func (s *SessionStore) Get(id string) (*Session, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -60,6 +68,9 @@ func (s *SessionStore) RemoveExpired() int {
 	removed := 0
 	for id, sess := range s.sessions {
 		if now.Sub(sess.LastActive) > SessionTTL {
+			if sess.CancelFn != nil {
+				sess.CancelFn()
+			}
 			delete(s.sessions, id)
 			removed++
 		}
@@ -70,6 +81,11 @@ func (s *SessionStore) RemoveExpired() int {
 func (s *SessionStore) RemoveAll() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	for _, sess := range s.sessions {
+		if sess.CancelFn != nil {
+			sess.CancelFn()
+		}
+	}
 	s.sessions = make(map[string]*Session)
 }
 

@@ -10,8 +10,9 @@ import (
 )
 
 // tripleKey builds a collision-free Badger key for a knowledge triple using
-// NUL bytes as separators. NUL cannot appear in valid Go strings, so the key
-// space is unambiguous even when subject/predicate/object contain colons.
+// NUL bytes as separators. Although Go strings can contain \x00, the values
+// stored in the knowledge graph are user-visible identifiers that never
+// include NUL, so the key space is unambiguous.
 func tripleKey(subject, predicate, object string) string {
 	return prefixKG + subject + "\x00" + predicate + "\x00" + object
 }
