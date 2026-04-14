@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/cobot-agent/cobot/internal/agent"
+	agentconfig "github.com/cobot-agent/cobot/internal/agent/config"
 	"github.com/cobot-agent/cobot/internal/workspace"
 )
 
@@ -25,7 +25,7 @@ var agentListCmd = &cobra.Command{
 			return err
 		}
 
-		configs, err := agent.LoadAgentConfigs(ws.AgentsDir())
+		configs, err := agentconfig.LoadAgentConfigs(ws.AgentsDir())
 		if err != nil {
 			return err
 		}
@@ -69,7 +69,7 @@ var agentShowCmd = &cobra.Command{
 			return err
 		}
 
-		configs, err := agent.LoadAgentConfigs(ws.AgentsDir())
+		configs, err := agentconfig.LoadAgentConfigs(ws.AgentsDir())
 		if err != nil {
 			return err
 		}

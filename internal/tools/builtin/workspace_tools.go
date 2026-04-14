@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/cobot-agent/cobot/internal/agent"
+	"github.com/cobot-agent/cobot/internal/agent/config"
 	"github.com/cobot-agent/cobot/internal/tools"
 	"github.com/cobot-agent/cobot/internal/workspace"
 	cobot "github.com/cobot-agent/cobot/pkg"
@@ -225,7 +225,7 @@ func (t *AgentConfigUpdateTool) Execute(ctx context.Context, args json.RawMessag
 	}
 
 	path := filepath.Join(t.workspace.AgentsDir(), params.Agent+".yaml")
-	cfg, err := agent.LoadAgentConfig(path)
+	cfg, err := config.LoadAgentConfig(path)
 	if err != nil {
 		return "", fmt.Errorf("load agent config: %w", err)
 	}

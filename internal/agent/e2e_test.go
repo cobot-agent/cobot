@@ -5,9 +5,23 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/cobot-agent/cobot/internal/tools/builtin"
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
+
+// mockTool is a minimal Tool implementation used in E2E tests to avoid
+// importing internal/tools/builtin (which would create an import cycle via
+// workspace_tools.go → agent.LoadAgentConfig).
+type mockTool struct {
+	name   string
+	result string
+}
+
+func (m *mockTool) Name() string                         { return m.name }
+func (m *mockTool) Description() string                  { return "mock tool" }
+func (m *mockTool) Parameters() json.RawMessage          { return json.RawMessage(`{}`) }
+func (m *mockTool) Execute(_ context.Context, _ json.RawMessage) (string, error) {
+	return m.result, nil
+}
 
 func TestE2ESimpleConversation(t *testing.T) {
 	a := New(&cobot.Config{MaxTurns: 10, Model: "mock"})
@@ -31,7 +45,7 @@ func TestE2ESimpleConversation(t *testing.T) {
 
 func TestE2EToolCallFlow(t *testing.T) {
 	a := New(&cobot.Config{MaxTurns: 10, Model: "mock"})
-	a.ToolRegistry().Register(builtin.NewShellExecTool())
+	a.ToolRegistry().Register(&mockTool{name: "shell_exec", result: "hello"})
 
 	a.SetProvider(&mockProvider{
 		responses: []*cobot.ProviderResponse{

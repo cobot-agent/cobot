@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/cobot-agent/cobot/internal/agent"
+	agentconfig "github.com/cobot-agent/cobot/internal/agent/config"
 	"github.com/cobot-agent/cobot/internal/llm/anthropic"
 	"github.com/cobot-agent/cobot/internal/llm/openai"
 	"github.com/cobot-agent/cobot/internal/mcp"
@@ -91,8 +92,8 @@ func resolveSystemPrompt(value string, ws *workspace.Workspace) string {
 	return value
 }
 
-func resolveAgentConfig(ws *workspace.Workspace) (*agent.AgentConfig, error) {
-	configs, err := agent.LoadAgentConfigs(ws.AgentsDir())
+func resolveAgentConfig(ws *workspace.Workspace) (*agentconfig.AgentConfig, error) {
+	configs, err := agentconfig.LoadAgentConfigs(ws.AgentsDir())
 	if err != nil {
 		return nil, nil
 	}
@@ -108,7 +109,7 @@ func resolveAgentConfig(ws *workspace.Workspace) (*agent.AgentConfig, error) {
 	return nil, nil
 }
 
-func connectMCPServers(a *agent.Agent, ws *workspace.Workspace, agentCfg *agent.AgentConfig) error {
+func connectMCPServers(a *agent.Agent, ws *workspace.Workspace, agentCfg *agentconfig.AgentConfig) error {
 	enabled := ws.Config.EnabledMCP
 	if agentCfg != nil && len(agentCfg.EnabledMCP) > 0 {
 		enabled = agentCfg.EnabledMCP
@@ -136,7 +137,7 @@ func connectMCPServers(a *agent.Agent, ws *workspace.Workspace, agentCfg *agent.
 	return nil
 }
 
-func loadAndRegisterSkills(a *agent.Agent, ws *workspace.Workspace, agentCfg *agent.AgentConfig) {
+func loadAndRegisterSkills(a *agent.Agent, ws *workspace.Workspace, agentCfg *agentconfig.AgentConfig) {
 	globalSkills, _ := skills.LoadRegistry(xdg.SkillsRegistryDir())
 	wsSkills, _ := skills.LoadRegistry(ws.SkillsDir())
 
