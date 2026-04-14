@@ -155,7 +155,7 @@ func (m *MCPManager) ToolAdapters(ctx context.Context, serverName string) ([]*MC
 	return adapters, nil
 }
 
-func (m *MCPManager) ConnectSSE(ctx context.Context, name string, entry *RegistryEntry) error {
+func (m *MCPManager) connectSSE(ctx context.Context, entry *RegistryEntry) (*mcp.ClientSession, error) {
 	httpClient := &http.Client{Timeout: 30 * time.Second}
 	if len(entry.Headers) > 0 {
 		httpClient.Transport = &headerTransport{
@@ -167,25 +167,12 @@ func (m *MCPManager) ConnectSSE(ctx context.Context, name string, entry *Registr
 	transport := &mcp.SSEClientTransport{Endpoint: entry.URL, HTTPClient: httpClient}
 	session, err := m.client.Connect(ctx, transport, nil)
 	if err != nil {
-		return fmt.Errorf("connect to server %q: %w", name, err)
+		return nil, fmt.Errorf("SSE connect: %w", err)
 	}
-
-	m.sessions[name] = session
-	return nil
+	return session, nil
 }
 
-func (m *MCPManager) ConnectFromRegistry(ctx context.Context, name string, entry *RegistryEntry) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if _, exists := m.sessions[name]; exists {
-		return fmt.Errorf("server %q already connected", name)
-	}
-
-	if entry.Transport == "sse" || entry.Transport == "http" {
-		return m.ConnectSSE(ctx, name, entry)
-	}
-
+func (m *MCPManager) connectStdio(entry *RegistryEntry) (*mcp.ClientSession, *ServerConfig, error) {
 	var env []string
 	for k, v := range entry.Env {
 		env = append(env, fmt.Sprintf("%s=%s", k, v))
@@ -203,13 +190,55 @@ func (m *MCPManager) ConnectFromRegistry(ctx context.Context, name string, entry
 	}
 
 	transport := &mcp.CommandTransport{Command: cmd}
-	session, err := m.client.Connect(ctx, transport, nil)
+	session, err := m.client.Connect(context.Background(), transport, nil)
 	if err != nil {
-		return fmt.Errorf("connect to server %q: %w", name, err)
+		return nil, nil, fmt.Errorf("stdio connect: %w", err)
+	}
+	return session, &cfg, nil
+}
+
+func (m *MCPManager) ConnectFromRegistry(ctx context.Context, name string, entry *RegistryEntry) error {
+	// Fast check under lock
+	m.mu.Lock()
+	if _, exists := m.sessions[name]; exists {
+		m.mu.Unlock()
+		return fmt.Errorf("server %q already connected", name)
+	}
+	m.mu.Unlock()
+
+	// Connect WITHOUT holding the lock — network/stdio calls can block
+	var session *mcp.ClientSession
+	var cfg *ServerConfig
+
+	if entry.Transport == "sse" || entry.Transport == "http" {
+		s, err := m.connectSSE(ctx, entry)
+		if err != nil {
+			return fmt.Errorf("connect to server %q: %w", name, err)
+		}
+		session = s
+	} else {
+		s, c, err := m.connectStdio(entry)
+		if err != nil {
+			return fmt.Errorf("connect to server %q: %w", name, err)
+		}
+		session = s
+		cfg = c
+	}
+
+	// Store under lock — re-check in case another goroutine connected meanwhile
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if _, exists := m.sessions[name]; exists {
+		// Race: another caller connected first; close the duplicate
+		_ = session.Close()
+		return fmt.Errorf("server %q already connected", name)
 	}
 
 	m.sessions[name] = session
-	m.configs[name] = cfg
+	if cfg != nil {
+		m.configs[name] = *cfg
+	}
 	return nil
 }
 
