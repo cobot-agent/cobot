@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -41,13 +42,18 @@ func OpenStore(memoryDir string) (*Store, error) {
 }
 
 func (s *Store) Close() error {
+	var errs []error
 	if s.bleveIdx != nil {
-		s.bleveIdx.Close()
+		if err := s.bleveIdx.Close(); err != nil {
+			errs = append(errs, err)
+		}
 	}
 	if s.db != nil {
-		return s.db.Close()
+		if err := s.db.Close(); err != nil {
+			errs = append(errs, err)
+		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *Store) GetWings(ctx context.Context) ([]*cobot.Wing, error) {
