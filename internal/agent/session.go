@@ -6,6 +6,8 @@ import (
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
+const maxMessages = 1000
+
 type Session struct {
 	mu       sync.RWMutex
 	messages []cobot.Message
@@ -27,6 +29,17 @@ func (s *Session) AddMessage(m cobot.Message) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.messages = append(s.messages, m)
+	if len(s.messages) > maxMessages {
+		keep := s.messages[len(s.messages)-maxMessages:]
+		if len(s.messages) > 0 && s.messages[0].Role == cobot.RoleSystem {
+			kept := make([]cobot.Message, 0, 1+maxMessages)
+			kept = append(kept, s.messages[0])
+			kept = append(kept, keep...)
+			s.messages = kept
+		} else {
+			s.messages = keep
+		}
+	}
 }
 
 func (s *Session) Reset() {
