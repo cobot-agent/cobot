@@ -5,15 +5,19 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"sync"
+	"time"
 )
 
+const SessionTTL = 30 * time.Minute
+
 type Session struct {
-	ID        string
-	CWD       string
-	Workspace string
-	Agent     string
-	Ctx       context.Context
-	CancelFn  context.CancelFunc
+	ID         string
+	CWD        string
+	Workspace  string
+	Agent      string
+	Ctx        context.Context
+	CancelFn   context.CancelFunc
+	LastActive time.Time
 }
 
 type SessionStore struct {
@@ -30,6 +34,9 @@ func NewSessionStore() *SessionStore {
 func (s *SessionStore) Put(sess *Session) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if sess.LastActive.IsZero() {
+		sess.LastActive = time.Now()
+	}
 	s.sessions[sess.ID] = sess
 }
 
@@ -44,6 +51,26 @@ func (s *SessionStore) Delete(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.sessions, id)
+}
+
+func (s *SessionStore) RemoveExpired() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now()
+	removed := 0
+	for id, sess := range s.sessions {
+		if now.Sub(sess.LastActive) > SessionTTL {
+			delete(s.sessions, id)
+			removed++
+		}
+	}
+	return removed
+}
+
+func (s *SessionStore) RemoveAll() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sessions = make(map[string]*Session)
 }
 
 func newSessionID() string {

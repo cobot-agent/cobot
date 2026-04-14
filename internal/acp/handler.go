@@ -3,6 +3,7 @@ package acp
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/creachadair/jrpc2"
 
@@ -52,6 +53,7 @@ func (s *ACPServer) handleSessionPrompt(ctx context.Context, req acpapi.PromptRe
 	if !ok {
 		return acpapi.PromptResponse{}, jrpc2.Errorf(jrpc2.InvalidParams, "session not found: %s", req.SessionID)
 	}
+	sess.LastActive = time.Now()
 
 	var parts []string
 	for _, block := range req.Prompt {
@@ -74,7 +76,7 @@ func (s *ACPServer) handleSessionPrompt(ctx context.Context, req acpapi.PromptRe
 	}
 	_, err := s.agent.Prompt(promptCtx, text)
 	if err != nil {
-		return acpapi.PromptResponse{}, jrpc2.Errorf(jrpc2.InvalidParams, "agent error: %v", err)
+		return acpapi.PromptResponse{}, jrpc2.Errorf(jrpc2.InternalError, "agent error: %v", err)
 	}
 
 	s.notify(ctx, "session/update", acpapi.SessionUpdateNotification{
@@ -94,5 +96,17 @@ func (s *ACPServer) handleSessionCancel(ctx context.Context, req acpapi.CancelNo
 	if ok && sess.CancelFn != nil {
 		sess.CancelFn()
 	}
+	return nil, nil
+}
+
+func (s *ACPServer) handleSessionDelete(ctx context.Context, req acpapi.CancelNotification) (any, error) {
+	sess, ok := s.sessions.Get(req.SessionID)
+	if !ok {
+		return nil, jrpc2.Errorf(jrpc2.InvalidParams, "session not found: %s", req.SessionID)
+	}
+	if sess.CancelFn != nil {
+		sess.CancelFn()
+	}
+	s.sessions.Delete(req.SessionID)
 	return nil, nil
 }
