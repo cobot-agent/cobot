@@ -44,11 +44,7 @@ func (s *SandboxConfig) IsAllowed(path string, write bool) bool {
 			continue
 		}
 		absRP = util.EvalSymlinks(absRP)
-		rel, err := filepath.Rel(absRP, absPath)
-		if err != nil {
-			continue
-		}
-		if !strings.HasPrefix(rel, "..") {
+		if util.IsSubpath(absPath, absRP) {
 			readonlyMatched = true
 			if write {
 				return false
@@ -62,11 +58,7 @@ func (s *SandboxConfig) IsAllowed(path string, write bool) bool {
 			continue
 		}
 		absAP = util.EvalSymlinks(absAP)
-		rel, err := filepath.Rel(absAP, absPath)
-		if err != nil {
-			continue
-		}
-		if !strings.HasPrefix(rel, "..") {
+		if util.IsSubpath(absPath, absAP) {
 			if readonlyMatched && write {
 				return false
 			}
@@ -80,11 +72,7 @@ func (s *SandboxConfig) IsAllowed(path string, write bool) bool {
 			return false
 		}
 		absRoot = util.EvalSymlinks(absRoot)
-		rel, err := filepath.Rel(absRoot, absPath)
-		if err != nil {
-			return false
-		}
-		if !strings.HasPrefix(rel, "..") {
+		if util.IsSubpath(absPath, absRoot) {
 			if readonlyMatched && write {
 				return false
 			}

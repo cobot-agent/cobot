@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -173,7 +172,7 @@ func (w *Workspace) ValidatePath(path string) error {
 		return fmt.Errorf("resolve data dir: %w", err)
 	}
 	dataDir = util.EvalSymlinks(dataDir)
-	if isSubpath(absPath, dataDir) {
+	if util.IsSubpath(absPath, dataDir) {
 		return nil
 	}
 
@@ -183,7 +182,7 @@ func (w *Workspace) ValidatePath(path string) error {
 			return fmt.Errorf("resolve root dir: %w", err)
 		}
 		rootDir = util.EvalSymlinks(rootDir)
-		if isSubpath(absPath, rootDir) {
+		if util.IsSubpath(absPath, rootDir) {
 			return nil
 		}
 	}
@@ -295,12 +294,4 @@ func DefaultWorkspace() *Workspace {
 	}
 	ws := newWorkspaceFromDefinition(def, xdg.DataDir())
 	return ws
-}
-
-func isSubpath(path, base string) bool {
-	rel, err := filepath.Rel(base, path)
-	if err != nil {
-		return false
-	}
-	return !strings.HasPrefix(rel, "..")
 }

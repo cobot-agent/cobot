@@ -82,10 +82,10 @@ func (s *Scheduler) AddTask(task *Task) error {
 		return fmt.Errorf("task %q already exists", task.Name)
 	}
 
-	// Default enabled to true only when it's the zero value (not explicitly set).
-	// This respects callers who intentionally set Enabled=false. Using *bool would
-	// require API changes, so the current approach documents this behavior via the
-	// AddTask contract: Enabled defaults to true unless explicitly set to false.
+	// Default enabled to true when not explicitly set. Since Go's bool zero
+	// value is false, callers who want to add a disabled task should set
+	// Enabled=true and then call DisableTask, or the caller can leave Enabled
+	// at its zero value to get the default (enabled) behavior.
 	if !task.Enabled {
 		task.Enabled = true
 	}

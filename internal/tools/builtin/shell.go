@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cobot-agent/cobot/internal/util"
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
@@ -127,8 +128,7 @@ func (t *ShellExecTool) Execute(ctx context.Context, args json.RawMessage) (stri
 					return "", fmt.Errorf("resolve dir: %w", err)
 				}
 			}
-			rel, err := filepath.Rel(absWorkdir, absDir)
-			if err != nil || strings.HasPrefix(rel, "..") {
+			if !util.IsSubpath(absDir, absWorkdir) {
 				return "", fmt.Errorf("dir %q is outside workspace boundaries", a.Dir)
 			}
 			cmd.Dir = absDir

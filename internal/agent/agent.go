@@ -133,13 +133,7 @@ func (a *Agent) deriveCtx(ctx context.Context) context.Context {
 		context.AfterFunc(a.agentCtx, derivedCancel)
 	}
 
-	merged, mergedCancel := context.WithCancel(derived)
-	go func() {
-		<-derived.Done()
-		mergedCancel()
-	}()
-
-	return merged
+	return derived
 }
 
 func (a *Agent) Close() error {
