@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
@@ -16,10 +17,13 @@ type shellExecArgs struct {
 	Dir     string `json:"dir,omitempty"`
 }
 
+const defaultShellTimeout = 2 * time.Minute
+
 type ShellExecTool struct {
 	workdir         string
 	blockedCommands []string
 	allowNetwork    bool
+	timeout         time.Duration
 }
 
 type ShellExecToolOption func(*ShellExecTool)
@@ -36,6 +40,10 @@ func WithShellAllowNetwork(allow bool) ShellExecToolOption {
 	return func(t *ShellExecTool) { t.allowNetwork = allow }
 }
 
+func WithShellTimeout(d time.Duration) ShellExecToolOption {
+	return func(t *ShellExecTool) { t.timeout = d }
+}
+
 var networkCommands = []string{
 	"curl", "wget", "ssh", "scp", "sftp", "nc", "ncat", "netcat",
 	"telnet", "ftp", "rsync", "ping", "nslookup", "dig", "host",
@@ -44,6 +52,7 @@ var networkCommands = []string{
 func NewShellExecTool(opts ...ShellExecToolOption) *ShellExecTool {
 	t := &ShellExecTool{
 		allowNetwork: false,
+		timeout:      defaultShellTimeout,
 	}
 	for _, opt := range opts {
 		opt(t)
@@ -119,7 +128,15 @@ func (t *ShellExecTool) Execute(ctx context.Context, args json.RawMessage) (stri
 	} else if t.workdir != "" {
 		cmd.Dir = t.workdir
 	}
+	if t.timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, t.timeout)
+		defer cancel()
+	}
 	out, err := cmd.CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		return string(out), fmt.Errorf("shell command timed out after %s", t.timeout)
+	}
 	if err != nil {
 		return string(out), err
 	}
