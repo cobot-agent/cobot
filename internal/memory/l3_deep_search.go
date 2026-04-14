@@ -101,6 +101,7 @@ func (s *Store) SummarizeContent(content string) string {
 // Creates or updates closets with auto-generated summaries from recent drawers.
 func (s *Store) AutoSummarizeRoom(ctx context.Context, wingID, roomID string) error {
 	results, err := s.searchDrawers(ctx, &cobot.SearchQuery{
+		WingID: wingID,
 		RoomID: roomID,
 		Limit:  10,
 	})
