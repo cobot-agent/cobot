@@ -114,9 +114,6 @@ func TestExecutorToolAndPromptBothSet(t *testing.T) {
 }
 
 func TestExecutorScriptToolFallback(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("shell script execution not supported on Windows")
-	}
 	tmpDir, err := os.MkdirTemp("", "skill-test")
 	if err != nil {
 		t.Fatal(err)
@@ -128,11 +125,16 @@ func TestExecutorScriptToolFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	scriptPath := filepath.Join(scriptsDir, "test.sh")
-	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\necho \"hello from script\""), 0755); err != nil {
-		t.Fatal(err)
+	var scriptFile, scriptContent, expect string
+	if runtime.GOOS == "windows" {
+		scriptFile = "test.ps1"
+		scriptContent = "Write-Output \"hello from script\""
+	} else {
+		scriptFile = "test.sh"
+		scriptContent = "#!/bin/sh\necho \"hello from script\""
 	}
-	if err := os.Chmod(scriptPath, 0755); err != nil {
+	scriptPath := filepath.Join(scriptsDir, scriptFile)
+	if err := os.WriteFile(scriptPath, []byte(scriptContent), 0755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -148,7 +150,7 @@ func TestExecutorScriptToolFallback(t *testing.T) {
 		Trigger: "/scripttest",
 		Dir:     tmpDir,
 		Steps: []Step{
-			{Tool: "script", Args: map[string]any{"file": "test.sh"}, Output: "result"},
+			{Tool: "script", Args: map[string]any{"file": scriptFile}, Output: "result"},
 		},
 	}
 
@@ -157,8 +159,9 @@ func TestExecutorScriptToolFallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(result, "hello from script") {
-		t.Errorf("expected \"hello from script\" in result, got: %s", result)
+	expect = "hello from script"
+	if !strings.Contains(result, expect) {
+		t.Errorf("expected %q in result, got: %s", expect, result)
 	}
 }
 

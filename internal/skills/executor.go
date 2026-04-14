@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/cobot-agent/cobot/internal/agent"
@@ -157,7 +158,19 @@ func (e *Executor) executeScriptTool(ctx context.Context, step Step, skill *Skil
 		cmdArgs = append(cmdArgs, fmt.Sprintf("--%s=%v", k, v))
 	}
 
-	cmd := exec.CommandContext(ctx, scriptPath, cmdArgs...)
+	// Cross-platform script execution: on Windows, .sh files cannot be executed
+	// directly. Route .sh → sh, .ps1 → powershell, otherwise execute directly.
+	var cmd *exec.Cmd
+	switch {
+	case runtime.GOOS == "windows" && strings.HasSuffix(strings.ToLower(fileName), ".sh"):
+		allArgs := append([]string{scriptPath}, cmdArgs...)
+		cmd = exec.CommandContext(ctx, "sh", allArgs...)
+	case runtime.GOOS == "windows" && strings.HasSuffix(strings.ToLower(fileName), ".ps1"):
+		allArgs := append([]string{"-File", scriptPath}, cmdArgs...)
+		cmd = exec.CommandContext(ctx, "powershell", allArgs...)
+	default:
+		cmd = exec.CommandContext(ctx, scriptPath, cmdArgs...)
+	}
 	if isFirst && input != "" {
 		cmd.Stdin = strings.NewReader(input)
 	}
