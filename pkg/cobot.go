@@ -3,6 +3,7 @@ package cobot
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	acp "github.com/cobot-agent/cobot/acp"
 )
@@ -27,11 +28,16 @@ type Agent struct {
 type CoreFactory func(*Config) (AgentCore, error)
 
 // defaultCoreFactory is set by the internal/agent package during initialization.
-var defaultCoreFactory CoreFactory
+var (
+	defaultCoreFactory CoreFactory
+	coreFactoryMu      sync.RWMutex
+)
 
 // RegisterCoreFactory allows the internal/agent package to register its core creation function.
 // This avoids import cycles between pkg and internal packages.
 func RegisterCoreFactory(factory CoreFactory) {
+	coreFactoryMu.Lock()
+	defer coreFactoryMu.Unlock()
 	defaultCoreFactory = factory
 }
 
@@ -49,10 +55,13 @@ func New(config *Config, core AgentCore) (*Agent, error) {
 // This preserves backward compatibility for New(config, core) while offering a simplified API.
 // The default core factory must be registered by calling RegisterCoreFactory before using this function.
 func NewFromConfig(config Config) (*Agent, error) {
-	if defaultCoreFactory == nil {
+	coreFactoryMu.RLock()
+	factory := defaultCoreFactory
+	coreFactoryMu.RUnlock()
+	if factory == nil {
 		return nil, fmt.Errorf("no core factory registered: call RegisterCoreFactory first")
 	}
-	core, err := defaultCoreFactory(&config)
+	core, err := factory(&config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create default core: %w", err)
 	}
