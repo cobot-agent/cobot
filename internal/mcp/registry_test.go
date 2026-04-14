@@ -181,7 +181,7 @@ func TestExpandEnvNoVars(t *testing.T) {
 
 func TestExpandEnvUndefinedVar(t *testing.T) {
 	result := config.ExpandEnvVars("${UNDEFINED_VAR_12345}")
-	if result != "" {
-		t.Fatalf("expected empty string for undefined var, got %q", result)
+	if result != "${UNDEFINED_VAR_12345}" {
+		t.Fatalf("expected original placeholder for undefined var, got %q", result)
 	}
 }
