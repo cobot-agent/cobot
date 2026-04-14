@@ -81,9 +81,7 @@ func (s *Scheduler) AddTask(task *Task) error {
 		return fmt.Errorf("task %q already exists", task.Name)
 	}
 
-	if !task.Enabled {
-		task.Enabled = true
-	}
+	task.Enabled = true
 
 	if err := s.registerCron(task); err != nil {
 		s.mu.Unlock()
@@ -104,13 +102,14 @@ func (s *Scheduler) AddTask(task *Task) error {
 func (s *Scheduler) RemoveTask(name string) error {
 	s.mu.Lock()
 
-	id, ok := s.ids[name]
-	if !ok {
+	if _, exists := s.tasks[name]; !exists {
 		s.mu.Unlock()
 		return fmt.Errorf("task %q not found", name)
 	}
-	s.cron.Remove(id)
-	delete(s.ids, name)
+	if id, hasID := s.ids[name]; hasID {
+		s.cron.Remove(id)
+		delete(s.ids, name)
+	}
 	delete(s.tasks, name)
 
 	tasks := s.snapshotTasks()
@@ -264,7 +263,8 @@ func (s *Scheduler) recordResult(r TaskResult) {
 func (s *Scheduler) snapshotTasks() []*Task {
 	tasks := make([]*Task, 0, len(s.tasks))
 	for _, t := range s.tasks {
-		tasks = append(tasks, t)
+		cp := *t // shallow copy to avoid data race during persistence
+		tasks = append(tasks, &cp)
 	}
 	return tasks
 }

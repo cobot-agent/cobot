@@ -30,14 +30,14 @@ func (s *Session) AddMessage(m cobot.Message) {
 	defer s.mu.Unlock()
 	s.messages = append(s.messages, m)
 	if len(s.messages) > maxMessages {
-		keep := s.messages[len(s.messages)-maxMessages:]
 		if len(s.messages) > 0 && s.messages[0].Role == cobot.RoleSystem {
-			kept := make([]cobot.Message, 0, 1+maxMessages)
+			keep := s.messages[len(s.messages)-(maxMessages-1):]
+			kept := make([]cobot.Message, 0, maxMessages)
 			kept = append(kept, s.messages[0])
 			kept = append(kept, keep...)
 			s.messages = kept
 		} else {
-			s.messages = keep
+			s.messages = s.messages[len(s.messages)-maxMessages:]
 		}
 	}
 }

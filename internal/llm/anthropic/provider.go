@@ -211,24 +211,26 @@ func (p *Provider) readStream(body io.ReadCloser, ch chan<- cobot.ProviderChunk)
 				}
 			}
 
-		case "message_delta":
-			if evt.MessageDelta != nil {
-				if evt.MessageDelta.StopReason == "tool_use" {
-					// Emit assembled tool calls in index order.
-					indices := httputil.SortedMapKeys(pending)
-					for _, idx := range indices {
-						ptc := pending[idx]
-						ch <- cobot.ProviderChunk{
-							ToolCall: &cobot.ToolCall{
-								ID:        ptc.ID,
-								Name:      ptc.Name,
-								Arguments: json.RawMessage(ptc.Args.String()),
-							},
-						}
+	case "message_delta":
+		if evt.MessageDelta != nil {
+			if evt.MessageDelta.StopReason == "tool_use" {
+				// Emit assembled tool calls in index order.
+				indices := httputil.SortedMapKeys(pending)
+				for _, idx := range indices {
+					ptc := pending[idx]
+					ch <- cobot.ProviderChunk{
+						ToolCall: &cobot.ToolCall{
+							ID:        ptc.ID,
+							Name:      ptc.Name,
+							Arguments: json.RawMessage(ptc.Args.String()),
+						},
 					}
 				}
-				ch <- cobot.ProviderChunk{Done: true}
 			}
+			// Don't send Done here — message_stop will send it.
+			// Sending Done twice can cause the consumer to stop reading,
+			// which blocks the second send and leaks the goroutine.
+		}
 
 		case "message_stop":
 			ch <- cobot.ProviderChunk{Done: true}

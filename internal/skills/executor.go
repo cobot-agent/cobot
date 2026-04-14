@@ -72,15 +72,17 @@ func (e *Executor) Execute(ctx context.Context, skill *Skill, input string) (str
 }
 
 func (e *Executor) executeTool(ctx context.Context, step Step, skill *Skill, isFirst bool, input string) (string, error) {
-	// #12: Built-in "script" tool fallback — executes script files from the
-	// skill's scripts/ directory when no registered tool named "script" exists.
-	// This allows directory-format skills to run shell scripts without requiring
-	// an explicit script tool registration.
-	if step.Tool == "script" {
-		return e.executeScriptTool(ctx, step, skill, isFirst, input)
-	}
-
 	reg := e.agent.ToolRegistry()
+
+	// Built-in "script" tool fallback: if no registered tool named "script"
+	// exists, use the built-in script executor for directory-format skills.
+	// Check the registry first so users can override with a custom tool.
+	if step.Tool == "script" {
+		if _, err := reg.Get("script"); err != nil {
+			return e.executeScriptTool(ctx, step, skill, isFirst, input)
+		}
+		// A registered "script" tool exists; fall through to use it.
+	}
 
 	// Build tool arguments from step.Args, inject input on first step
 	args := step.Args
@@ -131,7 +133,9 @@ func (e *Executor) executeScriptTool(ctx context.Context, step Step, skill *Skil
 	scriptPath = filepath.Clean(scriptPath)
 	if skill.Dir != "" {
 		scriptsDir := filepath.Join(skill.Dir, "scripts")
-		if !util.IsSubpath(scriptPath, scriptsDir) {
+		resolvedScriptsDir := util.EvalSymlinks(scriptsDir)
+		resolvedScriptPath := util.EvalSymlinks(scriptPath)
+		if !util.IsSubpath(resolvedScriptPath, resolvedScriptsDir) {
 			return "", fmt.Errorf("script step: script path %q escapes scripts directory", fileName)
 		}
 	}

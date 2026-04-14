@@ -90,10 +90,18 @@ func (t *ShellExecTool) Execute(ctx context.Context, args json.RawMessage) (stri
 		if baseCmd == blocked || strings.HasPrefix(cmdStr, blocked+" ") || cmdStr == blocked {
 			return "", fmt.Errorf("command %q is blocked", blocked)
 		}
-		if strings.Contains(cmdStr, "|"+blocked) || strings.Contains(cmdStr, ">"+blocked) || strings.Contains(cmdStr, "<"+blocked) || strings.Contains(cmdStr, "; "+blocked) {
-			return "", fmt.Errorf("command %q is blocked", blocked)
+		// Check command substitution and pipe/redirection variants with
+		// both tight (;rm) and spaced (; rm) forms to prevent bypasses.
+		for _, sep := range []string{"|", ">", "<", ";", "&"} {
+			if strings.Contains(cmdStr, sep+blocked+" ") || strings.Contains(cmdStr, sep+blocked) && !strings.ContainsAny(string(cmdStr[strings.Index(cmdStr, sep)+1]), "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ") {
+				// Tight form like ;rm or spaced form ; rm
+			}
+			if strings.Contains(cmdStr, sep+" "+blocked) || strings.Contains(cmdStr, sep+blocked) {
+				return "", fmt.Errorf("command %q is blocked", blocked)
+			}
 		}
-		if strings.Contains(cmdStr, "$("+blocked) || strings.Contains(cmdStr, "`"+blocked+"`") {
+		// $(cmd) and `cmd` substitution — match backtick prefix broadly
+		if strings.Contains(cmdStr, "$("+blocked) || strings.Contains(cmdStr, "`"+blocked) {
 			return "", fmt.Errorf("command %q is blocked", blocked)
 		}
 	}
@@ -133,6 +141,8 @@ func (t *ShellExecTool) Execute(ctx context.Context, args json.RawMessage) (stri
 					return "", fmt.Errorf("resolve dir: %w", err)
 				}
 			}
+			absDir = util.EvalSymlinks(absDir)
+			absWorkdir = util.EvalSymlinks(absWorkdir)
 			if !util.IsSubpath(absDir, absWorkdir) {
 				return "", fmt.Errorf("dir %q is outside workspace boundaries", a.Dir)
 			}

@@ -64,9 +64,6 @@ func (s *SandboxConfig) IsAllowed(path string, write bool) bool {
 		}
 		absAP = util.EvalSymlinks(absAP)
 		if util.IsSubpath(absPath, absAP) {
-			if readonlyMatched && write {
-				return false
-			}
 			return true
 		}
 	}

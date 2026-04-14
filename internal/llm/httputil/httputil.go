@@ -8,14 +8,22 @@ import (
 	"time"
 )
 
-var DefaultTransport = &http.Transport{
-	DialContext: (&net.Dialer{
+// DefaultTransport is based on http.DefaultTransport (preserving proxy,
+// HTTP/2, and connection pool settings) with overridden timeout values.
+var DefaultTransport = func() *http.Transport {
+	base, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		base = &http.Transport{}
+	}
+	t := base.Clone()
+	t.DialContext = (&net.Dialer{
 		Timeout:   30 * time.Second,
 		KeepAlive: 30 * time.Second,
-	}).DialContext,
-	TLSHandshakeTimeout:   10 * time.Second,
-	ResponseHeaderTimeout: 2 * time.Minute,
-}
+	}).DialContext
+	t.TLSHandshakeTimeout = 10 * time.Second
+	t.ResponseHeaderTimeout = 2 * time.Minute
+	return t
+}()
 
 // SortedMapKeys returns the keys of m in sorted order.
 func SortedMapKeys[V any](m map[int]V) []int {
