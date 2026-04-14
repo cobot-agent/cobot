@@ -53,14 +53,42 @@ type usage struct {
 	OutputTokens int `json:"output_tokens"`
 }
 
+// --- Stream event types ---
+
+// streamEvent represents an Anthropic SSE event.
+// The fields present depend on evt.Type:
+//   - "content_block_start"  → ContentBlock is set (index + tool_use or text block)
+//   - "content_block_delta"  → Delta is set (text_delta or input_json_delta)
+//   - "message_delta"        → MessageDelta is set (stop_reason + usage)
+//   - "message_start"        → Message is set (contains usage)
+//   - "message_stop"         → none
 type streamEvent struct {
-	Type         string        `json:"type"`
-	Delta        *streamDelta  `json:"delta,omitempty"`
-	ContentBlock *contentBlock `json:"content_block,omitempty"`
+	Type         string         `json:"type"`
+	Index        int            `json:"index,omitempty"`
+	ContentBlock *contentBlock  `json:"content_block,omitempty"`
+	Delta        *streamDelta   `json:"delta,omitempty"`
+	MessageDelta *messageDelta  `json:"message_delta,omitempty"`
+	Message      *messageStart  `json:"message,omitempty"`
 }
 
 type streamDelta struct {
-	Type       string `json:"type,omitempty"`
-	Text       string `json:"text,omitempty"`
-	StopReason string `json:"stop_reason,omitempty"`
+	Type  string `json:"type,omitempty"`
+	Text  string `json:"text,omitempty"`
+	// For tool_use: partial JSON input string
+	PartialJSON string `json:"partial_json,omitempty"`
+}
+
+type messageDelta struct {
+	StopReason string      `json:"stop_reason,omitempty"`
+	Usage      deltaUsage  `json:"usage,omitempty"`
+}
+
+type deltaUsage struct {
+	OutputTokens int `json:"output_tokens"`
+}
+
+type messageStart struct {
+	ID      string `json:"id"`
+	Model   string `json:"model"`
+	Usage   usage  `json:"usage"`
 }

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -162,8 +163,21 @@ func (p *Provider) toProviderResponse(resp *messagesResponse) *cobot.ProviderRes
 	}
 }
 
+const maxScannerBuffer = 256 * 1024 // 256KB
+
+// pendingToolCall tracks incremental assembly of a tool_use block across stream events.
+type pendingToolCall struct {
+	ID   string
+	Name string
+	Args strings.Builder
+}
+
 func (p *Provider) readStream(body io.ReadCloser, ch chan<- cobot.ProviderChunk) {
+	pending := make(map[int]*pendingToolCall)
+
 	scanner := bufio.NewScanner(body)
+	scanner.Buffer(make([]byte, 4096), maxScannerBuffer)
+
 	for scanner.Scan() {
 		line := scanner.Text()
 		if !strings.HasPrefix(line, "data: ") {
@@ -174,13 +188,65 @@ func (p *Provider) readStream(body io.ReadCloser, ch chan<- cobot.ProviderChunk)
 		if err := json.Unmarshal([]byte(data), &evt); err != nil {
 			continue
 		}
-		if evt.Delta != nil && evt.Delta.Text != "" {
-			ch <- cobot.ProviderChunk{Content: evt.Delta.Text}
-		}
-		if evt.Delta != nil && evt.Delta.StopReason != "" {
-			ch <- cobot.ProviderChunk{Done: true}
+
+		switch evt.Type {
+		case "content_block_start":
+			if evt.ContentBlock != nil && evt.ContentBlock.Type == "tool_use" {
+				pending[evt.Index] = &pendingToolCall{
+					ID:   evt.ContentBlock.ID,
+					Name: evt.ContentBlock.Name,
+				}
+			}
+
+		case "content_block_delta":
+			if evt.Delta != nil {
+				if evt.Delta.Text != "" {
+					ch <- cobot.ProviderChunk{Content: evt.Delta.Text}
+				}
+				if evt.Delta.PartialJSON != "" {
+					if ptc, ok := pending[evt.Index]; ok {
+						ptc.Args.WriteString(evt.Delta.PartialJSON)
+					}
+				}
+			}
+
+		case "message_delta":
+			if evt.MessageDelta != nil {
+				if evt.MessageDelta.StopReason == "tool_use" {
+					// Emit assembled tool calls in index order.
+					indices := sortedMapKeys(pending)
+					for _, idx := range indices {
+						ptc := pending[idx]
+						ch <- cobot.ProviderChunk{
+							ToolCall: &cobot.ToolCall{
+								ID:        ptc.ID,
+								Name:      ptc.Name,
+								Arguments: json.RawMessage(ptc.Args.String()),
+							},
+						}
+					}
+				}
+				ch <- cobot.ProviderChunk{Done: true}
+			}
+
+		case "message_stop":
 			return
 		}
 	}
-	ch <- cobot.ProviderChunk{Done: true}
+
+	if err := scanner.Err(); err != nil {
+		ch <- cobot.ProviderChunk{
+			Content: fmt.Sprintf("[stream error: %v]", err),
+			Done:    true,
+		}
+	}
+}
+
+func sortedMapKeys(m map[int]*pendingToolCall) []int {
+	keys := make([]int, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Ints(keys)
+	return keys
 }
