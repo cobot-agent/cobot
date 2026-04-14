@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -113,6 +114,9 @@ func TestExecutorToolAndPromptBothSet(t *testing.T) {
 }
 
 func TestExecutorScriptToolFallback(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script execution not supported on Windows")
+	}
 	tmpDir, err := os.MkdirTemp("", "skill-test")
 	if err != nil {
 		t.Fatal(err)
