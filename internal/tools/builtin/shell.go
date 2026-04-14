@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	cobot "github.com/cobot-agent/cobot/pkg"
@@ -97,10 +98,26 @@ func (t *ShellExecTool) Execute(ctx context.Context, args json.RawMessage) (stri
 		}
 	}
 	cmd := exec.CommandContext(ctx, "sh", "-c", a.Command)
-	if t.workdir != "" {
+	if a.Dir != "" {
+		if t.workdir != "" {
+			absDir, err := filepath.Abs(a.Dir)
+			if err != nil {
+				return "", fmt.Errorf("resolve dir: %w", err)
+			}
+			absWorkdir, err := filepath.Abs(t.workdir)
+			if err != nil {
+				return "", fmt.Errorf("resolve workdir: %w", err)
+			}
+			rel, err := filepath.Rel(absWorkdir, absDir)
+			if err != nil || strings.HasPrefix(rel, "..") {
+				return "", fmt.Errorf("dir %q is outside workspace boundaries", a.Dir)
+			}
+			cmd.Dir = absDir
+		} else {
+			cmd.Dir = a.Dir
+		}
+	} else if t.workdir != "" {
 		cmd.Dir = t.workdir
-	} else if a.Dir != "" {
-		cmd.Dir = a.Dir
 	}
 	out, err := cmd.CombinedOutput()
 	if err != nil {

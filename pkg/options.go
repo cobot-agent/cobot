@@ -106,8 +106,17 @@ func (s *SandboxConfig) IsAllowed(path string, write bool) bool {
 }
 
 func (s *SandboxConfig) IsBlockedCommand(cmd string) bool {
+	fields := strings.Fields(cmd)
+	if len(fields) == 0 {
+		return false
+	}
+	baseCmd := filepath.Base(fields[0])
 	for _, blocked := range s.BlockedCommands {
-		if strings.Contains(cmd, blocked) {
+		if baseCmd == blocked || cmd == blocked || strings.HasPrefix(cmd, blocked+" ") {
+			return true
+		}
+		if strings.Contains(cmd, "|"+blocked) || strings.Contains(cmd, ";"+blocked) ||
+			strings.Contains(cmd, "$("+blocked) || strings.Contains(cmd, "`"+blocked) {
 			return true
 		}
 	}
