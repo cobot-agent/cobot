@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/signal"
 
 	"github.com/spf13/cobra"
 
@@ -41,7 +42,10 @@ var chatCmd = &cobra.Command{
 			return err
 		}
 
-		ch, err := agt.Stream(context.Background(), args[0])
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+		defer cancel()
+
+		ch, err := agt.Stream(ctx, args[0])
 		if err != nil {
 			return err
 		}
