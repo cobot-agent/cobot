@@ -94,6 +94,7 @@ func ServeMemoryDaemon(ctx context.Context, dataDir string) error {
 	if err != nil {
 		return fmt.Errorf("listen: %w", err)
 	}
+	defer os.Remove(socketPath)
 	os.Chmod(socketPath, 0600)
 
 	slog.Info("memoryd: listening", "socket", socketPath)
