@@ -243,6 +243,7 @@ func (p *Provider) readStream(body io.ReadCloser, ch chan<- cobot.ProviderChunk)
 			}
 
 		case "message_stop":
+			ch <- cobot.ProviderChunk{Done: true}
 			return
 		}
 	}

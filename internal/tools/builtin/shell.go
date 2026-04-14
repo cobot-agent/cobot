@@ -114,13 +114,18 @@ func (t *ShellExecTool) Execute(ctx context.Context, args json.RawMessage) (stri
 	cmd := exec.CommandContext(ctx, "sh", "-c", a.Command)
 	if a.Dir != "" {
 		if t.workdir != "" {
-			absDir, err := filepath.Abs(a.Dir)
-			if err != nil {
-				return "", fmt.Errorf("resolve dir: %w", err)
-			}
 			absWorkdir, err := filepath.Abs(t.workdir)
 			if err != nil {
 				return "", fmt.Errorf("resolve workdir: %w", err)
+			}
+			absDir := absWorkdir
+			if filepath.IsAbs(a.Dir) {
+				absDir = a.Dir
+			} else {
+				absDir = filepath.Join(absWorkdir, a.Dir)
+				if absDir, err = filepath.Abs(absDir); err != nil {
+					return "", fmt.Errorf("resolve dir: %w", err)
+				}
 			}
 			rel, err := filepath.Rel(absWorkdir, absDir)
 			if err != nil || strings.HasPrefix(rel, "..") {

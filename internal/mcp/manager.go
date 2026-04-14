@@ -156,13 +156,11 @@ func (m *MCPManager) ToolAdapters(ctx context.Context, serverName string) ([]*MC
 }
 
 func (m *MCPManager) connectSSE(ctx context.Context, entry *RegistryEntry) (*mcp.ClientSession, error) {
-	// Use transport-level timeouts only — Client.Timeout would kill long-lived SSE streams.
+	base := *http.DefaultTransport.(*http.Transport)
+	base.TLSHandshakeTimeout = 30 * time.Second
+	base.ResponseHeaderTimeout = 30 * time.Second
 	transport := &headerTransport{
-		base: &http.Transport{
-			// Keep-alive and TLS handshake timeouts for connection setup.
-			TLSHandshakeTimeout:   30 * time.Second,
-			ResponseHeaderTimeout: 30 * time.Second,
-		},
+		base:    &base,
 		headers: entry.Headers,
 	}
 	httpClient := &http.Client{Transport: transport}

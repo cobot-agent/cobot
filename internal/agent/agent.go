@@ -121,17 +121,22 @@ func (a *Agent) Provider() cobot.Provider {
 func (a *Agent) deriveCtx(ctx context.Context) context.Context {
 	derived, derivedCancel := context.WithCancel(a.agentCtx)
 
-	merged, mergedCancel := context.WithCancel(derived)
+	if ctx.Err() != nil {
+		derivedCancel()
+	} else {
+		context.AfterFunc(ctx, derivedCancel)
+	}
 
+	if a.agentCtx.Err() != nil {
+		derivedCancel()
+	} else {
+		context.AfterFunc(a.agentCtx, derivedCancel)
+	}
+
+	merged, mergedCancel := context.WithCancel(derived)
 	go func() {
-		select {
-		case <-ctx.Done():
-			derivedCancel()
-			mergedCancel()
-		case <-a.agentCtx.Done():
-		case <-merged.Done():
-			derivedCancel()
-		}
+		<-derived.Done()
+		mergedCancel()
 	}()
 
 	return merged

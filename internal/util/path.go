@@ -51,5 +51,5 @@ func IsSubpath(path, base string) bool {
 	if err != nil {
 		return false
 	}
-	return !strings.HasPrefix(rel, "..")
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }

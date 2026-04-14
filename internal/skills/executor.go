@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/cobot-agent/cobot/internal/agent"
+	"github.com/cobot-agent/cobot/internal/util"
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
@@ -121,9 +123,16 @@ func (e *Executor) executeScriptTool(ctx context.Context, step Step, skill *Skil
 
 	var scriptPath string
 	if skill.Dir != "" {
-		scriptPath = fmt.Sprintf("%s/scripts/%s", skill.Dir, fileName)
+		scriptPath = filepath.Join(skill.Dir, "scripts", fileName)
 	} else {
 		scriptPath = fileName
+	}
+	scriptPath = filepath.Clean(scriptPath)
+	if skill.Dir != "" {
+		scriptsDir := filepath.Join(skill.Dir, "scripts")
+		if !util.IsSubpath(scriptPath, scriptsDir) {
+			return "", fmt.Errorf("script step: script path %q escapes scripts directory", fileName)
+		}
 	}
 
 	// Verify the script file exists and is executable.
@@ -138,10 +147,11 @@ func (e *Executor) executeScriptTool(ctx context.Context, step Step, skill *Skil
 		return "", fmt.Errorf("script step: %s is a directory, not a script file", scriptPath)
 	}
 
-	// Build command arguments: pass remaining args (excluding "file") as CLI args.
+	// Build command arguments: pass remaining args (excluding "file" and "input") as CLI args.
+	// Input is passed via stdin only, not duplicated in CLI args.
 	var cmdArgs []string
 	for k, v := range args {
-		if k == "file" {
+		if k == "file" || k == "input" {
 			continue
 		}
 		cmdArgs = append(cmdArgs, fmt.Sprintf("--%s=%v", k, v))

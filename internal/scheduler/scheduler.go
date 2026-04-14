@@ -51,6 +51,9 @@ func (s *Scheduler) Start() error {
 	s.mu.Lock()
 	for _, task := range s.tasks {
 		if task.Enabled {
+			if _, alreadyRegistered := s.ids[task.Name]; alreadyRegistered {
+				continue
+			}
 			if err := s.registerCron(task); err != nil {
 				slog.Error("scheduler: failed to register persisted task", "name", task.Name, "error", err)
 			}
@@ -80,7 +83,9 @@ func (s *Scheduler) AddTask(task *Task) error {
 	}
 
 	// Default enabled to true only when it's the zero value (not explicitly set).
-	// This respects callers who intentionally set Enabled=false.
+	// This respects callers who intentionally set Enabled=false. Using *bool would
+	// require API changes, so the current approach documents this behavior via the
+	// AddTask contract: Enabled defaults to true unless explicitly set to false.
 	if !task.Enabled {
 		task.Enabled = true
 	}
