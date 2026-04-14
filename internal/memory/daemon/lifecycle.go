@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
-	"syscall"
 	"time"
 
 	"github.com/cobot-agent/cobot/internal/memory"
@@ -55,7 +54,7 @@ func startDaemon(dataDir string) error {
 	}
 
 	cmd := exec.Command(binary, "memoryd", "--data", dataDir)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.SysProcAttr = sysProcAttr()
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 
