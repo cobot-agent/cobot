@@ -116,7 +116,7 @@ type ProviderConfig struct {
 
 func DefaultConfig() *Config {
 	return &Config{
-		MaxTurns: 50,
+		MaxTurns: util.DefaultMaxTurns,
 		Model:    "openai:gpt-4o",
 		APIKeys:  make(map[string]string),
 		Memory: MemoryConfig{

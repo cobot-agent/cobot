@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/cobot-agent/cobot/internal/util"
 )
 
 type AgentConfig struct {
@@ -42,7 +44,7 @@ func LoadAgentConfig(path string) (*AgentConfig, error) {
 	}
 
 	if cfg.MaxTurns == 0 {
-		cfg.MaxTurns = 50
+		cfg.MaxTurns = util.DefaultMaxTurns
 	}
 
 	return cfg, nil

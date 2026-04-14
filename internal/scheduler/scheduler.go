@@ -13,11 +13,11 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/cobot-agent/cobot/internal/agent"
+	"github.com/cobot-agent/cobot/internal/util"
 )
 
 const (
-	tasksFile    = "tasks.yaml"
-	historyLimit = 100
+	tasksFile = "tasks.yaml"
 )
 
 type Scheduler struct {
@@ -71,77 +71,94 @@ func (s *Scheduler) Stop() context.Context {
 
 func (s *Scheduler) AddTask(task *Task) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
-	// Check both ids and tasks to avoid duplicates after loadTasks
-	// (loadTasks populates s.tasks but not s.ids before Start).
 	if _, exists := s.ids[task.Name]; exists {
+		s.mu.Unlock()
 		return fmt.Errorf("task %q already exists", task.Name)
 	}
 	if _, exists := s.tasks[task.Name]; exists {
+		s.mu.Unlock()
 		return fmt.Errorf("task %q already exists", task.Name)
 	}
 
-	// Default enabled to true when not explicitly set. Since Go's bool zero
-	// value is false, callers who want to add a disabled task should set
-	// Enabled=true and then call DisableTask, or the caller can leave Enabled
-	// at its zero value to get the default (enabled) behavior.
 	if !task.Enabled {
 		task.Enabled = true
 	}
 
 	if err := s.registerCron(task); err != nil {
+		s.mu.Unlock()
 		return err
 	}
 
 	s.tasks[task.Name] = task
-	s.persistTasks()
+
+	tasks := s.snapshotTasks()
+	s.mu.Unlock()
+
+	if err := s.persistTasks(tasks); err != nil {
+		slog.Error("scheduler: failed to persist tasks", "error", err)
+	}
 	return nil
 }
 
 func (s *Scheduler) RemoveTask(name string) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	id, ok := s.ids[name]
 	if !ok {
+		s.mu.Unlock()
 		return fmt.Errorf("task %q not found", name)
 	}
 	s.cron.Remove(id)
 	delete(s.ids, name)
 	delete(s.tasks, name)
-	s.persistTasks()
+
+	tasks := s.snapshotTasks()
+	s.mu.Unlock()
+
+	if err := s.persistTasks(tasks); err != nil {
+		slog.Error("scheduler: failed to persist tasks", "error", err)
+	}
 	return nil
 }
 
 func (s *Scheduler) EnableTask(name string) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	task, ok := s.tasks[name]
 	if !ok {
+		s.mu.Unlock()
 		return fmt.Errorf("task %q not found", name)
 	}
 	if task.Enabled {
-		return nil // already enabled
+		s.mu.Unlock()
+		return nil
 	}
 	if err := s.registerCron(task); err != nil {
+		s.mu.Unlock()
 		return err
 	}
 	task.Enabled = true
-	s.persistTasks()
+
+	tasks := s.snapshotTasks()
+	s.mu.Unlock()
+
+	if err := s.persistTasks(tasks); err != nil {
+		slog.Error("scheduler: failed to persist tasks", "error", err)
+	}
 	return nil
 }
 
 func (s *Scheduler) DisableTask(name string) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	task, ok := s.tasks[name]
 	if !ok {
+		s.mu.Unlock()
 		return fmt.Errorf("task %q not found", name)
 	}
 	if !task.Enabled {
+		s.mu.Unlock()
 		return nil
 	}
 	if id, hasID := s.ids[name]; hasID {
@@ -149,7 +166,13 @@ func (s *Scheduler) DisableTask(name string) error {
 		delete(s.ids, name)
 	}
 	task.Enabled = false
-	s.persistTasks()
+
+	tasks := s.snapshotTasks()
+	s.mu.Unlock()
+
+	if err := s.persistTasks(tasks); err != nil {
+		slog.Error("scheduler: failed to persist tasks", "error", err)
+	}
 	return nil
 }
 
@@ -231,35 +254,37 @@ func (s *Scheduler) recordResult(r TaskResult) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.history = append(s.history, r)
-	if len(s.history) > historyLimit {
-		s.history = s.history[len(s.history)-historyLimit:]
+	if len(s.history) > util.HistoryLimit {
+		s.history = s.history[len(s.history)-util.HistoryLimit:]
 	}
 }
 
 // --- persistence ---
 
-func (s *Scheduler) persistTasks() {
-	// Caller must hold s.mu.
-	if s.dir == "" {
-		return
-	}
-	if err := os.MkdirAll(s.dir, 0755); err != nil {
-		slog.Error("scheduler: create scheduler dir", "error", err)
-		return
-	}
+func (s *Scheduler) snapshotTasks() []*Task {
 	tasks := make([]*Task, 0, len(s.tasks))
 	for _, t := range s.tasks {
 		tasks = append(tasks, t)
 	}
+	return tasks
+}
+
+func (s *Scheduler) persistTasks(tasks []*Task) error {
+	if s.dir == "" {
+		return nil
+	}
+	if err := os.MkdirAll(s.dir, 0755); err != nil {
+		return fmt.Errorf("create scheduler dir: %w", err)
+	}
 	data, err := yaml.Marshal(tasks)
 	if err != nil {
-		slog.Error("scheduler: marshal tasks", "error", err)
-		return
+		return fmt.Errorf("marshal tasks: %w", err)
 	}
 	path := filepath.Join(s.dir, tasksFile)
 	if err := os.WriteFile(path, data, 0644); err != nil {
-		slog.Error("scheduler: persist tasks", "error", err)
+		return fmt.Errorf("persist tasks: %w", err)
 	}
+	return nil
 }
 
 func (s *Scheduler) loadTasks() error {

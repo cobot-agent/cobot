@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
 
@@ -21,7 +22,7 @@ type ServerConfig struct {
 
 type MCPManager struct {
 	client   *mcp.Client
-	mu       sync.Mutex
+	mu       sync.RWMutex
 	sessions map[string]*mcp.ClientSession
 	configs  map[string]ServerConfig
 }
@@ -79,9 +80,9 @@ func (m *MCPManager) Disconnect(ctx context.Context, name string) error {
 }
 
 func (m *MCPManager) ListTools(ctx context.Context, name string) ([]*mcp.Tool, error) {
-	m.mu.Lock()
+	m.mu.RLock()
 	session, exists := m.sessions[name]
-	m.mu.Unlock()
+	m.mu.RUnlock()
 
 	if !exists {
 		return nil, fmt.Errorf("server %q not connected", name)
@@ -96,9 +97,9 @@ func (m *MCPManager) ListTools(ctx context.Context, name string) ([]*mcp.Tool, e
 }
 
 func (m *MCPManager) CallTool(ctx context.Context, serverName, toolName string, args json.RawMessage) (string, error) {
-	m.mu.Lock()
+	m.mu.RLock()
 	session, exists := m.sessions[serverName]
-	m.mu.Unlock()
+	m.mu.RUnlock()
 
 	if !exists {
 		return "", fmt.Errorf("server %q not connected", serverName)
@@ -272,16 +273,16 @@ func (m *MCPManager) Close() {
 }
 
 func extractText(contents []mcp.Content) string {
-	var text string
+	var sb strings.Builder
 	for _, content := range contents {
 		if tc, ok := content.(*mcp.TextContent); ok {
-			if text != "" {
-				text += "\n"
+			if sb.Len() > 0 {
+				sb.WriteString("\n")
 			}
-			text += tc.Text
+			sb.WriteString(tc.Text)
 		}
 	}
-	return text
+	return sb.String()
 }
 
 type headerTransport struct {

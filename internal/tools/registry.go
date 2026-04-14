@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
 
 	cobot "github.com/cobot-agent/cobot/pkg"
@@ -44,6 +45,7 @@ func (r *Registry) ToolDefs() []cobot.ToolDef {
 			Parameters:  t.Parameters(),
 		})
 	}
+	sort.Slice(defs, func(i, j int) bool { return defs[i].Name < defs[j].Name })
 	return defs
 }
 

@@ -7,13 +7,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
-	"sort"
 	"strings"
 	"time"
 
 	"github.com/cobot-agent/cobot/internal/debug"
+	"github.com/cobot-agent/cobot/internal/llm/httputil"
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
@@ -25,18 +24,6 @@ type Provider struct {
 
 var _ cobot.Provider = (*Provider)(nil)
 
-// defaultTransport provides sensible timeouts for LLM API calls:
-// connection + TLS are bounded, but no overall response-body timeout
-// so long streaming responses are not interrupted.
-var defaultTransport = &http.Transport{
-	DialContext: (&net.Dialer{
-		Timeout:   30 * time.Second,
-		KeepAlive: 30 * time.Second,
-	}).DialContext,
-	TLSHandshakeTimeout:   10 * time.Second,
-	ResponseHeaderTimeout: 2 * time.Minute,
-}
-
 func NewProvider(apiKey, baseURL string) *Provider {
 	baseURL = strings.TrimRight(baseURL, "/")
 	if baseURL == "" {
@@ -45,7 +32,7 @@ func NewProvider(apiKey, baseURL string) *Provider {
 	return &Provider{
 		apiKey:  apiKey,
 		baseURL: baseURL,
-		client:  &http.Client{Transport: defaultTransport},
+		client:  &http.Client{Transport: httputil.DefaultTransport},
 	}
 }
 
@@ -155,12 +142,13 @@ func (p *Provider) doRequest(ctx context.Context, body messagesRequest) (io.Read
 }
 
 func (p *Provider) toProviderResponse(resp *messagesResponse) *cobot.ProviderResponse {
-	var content string
+	var sb strings.Builder
 	for _, block := range resp.Content {
 		if block.Type == "text" {
-			content += block.Text
+			sb.WriteString(block.Text)
 		}
 	}
+	content := sb.String()
 	stopReason := cobot.StopEndTurn
 	if resp.StopReason == "max_tokens" {
 		stopReason = cobot.StopMaxTokens
@@ -227,7 +215,7 @@ func (p *Provider) readStream(body io.ReadCloser, ch chan<- cobot.ProviderChunk)
 			if evt.MessageDelta != nil {
 				if evt.MessageDelta.StopReason == "tool_use" {
 					// Emit assembled tool calls in index order.
-					indices := sortedMapKeys(pending)
+					indices := httputil.SortedMapKeys(pending)
 					for _, idx := range indices {
 						ptc := pending[idx]
 						ch <- cobot.ProviderChunk{
@@ -254,13 +242,4 @@ func (p *Provider) readStream(body io.ReadCloser, ch chan<- cobot.ProviderChunk)
 			Done:    true,
 		}
 	}
-}
-
-func sortedMapKeys(m map[int]*pendingToolCall) []int {
-	keys := make([]int, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Ints(keys)
-	return keys
 }

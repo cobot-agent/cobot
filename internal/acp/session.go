@@ -2,10 +2,10 @@ package acp
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"sync"
 	"time"
+
+	"github.com/cobot-agent/cobot/internal/util"
 )
 
 const SessionTTL = 30 * time.Minute
@@ -90,9 +90,5 @@ func (s *SessionStore) RemoveAll() {
 }
 
 func newSessionID() string {
-	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		panic("crypto/rand: " + err.Error())
-	}
-	return "sess_" + hex.EncodeToString(b)
+	return "sess_" + util.GenerateID()
 }
