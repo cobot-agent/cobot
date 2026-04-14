@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -59,8 +60,9 @@ func TestShellExecTool(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	result = strings.ReplaceAll(result, "\r\n", "\n")
 	if result != "hello\n" {
-		t.Errorf("expected 'hello\\n', got %q", result)
+		t.Errorf("expected %q, got %q", "hello\n", result)
 	}
 }
 
@@ -71,7 +73,8 @@ func TestShellExecToolMultiArg(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	result = strings.ReplaceAll(result, "\r\n", "\n")
 	if result != "hello world\n" {
-		t.Errorf("expected 'hello world\\n', got %q", result)
+		t.Errorf("expected %q, got %q", "hello world\n", result)
 	}
 }
