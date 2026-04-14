@@ -71,17 +71,37 @@ func (c *Coordinator) Gather(ctx context.Context, ids []string) []*Result {
 func (c *Coordinator) CancelAll() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	for _, sa := range c.subagents {
+	for id, sa := range c.subagents {
 		select {
 		case <-sa.Done():
 		default:
 			sa.close()
+		}
+		delete(c.subagents, id)
+	}
+}
+
+func (c *Coordinator) Remove(id string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.subagents, id)
+}
+
+func (c *Coordinator) Cleanup() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for id, sa := range c.subagents {
+		select {
+		case <-sa.Done():
+			delete(c.subagents, id)
+		default:
 		}
 	}
 }
 
 func (c *Coordinator) run(ctx context.Context, sa *SubAgent) {
 	defer sa.close()
+	defer c.Remove(sa.ID)
 
 	start := time.Now()
 	timeout := sa.config.Timeout
