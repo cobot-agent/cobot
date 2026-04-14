@@ -29,12 +29,20 @@ func (a *Agent) getSystemPrompt(ctx context.Context) string {
 		return defaultPrompt
 	}
 
+	// Double-check locking: acquire write lock and re-check to avoid
+	// redundant WakeUp calls from concurrent cache misses.
+	a.sysPromptMu.Lock()
+	if a.systemPrompt != "" {
+		a.sysPromptMu.Unlock()
+		return a.systemPrompt
+	}
+
 	wakeUp, err := a.memoryStore.WakeUp(ctx)
 	if err != nil || wakeUp == "" {
+		a.sysPromptMu.Unlock()
 		return defaultPrompt
 	}
 
-	a.sysPromptMu.Lock()
 	a.systemPrompt = wakeUp
 	a.sysPromptMu.Unlock()
 
