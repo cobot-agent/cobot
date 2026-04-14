@@ -83,7 +83,7 @@ type Event struct {
 	Content  string    `json:"content,omitempty"`
 	ToolCall *ToolCall `json:"tool_call,omitempty"`
 	Done     bool      `json:"done"`
-	Error    error     `json:"-"`
+	Error    string    `json:"error,omitempty"`
 }
 
 type EventType string

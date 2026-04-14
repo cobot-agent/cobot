@@ -45,7 +45,7 @@ type streamMsg struct {
 	eventType cobot.EventType
 	toolName  string
 	done      bool
-	err       error
+	err       string
 }
 
 var (
@@ -178,7 +178,7 @@ func (m *tuiModel) startStream(text string) tea.Cmd {
 	ch, err := m.agent.Stream(ctx, text)
 	if err != nil {
 		cancel()
-		return func() tea.Msg { return streamMsg{err: err} }
+		return func() tea.Msg { return streamMsg{err: err.Error()} }
 	}
 	m.streamCh = ch
 	m.refreshViewport()
@@ -215,11 +215,11 @@ func (m tuiModel) readNextEvent() tea.Cmd {
 }
 
 func (m tuiModel) handleStreamMsg(msg streamMsg) (tea.Model, tea.Cmd) {
-	if msg.err != nil {
+	if msg.err != "" {
 		m.streaming = false
 		m.streamCancel = nil
 		m.streamCh = nil
-		m.messages = append(m.messages, chatMessage{role: "error", raw: msg.err.Error()})
+		m.messages = append(m.messages, chatMessage{role: "error", raw: msg.err})
 		m.renderLastAssistant()
 		m.refreshViewport()
 		return m, m.drainPending()

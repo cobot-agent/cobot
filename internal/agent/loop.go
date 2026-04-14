@@ -87,7 +87,7 @@ func (a *Agent) Stream(ctx context.Context, message string) (<-chan cobot.Event,
 			streamCh, err := a.provider.Stream(ctx, req)
 			if err != nil {
 				debug.Error("provider.stream", err)
-				ch <- cobot.Event{Type: cobot.EventError, Error: err}
+				ch <- cobot.Event{Type: cobot.EventError, Error: err.Error()}
 				return
 			}
 
@@ -96,7 +96,7 @@ func (a *Agent) Stream(ctx context.Context, message string) (<-chan cobot.Event,
 			for chunk := range streamCh {
 				select {
 				case <-ctx.Done():
-					ch <- cobot.Event{Type: cobot.EventError, Error: ctx.Err()}
+					ch <- cobot.Event{Type: cobot.EventError, Error: ctx.Err().Error()}
 					return
 				default:
 				}
@@ -128,7 +128,7 @@ func (a *Agent) Stream(ctx context.Context, message string) (<-chan cobot.Event,
 		}
 
 		debug.Log("agent", "max turns exceeded", "turns", a.config.MaxTurns)
-		ch <- cobot.Event{Type: cobot.EventError, Error: cobot.ErrMaxTurnsExceeded}
+		ch <- cobot.Event{Type: cobot.EventError, Error: cobot.ErrMaxTurnsExceeded.Error()}
 	}()
 
 	return ch, nil
