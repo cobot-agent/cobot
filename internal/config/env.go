@@ -1,7 +1,7 @@
 package config
 
 import (
-	"fmt"
+	"log/slog"
 	"os"
 	"regexp"
 	"strings"
@@ -14,7 +14,7 @@ func ExpandEnvVars(s string) string {
 		varName := strings.Trim(match, "${}")
 		val, ok := os.LookupEnv(varName)
 		if !ok {
-			fmt.Printf("config: warning: environment variable %s is not set, keeping placeholder %s\n", varName, match)
+			slog.Warn("config: environment variable not set", "var", varName, "placeholder", match)
 			return match // keep original ${VAR} instead of silently replacing with ""
 		}
 		return val
