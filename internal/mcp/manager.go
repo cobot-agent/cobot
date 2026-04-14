@@ -157,11 +157,11 @@ func (m *MCPManager) ToolAdapters(ctx context.Context, serverName string) ([]*MC
 }
 
 func (m *MCPManager) connectSSE(ctx context.Context, entry *RegistryEntry) (*mcp.ClientSession, error) {
-	base := *http.DefaultTransport.(*http.Transport)
+	base := http.DefaultTransport.(*http.Transport).Clone()
 	base.TLSHandshakeTimeout = 30 * time.Second
 	base.ResponseHeaderTimeout = 30 * time.Second
 	transport := &headerTransport{
-		base:    &base,
+		base:    base,
 		headers: entry.Headers,
 	}
 	httpClient := &http.Client{Transport: transport}
