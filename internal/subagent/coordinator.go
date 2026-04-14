@@ -145,6 +145,11 @@ func (c *Coordinator) run(ctx context.Context, sa *SubAgent) {
 		childAgent.SetProvider(c.parent.Provider())
 	}
 
+	// Share parent's memory store when ShareMemory is enabled
+	if sa.config.ShareMemory && c.parent.MemoryStore() != nil {
+		childAgent.SetMemoryStore(c.parent.MemoryStore())
+	}
+
 	resp, err := childAgent.Prompt(subCtx, sa.config.Task)
 	duration := time.Since(start)
 

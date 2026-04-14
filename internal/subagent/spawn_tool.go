@@ -15,6 +15,7 @@ type subagentSpawnArgs struct {
 	Tools          []string `json:"tools,omitempty"`
 	MaxTurns       int      `json:"max_turns,omitempty"`
 	TimeoutSeconds int      `json:"timeout_seconds,omitempty"`
+	ShareMemory    bool     `json:"share_memory,omitempty"`
 }
 
 type SpawnTool struct {
@@ -30,7 +31,7 @@ func (t *SpawnTool) Description() string {
 	return "Spawn a sub-agent to handle a task independently"
 }
 func (t *SpawnTool) Parameters() json.RawMessage {
-	return json.RawMessage(`{"type":"object","properties":{"task":{"type":"string","description":"The task for the sub-agent"},"model":{"type":"string","description":"Model override (optional)"},"tools":{"type":"array","items":{"type":"string"},"description":"Subset of tool names (optional, empty=all)"},"max_turns":{"type":"integer","description":"Max tool-calling turns (default 5)"},"timeout_seconds":{"type":"integer","description":"Timeout in seconds (default 300)"}},"required":["task"]}`)
+	return json.RawMessage(`{"type":"object","properties":{"task":{"type":"string","description":"The task for the sub-agent"},"model":{"type":"string","description":"Model override (optional)"},"tools":{"type":"array","items":{"type":"string"},"description":"Subset of tool names (optional, empty=all)"},"max_turns":{"type":"integer","description":"Max tool-calling turns (default 5)"},"timeout_seconds":{"type":"integer","description":"Timeout in seconds (default 300)"},"share_memory":{"type":"boolean","description":"If true, sub-agent can read parent's memory store (default false)"}},"required":["task"]}`)
 }
 
 func (t *SpawnTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
@@ -49,11 +50,12 @@ func (t *SpawnTool) Execute(ctx context.Context, args json.RawMessage) (string, 
 	}
 
 	sa, err := t.coordinator.Spawn(ctx, &Config{
-		Task:      a.Task,
-		Model:     a.Model,
-		ToolNames: a.Tools,
-		MaxTurns:  maxTurns,
-		Timeout:   timeout,
+		Task:        a.Task,
+		Model:       a.Model,
+		ToolNames:   a.Tools,
+		MaxTurns:    maxTurns,
+		Timeout:     timeout,
+		ShareMemory: a.ShareMemory,
 	})
 	if err != nil {
 		return "", err
