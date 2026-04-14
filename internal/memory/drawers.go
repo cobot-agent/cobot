@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	cobot "github.com/cobot-agent/cobot/pkg"
@@ -47,7 +48,19 @@ func (s *Store) GetDrawer(ctx context.Context, id string) (*cobot.Drawer, error)
 }
 
 func (s *Store) DeleteDrawer(ctx context.Context, id string) error {
-	return s.db.Update(func(txn *badger.Txn) error {
+	// Delete from Badger
+	err := s.db.Update(func(txn *badger.Txn) error {
 		return txn.Delete([]byte(prefixDrawer + id))
 	})
+	if err != nil {
+		return fmt.Errorf("badger delete: %w", err)
+	}
+	// Delete from Bleve index to keep search in sync
+	if s.bleveIdx != nil {
+		if ierr := s.bleveIdx.Delete(id); ierr != nil {
+			// Log but don't fail — Bleve out-of-sync is recoverable
+			fmt.Printf("memory: bleve delete for %s: %v\n", id, ierr)
+		}
+	}
+	return nil
 }
