@@ -15,6 +15,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const maxPersonaSize = 64 * 1024 // 64 KB
+
 type WorkspaceConfigUpdateTool struct {
 	workspace *workspace.Workspace
 }
@@ -160,6 +162,10 @@ func (t *PersonaUpdateTool) Execute(ctx context.Context, args json.RawMessage) (
 	var a personaUpdateArgs
 	if err := json.Unmarshal(args, &a); err != nil {
 		return "", fmt.Errorf("parse arguments: %w", err)
+	}
+
+	if len(a.Content) > maxPersonaSize {
+		return "", fmt.Errorf("content exceeds maximum size of %d bytes", maxPersonaSize)
 	}
 
 	var path string
