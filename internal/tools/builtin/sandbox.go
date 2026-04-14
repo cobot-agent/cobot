@@ -15,37 +15,49 @@ type WorkspaceSandbox struct {
 	ReadonlyPaths []string
 }
 
+func evalSymlinks(path string) string {
+	realPath, err := filepath.EvalSymlinks(path)
+	if err == nil {
+		return realPath
+	}
+	dir := filepath.Dir(path)
+	tail := filepath.Base(path)
+	for len(dir) > 0 && dir != "/" {
+		realDir, err := filepath.EvalSymlinks(dir)
+		if err == nil {
+			return filepath.Join(realDir, tail)
+		}
+		tail = filepath.Base(dir) + "/" + tail
+		dir = filepath.Dir(dir)
+	}
+	return path
+}
+
 func (s *WorkspaceSandbox) IsAllowed(path string, write bool) bool {
 	absPath, err := filepath.Abs(path)
 	if err != nil {
 		return false
 	}
-	realPath, symErr := filepath.EvalSymlinks(absPath)
-	if symErr == nil {
-		absPath = realPath
-	}
+	absPath = evalSymlinks(absPath)
 
 	readonlyMatched := false
 	for _, p := range s.ReadonlyPaths {
 		absP, _ := filepath.Abs(p)
-		realP, symErr := filepath.EvalSymlinks(absP)
-		if symErr == nil {
-			absP = realP
-		}
+		absP = evalSymlinks(absP)
 		if isSubpath(absPath, absP) {
-			readonlyMatched = true
 			if write {
 				return false
 			}
+			readonlyMatched = true
 		}
+	}
+	if readonlyMatched {
+		return true
 	}
 
 	for _, p := range s.AllowPaths {
 		absP, _ := filepath.Abs(p)
-		realP, symErr := filepath.EvalSymlinks(absP)
-		if symErr == nil {
-			absP = realP
-		}
+		absP = evalSymlinks(absP)
 		if isSubpath(absPath, absP) {
 			if readonlyMatched && write {
 				return false
@@ -56,10 +68,7 @@ func (s *WorkspaceSandbox) IsAllowed(path string, write bool) bool {
 
 	if s.Root != "" {
 		absRoot, _ := filepath.Abs(s.Root)
-		realRoot, symErr := filepath.EvalSymlinks(absRoot)
-		if symErr == nil {
-			absRoot = realRoot
-		}
+		absRoot = evalSymlinks(absRoot)
 		if isSubpath(absPath, absRoot) {
 			if readonlyMatched && write {
 				return false

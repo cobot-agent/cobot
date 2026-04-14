@@ -28,15 +28,30 @@ type SandboxConfig struct {
 	BlockedCommands []string `yaml:"blocked_commands,omitempty"`
 }
 
+func evalSymlinks(path string) string {
+	realPath, err := filepath.EvalSymlinks(path)
+	if err == nil {
+		return realPath
+	}
+	dir := filepath.Dir(path)
+	tail := filepath.Base(path)
+	for len(dir) > 0 && dir != "/" {
+		realDir, err := filepath.EvalSymlinks(dir)
+		if err == nil {
+			return filepath.Join(realDir, tail)
+		}
+		tail = filepath.Base(dir) + "/" + tail
+		dir = filepath.Dir(dir)
+	}
+	return path
+}
+
 func (s *SandboxConfig) IsAllowed(path string, write bool) bool {
 	absPath, err := filepath.Abs(path)
 	if err != nil {
 		return false
 	}
-	realPath, symErr := filepath.EvalSymlinks(absPath)
-	if symErr == nil {
-		absPath = realPath
-	}
+	absPath = evalSymlinks(absPath)
 
 	readonlyMatched := false
 	for _, rp := range s.ReadonlyPaths {
@@ -44,10 +59,7 @@ func (s *SandboxConfig) IsAllowed(path string, write bool) bool {
 		if err != nil {
 			continue
 		}
-		realRP, symErr := filepath.EvalSymlinks(absRP)
-		if symErr == nil {
-			absRP = realRP
-		}
+		absRP = evalSymlinks(absRP)
 		rel, err := filepath.Rel(absRP, absPath)
 		if err != nil {
 			continue
@@ -65,10 +77,7 @@ func (s *SandboxConfig) IsAllowed(path string, write bool) bool {
 		if err != nil {
 			continue
 		}
-		realAP, symErr := filepath.EvalSymlinks(absAP)
-		if symErr == nil {
-			absAP = realAP
-		}
+		absAP = evalSymlinks(absAP)
 		rel, err := filepath.Rel(absAP, absPath)
 		if err != nil {
 			continue
@@ -86,10 +95,7 @@ func (s *SandboxConfig) IsAllowed(path string, write bool) bool {
 		if err != nil {
 			return false
 		}
-		realRoot, symErr := filepath.EvalSymlinks(absRoot)
-		if symErr == nil {
-			absRoot = realRoot
-		}
+		absRoot = evalSymlinks(absRoot)
 		rel, err := filepath.Rel(absRoot, absPath)
 		if err != nil {
 			return false
@@ -112,7 +118,7 @@ func (s *SandboxConfig) IsBlockedCommand(cmd string) bool {
 	}
 	baseCmd := filepath.Base(fields[0])
 	for _, blocked := range s.BlockedCommands {
-		if baseCmd == blocked || cmd == blocked || strings.HasPrefix(cmd, blocked+" ") {
+		if baseCmd == blocked || cmd == blocked || strings.HasPrefix(cmd, blocked+" ") || strings.HasPrefix(cmd, blocked) {
 			return true
 		}
 		if strings.Contains(cmd, "|"+blocked) || strings.Contains(cmd, ";"+blocked) ||
