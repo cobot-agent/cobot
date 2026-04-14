@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"fmt"
 	"sync"
 
@@ -22,13 +23,18 @@ type Agent struct {
 	sysPromptMu  sync.RWMutex
 	streamMu     sync.Mutex // serializes concurrent Stream calls
 	streamWg     sync.WaitGroup
+	agentCtx     context.Context
+	agentCancel  context.CancelFunc
 }
 
 func New(config *cobot.Config) *Agent {
+	agentCtx, agentCancel := context.WithCancel(context.Background())
 	return &Agent{
-		config:  config,
-		tools:   tools.NewRegistry(),
-		session: NewSession(),
+		config:      config,
+		tools:       tools.NewRegistry(),
+		session:     NewSession(),
+		agentCtx:    agentCtx,
+		agentCancel: agentCancel,
 	}
 }
 
@@ -109,6 +115,10 @@ func (a *Agent) Provider() cobot.Provider {
 }
 
 func (a *Agent) Close() error {
+	if a.agentCancel != nil {
+		a.agentCancel()
+	}
+	a.streamWg.Wait()
 	if a.memoryAgent != nil {
 		a.memoryAgent.Stop()
 	}
