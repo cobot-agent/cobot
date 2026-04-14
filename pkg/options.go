@@ -51,6 +51,11 @@ func (s *SandboxConfig) IsAllowed(path string, write bool) bool {
 			}
 		}
 	}
+	// If a readonly path matched and this is a read operation, allow access
+	// even if the path is not under Root or AllowPaths.
+	if readonlyMatched && !write {
+		return true
+	}
 
 	for _, ap := range s.AllowPaths {
 		absAP, err := filepath.Abs(ap)

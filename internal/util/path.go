@@ -24,10 +24,13 @@ func EvalSymlinks(path string) string {
 
 	// Walk up the directory tree until we find a resolvable ancestor.
 	for len(dir) > 0 && dir != "/" && dir != "." {
-		// On Windows, also stop at volume root (e.g. "C:\")
+		// On Windows, stop at volume root (e.g. "C:\") and try to resolve it.
 		if runtime.GOOS == "windows" {
 			vol := filepath.VolumeName(dir)
 			if vol != "" && dir == vol+"\\" {
+				if realDir, err := filepath.EvalSymlinks(dir); err == nil {
+					return filepath.Join(realDir, tail)
+				}
 				break
 			}
 		}
