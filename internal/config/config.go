@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -41,7 +42,10 @@ func ApplyEnvVars(cfg *cobot.Config) {
 func LoadWorkspaceConfig(cfg *cobot.Config, workspaceDir string) error {
 	wsConfig := filepath.Join(workspaceDir, ".cobot", "config.yaml")
 	if _, err := os.Stat(wsConfig); err != nil {
-		return nil
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("stat workspace config: %w", err)
 	}
 	return LoadFromFile(cfg, wsConfig)
 }
