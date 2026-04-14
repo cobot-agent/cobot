@@ -43,7 +43,7 @@ var networkCommands = []string{
 
 func NewShellExecTool(opts ...ShellExecToolOption) *ShellExecTool {
 	t := &ShellExecTool{
-		allowNetwork: true,
+		allowNetwork: false,
 	}
 	for _, opt := range opts {
 		opt(t)
