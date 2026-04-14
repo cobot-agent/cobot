@@ -240,17 +240,47 @@ func (ma *Agent) findRelevantMemories(messages []cobot.Message) string {
 	return b.String()
 }
 
+// stopWords contains common English stop words to exclude from keyword extraction.
+var stopWords = map[string]bool{
+	"the": true, "that": true, "this": true, "with": true, "from": true,
+	"have": true, "they": true, "will": true, "what": true, "when": true,
+	"which": true, "their": true, "about": true, "would": true, "could": true,
+	"should": true, "there": true, "these": true, "those": true, "being": true,
+	"some": true, "very": true, "just": true, "than": true, "also": true,
+	"into": true, "more": true, "then": true, "like": true, "know": true,
+	"want": true, "going": true, "think": true, "need": true, "good": true,
+	"really": true, "right": true, "something": true, "because": true,
+	"through": true, "where": true, "after": true, "before": true,
+	"between": true, "under": true, "never": true, "always": true,
+	"often": true, "still": true, "already": true, "while": true,
+	"other": true, "every": true, "since": true, "over": true, "does": true,
+	"much": true, "many": true, "such": true, "only": true, "same": true,
+	"most": true, "your": true, "been": true, "were": true, "said": true,
+	"make": true, "here": true, "well": true, "back": true, "even": true,
+	"down": true,
+}
+
 func (ma *Agent) extractKeywords(messages []cobot.Message) []string {
+	const maxKeywords = 10
+	seen := make(map[string]bool)
 	var keywords []string
+
 	for _, msg := range messages {
-		if msg.Role != cobot.RoleUser {
+		if msg.Role != cobot.RoleUser && msg.Role != cobot.RoleAssistant {
 			continue
 		}
 		words := strings.Fields(msg.Content)
 		for _, w := range words {
-			w = strings.TrimRight(w, ".,!?;:()")
-			if len(w) >= 4 {
-				keywords = append(keywords, w)
+			w = strings.Trim(w, ".,!?;:()\"'")
+			w = strings.ToLower(w)
+			runeLen := len([]rune(w))
+			if runeLen < 3 || stopWords[w] || seen[w] {
+				continue
+			}
+			seen[w] = true
+			keywords = append(keywords, w)
+			if len(keywords) >= maxKeywords {
+				return keywords
 			}
 		}
 	}
