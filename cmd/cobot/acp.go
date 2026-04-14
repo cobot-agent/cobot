@@ -2,9 +2,7 @@ package main
 
 import (
 	"context"
-	"os"
 	"os/signal"
-	"syscall"
 
 	"github.com/spf13/cobra"
 
@@ -39,7 +37,7 @@ var acpServeCmd = &cobra.Command{
 
 		srv := acp.NewACPServer(a, wsMgr)
 
-		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		ctx, stop := signal.NotifyContext(context.Background(), InterruptSignals()...)
 		defer stop()
 
 		return srv.Run(ctx)

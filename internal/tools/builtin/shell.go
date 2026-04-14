@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -112,7 +113,11 @@ func (t *ShellExecTool) Execute(ctx context.Context, args json.RawMessage) (stri
 		ctx, cancel = context.WithTimeout(ctx, t.timeout)
 		defer cancel()
 	}
-	cmd := exec.CommandContext(ctx, "sh", "-c", a.Command)
+	shell, shellFlag := "sh", "-c"
+	if runtime.GOOS == "windows" {
+		shell, shellFlag = "cmd", "/C"
+	}
+	cmd := exec.CommandContext(ctx, shell, shellFlag, a.Command)
 	if a.Dir != "" {
 		if t.workdir != "" {
 			absWorkdir, err := filepath.Abs(t.workdir)

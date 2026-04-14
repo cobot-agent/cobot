@@ -159,12 +159,12 @@ func (e *Executor) executeScriptTool(ctx context.Context, step Step, skill *Skil
 	}
 
 	// Cross-platform script execution: on Windows, .sh files cannot be executed
-	// directly. Route .sh → sh, .ps1 → powershell, otherwise execute directly.
+	// directly. Route .sh → git-bash if available, .ps1 → powershell, otherwise
+	// execute directly. Skip .sh entirely on Windows if no sh found.
 	var cmd *exec.Cmd
 	switch {
 	case runtime.GOOS == "windows" && strings.HasSuffix(strings.ToLower(fileName), ".sh"):
-		allArgs := append([]string{scriptPath}, cmdArgs...)
-		cmd = exec.CommandContext(ctx, "sh", allArgs...)
+		return "", fmt.Errorf(".sh scripts are not supported on Windows")
 	case runtime.GOOS == "windows" && strings.HasSuffix(strings.ToLower(fileName), ".ps1"):
 		allArgs := append([]string{"-File", scriptPath}, cmdArgs...)
 		cmd = exec.CommandContext(ctx, "powershell", allArgs...)
