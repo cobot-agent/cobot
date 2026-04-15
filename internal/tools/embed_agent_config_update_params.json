@@ -1,0 +1,32 @@
+{
+  "type": "object",
+  "properties": {
+    "agent": {
+      "type": "string",
+      "description": "Agent name"
+    },
+    "model": {
+      "type": "string",
+      "description": "LLM model override"
+    },
+    "system_prompt": {
+      "type": "string",
+      "description": "System prompt or .md file ref"
+    },
+    "enabled_mcp": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "MCP servers to enable"
+    },
+    "enabled_skills": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Skills to enable"
+    },
+    "max_turns": {
+      "type": "integer",
+      "description": "Max turns override"
+    }
+  },
+  "required": ["agent"]
+}

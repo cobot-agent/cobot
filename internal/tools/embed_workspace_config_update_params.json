@@ -1,0 +1,29 @@
+{
+  "type": "object",
+  "properties": {
+    "enabled_mcp": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "List of MCP server names to enable"
+    },
+    "enabled_skills": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "List of skill names to enable"
+    },
+    "sandbox_root": {
+      "type": "string",
+      "description": "Sandbox root directory"
+    },
+    "allow_paths": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Additional allowed paths"
+    },
+    "blocked_commands": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Blocked shell commands"
+    }
+  }
+}

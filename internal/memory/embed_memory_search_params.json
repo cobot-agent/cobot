@@ -1,0 +1,18 @@
+{
+  "type": "object",
+  "properties": {
+    "query": {
+      "type": "string",
+      "description": "Search query text"
+    },
+    "tier1": {
+      "type": "string",
+      "description": "Optional tier-1 group ID to filter by"
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Max results, default 10"
+    }
+  },
+  "required": ["query"]
+}

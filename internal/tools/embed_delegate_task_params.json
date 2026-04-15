@@ -1,0 +1,14 @@
+{
+  "type": "object",
+  "properties": {
+    "prompt": {
+      "type": "string",
+      "description": "The task prompt for the sub-agent"
+    },
+    "model": {
+      "type": "string",
+      "description": "Optional model spec (e.g. openai:gpt-4o)"
+    }
+  },
+  "required": ["prompt"]
+}

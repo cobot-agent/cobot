@@ -1,0 +1,20 @@
+-- name: search_drawers
+SELECT d.id, d.content, r.wing_id, r.id, -bm25(drawer_fts) AS score
+FROM drawer_fts
+JOIN drawers d ON d.rowid = drawer_fts.rowid
+JOIN rooms r ON r.id = d.room_id
+WHERE drawer_fts MATCH ?
+{{- if .Tier1}} AND r.wing_id = ?{{end}}
+{{- if .Tier2}} AND r.id = ?{{end}}
+{{- if .Tag}} AND d.tag = ?{{end}}
+ORDER BY score DESC LIMIT ?
+
+-- name: list_drawers
+SELECT d.id, d.content, r.wing_id, r.id
+FROM drawers d
+JOIN rooms r ON r.id = d.room_id
+WHERE 1=1
+{{- if .Tier1}} AND r.wing_id = ?{{end}}
+{{- if .Tier2}} AND r.id = ?{{end}}
+{{- if .Tag}} AND d.tag = ?{{end}}
+ORDER BY d.created_at DESC LIMIT ?

@@ -1,0 +1,173 @@
+package openai
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"maps"
+	"net/http"
+	"slices"
+
+	"github.com/cobot-agent/cobot/internal/llm/base"
+	cobot "github.com/cobot-agent/cobot/pkg"
+)
+
+var _ cobot.Provider = (*Provider)(nil)
+
+const ProviderName = "openai"
+
+type Provider struct {
+	cfg    base.ProviderConfig
+	client *http.Client
+}
+
+func NewProvider(apiKey, baseURL string) *Provider {
+	return &Provider{
+		cfg: base.ProviderConfig{
+			Name:    ProviderName,
+			APIKey:  apiKey,
+			BaseURL: base.PrepareBaseURL(baseURL, "https://api.openai.com/v1"),
+		},
+		client: base.NewHTTPClient(),
+	}
+}
+
+func (p *Provider) Name() string { return ProviderName }
+
+func (p *Provider) Complete(ctx context.Context, req *cobot.ProviderRequest) (*cobot.ProviderResponse, error) {
+	body := chatRequest{
+		Model:       req.Model,
+		Messages:    fromProviderMessages(req.Messages),
+		Tools:       fromProviderTools(req.Tools),
+		MaxTokens:   req.MaxTokens,
+		Temperature: req.Temperature,
+		Stream:      false,
+	}
+
+	headers := map[string]string{"Authorization": "Bearer " + p.cfg.APIKey}
+	respBody, err := base.DoRequest(p.client, p.cfg, ctx, "/chat/completions", body, headers)
+	if err != nil {
+		return nil, err
+	}
+	defer respBody.Close()
+
+	var resp chatResponse
+	if err := json.NewDecoder(respBody).Decode(&resp); err != nil {
+		return nil, fmt.Errorf("openai: decode response: %w", err)
+	}
+
+	return toProviderResponse(&resp), nil
+}
+
+func (p *Provider) Stream(ctx context.Context, req *cobot.ProviderRequest) (<-chan cobot.ProviderChunk, error) {
+	body := chatRequest{
+		Model:       req.Model,
+		Messages:    fromProviderMessages(req.Messages),
+		Tools:       fromProviderTools(req.Tools),
+		MaxTokens:   req.MaxTokens,
+		Temperature: req.Temperature,
+		Stream:      true,
+	}
+
+	headers := map[string]string{"Authorization": "Bearer " + p.cfg.APIKey}
+	respBody, err := base.DoRequest(p.client, p.cfg, ctx, "/chat/completions", body, headers)
+	if err != nil {
+		return nil, err
+	}
+
+	ch := make(chan cobot.ProviderChunk, 64)
+	go func() {
+		defer close(ch)
+		defer respBody.Close()
+		p.readStream(respBody, ch)
+	}()
+
+	return ch, nil
+}
+
+func (p *Provider) readStream(body io.ReadCloser, ch chan<- cobot.ProviderChunk) {
+	pending := make(map[int]*base.PendingToolCall)
+
+	sse := base.NewSSEScanner(body)
+
+	var lastUsage *cobot.Usage
+	for {
+		_, data, err := sse.Next()
+		if err != nil {
+			if err.Error() != "EOF" {
+				ch <- cobot.ProviderChunk{
+					Content: fmt.Sprintf("[stream error: %v]", err),
+					Done:    true,
+				}
+			}
+			return
+		}
+		if data == nil {
+			// [DONE] received
+			if lastUsage != nil {
+				ch <- cobot.ProviderChunk{Done: true, Usage: lastUsage}
+			}
+			return
+		}
+
+		var chunk streamChunk
+		if err := json.Unmarshal(data, &chunk); err != nil {
+			ch <- cobot.ProviderChunk{
+				Content: fmt.Sprintf("[stream error: malformed data: %v]", err),
+			}
+			continue
+		}
+
+		// Capture usage from the final chunk (OpenAI sends it with stream_options)
+		if chunk.Usage != nil {
+			lastUsage = &cobot.Usage{
+				PromptTokens:     chunk.Usage.PromptTokens,
+				CompletionTokens: chunk.Usage.CompletionTokens,
+				TotalTokens:      chunk.Usage.TotalTokens,
+			}
+		}
+
+		for _, choice := range chunk.Choices {
+			for _, tc := range choice.Delta.ToolCalls {
+				ptc, exists := pending[tc.Index]
+				if !exists {
+					ptc = &base.PendingToolCall{}
+					pending[tc.Index] = ptc
+				}
+				if tc.ID != "" {
+					ptc.ID = tc.ID
+				}
+				if tc.Function != nil {
+					if tc.Function.Name != "" {
+						ptc.Name = tc.Function.Name
+					}
+					ptc.Args.WriteString(tc.Function.Arguments)
+				}
+			}
+
+			pc := cobot.ProviderChunk{
+				Content: choice.Delta.Content,
+			}
+
+			if choice.FinishReason != nil {
+				if *choice.FinishReason == "tool_calls" {
+					indices := slices.Sorted(maps.Keys(pending))
+					for _, idx := range indices {
+						ptc := pending[idx]
+						ch <- cobot.ProviderChunk{
+							ToolCall: &cobot.ToolCall{
+								ID:        ptc.ID,
+								Name:      ptc.Name,
+								Arguments: json.RawMessage(ptc.Args.String()),
+							},
+						}
+					}
+				}
+				pc.Done = true
+			}
+
+			ch <- pc
+		}
+	}
+}

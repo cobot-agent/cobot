@@ -1,0 +1,22 @@
+{
+  "type": "object",
+  "properties": {
+    "content": {
+      "type": "string",
+      "description": "Content to store"
+    },
+    "wing_name": {
+      "type": "string",
+      "description": "Name of the wing (auto-created if needed)"
+    },
+    "room_name": {
+      "type": "string",
+      "description": "Name of the room (auto-created if needed)"
+    },
+    "hall_type": {
+      "type": "string",
+      "description": "Type of room: facts, log, or code"
+    }
+  },
+  "required": ["content", "wing_name", "room_name"]
+}

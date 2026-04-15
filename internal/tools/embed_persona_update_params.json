@@ -1,0 +1,15 @@
+{
+  "type": "object",
+  "properties": {
+    "file": {
+      "type": "string",
+      "enum": ["soul", "user"],
+      "description": "Which persona file to update"
+    },
+    "content": {
+      "type": "string",
+      "description": "New content for the persona file"
+    }
+  },
+  "required": ["file", "content"]
+}

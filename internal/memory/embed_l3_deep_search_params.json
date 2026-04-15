@@ -1,0 +1,14 @@
+{
+  "type": "object",
+  "properties": {
+    "query": {
+      "type": "string",
+      "description": "Search query for deep semantic search"
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Max results, default 10"
+    }
+  },
+  "required": ["query"]
+}
