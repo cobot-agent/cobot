@@ -86,13 +86,14 @@ func (s *SandboxConfig) IsAllowed(path string, write bool) bool {
 }
 
 // AutoResolvePath attempts to resolve a path to a real filesystem path within the sandbox.
-// Unlike ResolvePath (which is strict), AutoResolvePath is lenient:
-//   - If path starts with VirtualRoot: validates and translates (same as ResolvePath)
-//   - If path is relative: auto-prepends VirtualRoot, then translates
-//   - If path is absolute but NOT VirtualRoot: rejects with clear error message
+// Unlike ResolvePath (which is strict), AutoResolvePath is lenient and auto-fixes all path types:
+//   - Case 1: Path starts with VirtualRoot → validates and translates (same as ResolvePath)
+//   - Case 2: Path starts with real Root → replaces Root prefix with VirtualRoot, then translates
+//   - Case 3: Relative path → auto-prepends VirtualRoot, then translates
+//   - Case 4: Absolute path outside both Root and VirtualRoot → auto-prepends VirtualRoot
 //
-// This allows tools to accept relative paths from the LLM and auto-resolve them,
-// while still rejecting absolute paths that fall outside the sandbox virtual root.
+// This allows tools to accept any path from the LLM and auto-resolve it inside the sandbox.
+// Path traversal (../) is still blocked by ResolvePath's VirtualRoot prefix validation.
 // Returns an error only if the resulting path escapes the sandbox root.
 func (s *SandboxConfig) AutoResolvePath(path string) (string, error) {
 	if s == nil || s.VirtualRoot == "" {
@@ -107,14 +108,30 @@ func (s *SandboxConfig) AutoResolvePath(path string) (string, error) {
 		return s.ResolvePath(path)
 	}
 
-	// Case 2: Relative path — auto-prepend VirtualRoot
+	// Case 2: Path starts with real Root — match and replace with VirtualRoot prefix.
+	// This handles cases where the LLM accidentally uses the real filesystem path.
+	if s.Root != "" {
+		absRoot := filepath.Clean(s.Root)
+		if cleaned == absRoot || strings.HasPrefix(cleaned, absRoot+"/") {
+			rel := strings.TrimPrefix(cleaned, absRoot)
+			if rel == "" || rel == "/" {
+				return s.ResolvePath(vr)
+			}
+			return s.ResolvePath(vr + rel)
+		}
+	}
+
+	// Case 3: Relative path — auto-prepend VirtualRoot
 	if !strings.HasPrefix(cleaned, "/") {
 		virtualPath := vr + "/" + cleaned
 		return s.ResolvePath(virtualPath)
 	}
 
-	// Case 3: Absolute path outside VirtualRoot — reject with clear message
-	return "", fmt.Errorf("path %q is absolute but does not start with %q; use a path starting with %q or a relative path (relative paths are auto-resolved under %q)", path, s.VirtualRoot, s.VirtualRoot, s.VirtualRoot)
+	// Case 4: Absolute path outside both Root and VirtualRoot — auto-prepend VirtualRoot.
+	// e.g. /etc/passwd → /home/ws/etc/passwd (resolves inside sandbox).
+	// Path traversal (../) is still blocked by ResolvePath's VirtualRoot prefix check.
+	virtualPath := vr + cleaned // cleaned already starts with /
+	return s.ResolvePath(virtualPath)
 }
 
 // ResolvePath validates that path starts with VirtualRoot and translates it to the real filesystem path.

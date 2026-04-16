@@ -3,7 +3,6 @@ package cobot
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -281,14 +280,46 @@ func TestSandboxConfig_AutoResolvePath_DotSlashAutoResolve(t *testing.T) {
 	}
 }
 
-func TestSandboxConfig_AutoResolvePath_AbsoluteOutsideReject(t *testing.T) {
+func TestSandboxConfig_AutoResolvePath_AbsoluteAutoResolve(t *testing.T) {
 	s := &SandboxConfig{VirtualRoot: "/home/ws", Root: "/tmp/real"}
-	_, err := s.AutoResolvePath("/etc/passwd")
-	if err == nil {
-		t.Error("expected error for absolute path outside VirtualRoot")
+	path, err := s.AutoResolvePath("/etc/passwd")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(err.Error(), "/home/ws") {
-		t.Errorf("error should mention VirtualRoot, got %q", err.Error())
+	expected := filepath.Join("/tmp/real", "etc/passwd")
+	if path != expected {
+		t.Errorf("expected %q, got %q", expected, path)
+	}
+}
+
+func TestSandboxConfig_AutoResolvePath_RealRootMatch(t *testing.T) {
+	s := &SandboxConfig{VirtualRoot: "/home/ws", Root: "/tmp/real"}
+	path, err := s.AutoResolvePath("/tmp/real/src/main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := filepath.Join("/tmp/real", "src/main.go")
+	if path != expected {
+		t.Errorf("expected %q, got %q", expected, path)
+	}
+}
+
+func TestSandboxConfig_AutoResolvePath_RealRootExactly(t *testing.T) {
+	s := &SandboxConfig{VirtualRoot: "/home/ws", Root: "/tmp/real"}
+	path, err := s.AutoResolvePath("/tmp/real")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != "/tmp/real" {
+		t.Errorf("expected /tmp/real, got %q", path)
+	}
+}
+
+func TestSandboxConfig_AutoResolvePath_PathTraversalBlocked(t *testing.T) {
+	s := &SandboxConfig{VirtualRoot: "/home/ws", Root: "/tmp/real"}
+	_, err := s.AutoResolvePath("../../../etc/passwd")
+	if err == nil {
+		t.Error("expected error for path traversal escaping VirtualRoot")
 	}
 }
 

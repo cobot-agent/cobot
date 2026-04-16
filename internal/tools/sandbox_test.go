@@ -35,15 +35,21 @@ func TestListDirTool_SandboxResolve(t *testing.T) {
 	}
 }
 
-func TestListDirTool_SandboxRejectOutside(t *testing.T) {
+func TestListDirTool_SandboxAutoResolveOutside(t *testing.T) {
 	dir := t.TempDir()
 	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/myworkspace", Root: dir}
 	tool := NewListDirTool(WithListSandbox(sandbox))
 
 	args, _ := json.Marshal(map[string]string{"path": "/etc"})
 	_, err := tool.Execute(context.Background(), args)
+	// Path is auto-resolved inside sandbox; since /etc doesn't exist there, expect file-not-found
 	if err == nil {
-		t.Error("expected error for path outside virtual root")
+		t.Error("expected error for non-existent auto-resolved path")
+	}
+	// Should NOT be a sandbox path rejection error
+	errStr := err.Error()
+	if strings.Contains(errStr, "must start with") || strings.Contains(errStr, "outside allowed") {
+		t.Errorf("should not be a path rejection error, got: %q", errStr)
 	}
 }
 
@@ -105,15 +111,20 @@ func TestSearchFilesTool_SandboxResolve(t *testing.T) {
 	}
 }
 
-func TestSearchFilesTool_SandboxRejectOutside(t *testing.T) {
+func TestSearchFilesTool_SandboxAutoResolveOutside(t *testing.T) {
 	dir := t.TempDir()
 	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/myworkspace", Root: dir}
 	tool := NewSearchFilesTool(WithSearchSandbox(sandbox))
 
+	// /tmp auto-resolves to /home/myworkspace/tmp → dir/tmp (doesn't exist)
 	args, _ := json.Marshal(map[string]string{"path": "/tmp", "pattern": "*.txt"})
-	_, err := tool.Execute(context.Background(), args)
-	if err == nil {
-		t.Error("expected error for path outside virtual root")
+	result, err := tool.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// WalkDir on non-existent path returns error, but SearchFiles returns "no files found"
+	if result != "no files found matching pattern" {
+		t.Errorf("expected 'no files found matching pattern', got %q", result)
 	}
 }
 
@@ -263,56 +274,101 @@ func TestWriteFileTool_NoSandboxOutput(t *testing.T) {
 	}
 }
 
-// --- Absolute non-virtual path rejection tests ---
+// --- Absolute path auto-resolution tests (paths are auto-resolved inside sandbox) ---
 
-func TestReadFileTool_SandboxRejectsAbsoluteNonVirtual(t *testing.T) {
+func TestReadFileTool_SandboxAutoResolvesAbsolute(t *testing.T) {
 	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "etc"), 0755)
+	os.WriteFile(filepath.Join(dir, "etc", "passwd"), []byte("root:x:0:0"), 0644)
 	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/myworkspace", Root: dir}
 	tool := NewReadFileTool(WithReadSandbox(sandbox))
 
+	// /etc/passwd auto-resolves to /home/myworkspace/etc/passwd → dir/etc/passwd
 	args, _ := json.Marshal(map[string]string{"path": "/etc/passwd"})
-	_, err := tool.Execute(context.Background(), args)
-	if err == nil {
-		t.Error("expected error for absolute path outside virtual root")
+	result, err := tool.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(err.Error(), "/home/myworkspace") {
-		t.Errorf("error should suggest using virtual root, got %q", err.Error())
+	if !strings.HasPrefix(result, "# /home/myworkspace/etc/passwd\n") {
+		t.Errorf("expected auto-resolved virtual path header, got %q", result)
 	}
 }
 
-func TestWriteFileTool_SandboxRejectsAbsoluteNonVirtual(t *testing.T) {
+func TestWriteFileTool_SandboxAutoResolvesAbsolute(t *testing.T) {
 	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "tmp"), 0755) // create parent dir for auto-resolved path
 	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/myworkspace", Root: dir}
 	tool := NewWriteFileTool(WithWriteSandbox(sandbox))
 
-	args, _ := json.Marshal(map[string]string{"path": "/tmp/evil.txt", "content": "bad"})
-	_, err := tool.Execute(context.Background(), args)
-	if err == nil {
-		t.Error("expected error for absolute path outside virtual root")
+	// /tmp/output.txt auto-resolves to /home/myworkspace/tmp/output.txt
+	args, _ := json.Marshal(map[string]string{"path": "/tmp/output.txt", "content": "test"})
+	result, err := tool.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != "wrote /home/myworkspace/tmp/output.txt" {
+		t.Errorf("expected 'wrote /home/myworkspace/tmp/output.txt', got %q", result)
+	}
+	// Verify file was written at auto-resolved real path
+	data, err := os.ReadFile(filepath.Join(dir, "tmp", "output.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "test" {
+		t.Errorf("expected file content 'test', got %q", string(data))
 	}
 }
 
-func TestListDirTool_SandboxRejectsAbsoluteNonVirtual(t *testing.T) {
+func TestListDirTool_SandboxAutoResolvesAbsolute(t *testing.T) {
 	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "var", "log"), 0755)
+	os.WriteFile(filepath.Join(dir, "var", "log", "app.log"), []byte("log data"), 0644)
 	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/myworkspace", Root: dir}
 	tool := NewListDirTool(WithListSandbox(sandbox))
 
 	args, _ := json.Marshal(map[string]string{"path": "/var/log"})
-	_, err := tool.Execute(context.Background(), args)
-	if err == nil {
-		t.Error("expected error for absolute path outside virtual root")
+	result, err := tool.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result, "/home/myworkspace/var/log/app.log") {
+		t.Errorf("expected virtual path in listing, got %q", result)
 	}
 }
 
-func TestSearchFilesTool_SandboxRejectsAbsoluteNonVirtual(t *testing.T) {
+func TestSearchFilesTool_SandboxAutoResolvesAbsolute(t *testing.T) {
 	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "usr", "local"), 0755)
+	os.WriteFile(filepath.Join(dir, "usr", "local", "app.go"), []byte("package main"), 0644)
 	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/myworkspace", Root: dir}
 	tool := NewSearchFilesTool(WithSearchSandbox(sandbox))
 
 	args, _ := json.Marshal(map[string]string{"path": "/usr/local", "pattern": "*.go"})
-	_, err := tool.Execute(context.Background(), args)
-	if err == nil {
-		t.Error("expected error for absolute path outside virtual root")
+	result, err := tool.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result, "/home/myworkspace/usr/local/app.go") {
+		t.Errorf("expected virtual path in search results, got %q", result)
+	}
+}
+
+// --- Real Root path matching test ---
+
+func TestReadFileTool_SandboxRealRootPathMatch(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "hello.txt"), []byte("world"), 0644)
+	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/ws", Root: dir}
+	tool := NewReadFileTool(WithReadSandbox(sandbox))
+
+	// LLM accidentally uses the real Root path instead of VirtualRoot
+	args, _ := json.Marshal(map[string]string{"path": dir + "/hello.txt"})
+	result, err := tool.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(result, "# /home/ws/hello.txt\n") {
+		t.Errorf("expected virtual path in output, got %q", result)
 	}
 }
 
