@@ -101,6 +101,9 @@ var doctorCmd = &cobra.Command{
 			} else {
 				fmt.Printf("  [INFO] Memory dir will be created: %s\n", memDir)
 			}
+			fmt.Printf("  Space:         %s\n", ws.SpaceDir())
+			fmt.Printf("  MCP:           %s\n", ws.MCPDir())
+			fmt.Printf("  Global Skills: %s\n", workspace.GlobalSkillsDir())
 		} else {
 			fmt.Println("  [MISSING] Will be created on first use")
 		}

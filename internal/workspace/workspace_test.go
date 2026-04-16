@@ -120,6 +120,9 @@ func TestWorkspace_EnsureDirs(t *testing.T) {
 		filepath.Join(dataDir, "sessions"),
 		filepath.Join(dataDir, "skills"),
 		filepath.Join(dataDir, "agents"),
+		filepath.Join(dataDir, "space"),
+		filepath.Join(dataDir, "mcp"),
+		filepath.Join(dataDir, "memory", "stm"),
 	}
 
 	for _, dir := range expectedDirs {
@@ -215,6 +218,15 @@ func TestWorkspace_Accessors(t *testing.T) {
 	}
 	if ws.AgentsDir() != filepath.Join(dataDir, "agents") {
 		t.Errorf("AgentsDir() = %s", ws.AgentsDir())
+	}
+	if ws.SpaceDir() != filepath.Join(dataDir, "space") {
+		t.Errorf("SpaceDir() = %s", ws.SpaceDir())
+	}
+	if ws.MCPDir() != filepath.Join(dataDir, "mcp") {
+		t.Errorf("MCPDir() = %s", ws.MCPDir())
+	}
+	if ws.STMDir() != filepath.Join(dataDir, "memory", "stm") {
+		t.Errorf("STMDir() = %s", ws.STMDir())
 	}
 	if ws.ConfigPath() != filepath.Join(dataDir, "workspace.yaml") {
 		t.Errorf("ConfigPath() = %s", ws.ConfigPath())

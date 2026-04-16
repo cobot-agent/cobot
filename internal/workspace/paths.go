@@ -34,3 +34,8 @@ func GlobalConfigPath() string {
 func WorkspaceDefinitionsDir() string {
 	return filepath.Join(ConfigDir(), "workspaces")
 }
+
+// GlobalSkillsDir returns the path to the global shared skills directory.
+func GlobalSkillsDir() string {
+	return filepath.Join(DataDir(), "skills")
+}

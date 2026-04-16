@@ -91,6 +91,24 @@ func (w *Workspace) SkillsDir() string {
 func (w *Workspace) AgentsDir() string {
 	return filepath.Join(w.DataDir, "agents")
 }
+
+// SpaceDir returns the sandboxed read-write directory path.
+// This is the target for sandbox isolation — LLM file operations
+// should be rooted here in sandbox mode.
+func (w *Workspace) SpaceDir() string {
+	return filepath.Join(w.DataDir, "space")
+}
+
+// MCPDir returns the directory for MCP server configurations.
+func (w *Workspace) MCPDir() string {
+	return filepath.Join(w.DataDir, "mcp")
+}
+
+// STMDir returns the subdirectory within memory/ for per-session STM databases.
+func (w *Workspace) STMDir() string {
+	return filepath.Join(w.DataDir, "memory", "stm")
+}
+
 func (w *Workspace) ConfigPath() string {
 	return filepath.Join(w.DataDir, "workspace.yaml")
 }
@@ -111,6 +129,9 @@ func (w *Workspace) EnsureDirs() error {
 		w.SessionsDir(),
 		w.SkillsDir(),
 		w.AgentsDir(),
+		w.SpaceDir(),
+		w.MCPDir(),
+		w.STMDir(),
 	}
 	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0755); err != nil {
@@ -141,6 +162,16 @@ func (w *Workspace) ValidatePath(path string) error {
 	}
 	dataDir = cobot.EvalSymlinks(dataDir)
 	if cobot.IsSubpath(absPath, dataDir) {
+		return nil
+	}
+
+	// SpaceDir is a sandboxed read-write area that is also a valid path target.
+	spaceDir, err := filepath.Abs(w.SpaceDir())
+	if err != nil {
+		return fmt.Errorf("resolve space dir: %w", err)
+	}
+	spaceDir = cobot.EvalSymlinks(spaceDir)
+	if cobot.IsSubpath(absPath, spaceDir) {
 		return nil
 	}
 

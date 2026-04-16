@@ -157,6 +157,7 @@ var workspaceShowCmd = &cobra.Command{
 			fmt.Fprintf(cmd.OutOrStdout(), "  Root:   %s\n", ws.Definition.Root)
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "  Data:   %s\n", ws.DataDir)
+		fmt.Fprintf(cmd.OutOrStdout(), "  Space:  %s\n", ws.SpaceDir())
 		return nil
 	},
 }

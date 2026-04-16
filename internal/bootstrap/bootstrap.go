@@ -195,7 +195,7 @@ func ConfigureAgentForWorkspace(a *agent.Agent, ws *workspace.Workspace, registr
 			sub.SetProvider(a.Provider())
 		}
 		return sub
-	}, tools.WithDelegateWorkdir(ws.DataDir), tools.WithDelegateAgentLookup(ws), tools.WithDelegateSandbox(sandbox)))
+	}, tools.WithDelegateWorkdir(ws.SpaceDir()), tools.WithDelegateAgentLookup(ws), tools.WithDelegateSandbox(sandbox)))
 
 	return nil
 }
@@ -209,7 +209,7 @@ func resolveSandboxRoot(ws *workspace.Workspace) string {
 	if ws.Definition.Root != "" {
 		return ws.Definition.Root
 	}
-	return ws.DataDir
+	return ws.SpaceDir()
 }
 
 func resolveSystemPrompt(value string, ws *workspace.Workspace) string {

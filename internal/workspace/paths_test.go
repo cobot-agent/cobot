@@ -109,3 +109,13 @@ func TestWorkspaceDefinitionsDir(t *testing.T) {
 		t.Errorf("expected %s, got %s", expected, got)
 	}
 }
+
+func TestGlobalSkillsDir(t *testing.T) {
+	dir := t.TempDir()
+	os.Setenv("COBOT_DATA_PATH", dir)
+	defer os.Unsetenv("COBOT_DATA_PATH")
+	expected := filepath.Join(dir, "skills")
+	if got := GlobalSkillsDir(); got != expected {
+		t.Errorf("expected %s, got %s", expected, got)
+	}
+}

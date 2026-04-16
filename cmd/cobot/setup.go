@@ -77,6 +77,8 @@ var setupCmd = &cobra.Command{
 		fmt.Printf("SOUL:   %s\n", ws.GetSoulPath())
 		fmt.Printf("USER:   %s\n", ws.GetUserPath())
 		fmt.Printf("MEMORY: %s\n", ws.MemoryDir())
+		fmt.Printf("Space:  %s\n", ws.SpaceDir())
+		fmt.Printf("MCP:    %s\n", ws.MCPDir())
 		fmt.Println()
 		fmt.Println("You can now use cobot:")
 		fmt.Println("  cobot chat \"hello\"")
