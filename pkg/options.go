@@ -172,13 +172,16 @@ func (s *SandboxConfig) RewriteOutputPaths(text string) string {
 
 // RealToVirtual converts a real filesystem path back to the virtual path
 // that the LLM sees. If sandbox is not configured, returns the path unchanged.
+// When the path is NOT under Root, returns a sanitized virtual path to avoid
+// leaking real filesystem paths to the LLM.
 func (s *SandboxConfig) RealToVirtual(realPath string) string {
 	if s == nil || s.VirtualRoot == "" || s.Root == "" {
 		return realPath
 	}
 	absPath, err := filepath.Abs(realPath)
 	if err != nil {
-		return realPath
+		// Cannot resolve — return sanitized path instead of leaking the real path.
+		return s.VirtualRoot + "/[external]/" + filepath.Base(realPath)
 	}
 	absRoot := filepath.Clean(s.Root)
 	if absPath == absRoot {
@@ -188,7 +191,9 @@ func (s *SandboxConfig) RealToVirtual(realPath string) string {
 		rel := strings.TrimPrefix(absPath, absRoot+string(filepath.Separator))
 		return filepath.Join(s.VirtualRoot, rel)
 	}
-	return realPath
+	// Path is outside the sandbox root — return a sanitized virtual path
+	// that gives the LLM context without revealing the real filesystem location.
+	return s.VirtualRoot + "/[external]/" + filepath.Base(absPath)
 }
 
 func (s *SandboxConfig) IsBlockedCommand(cmd string) bool {

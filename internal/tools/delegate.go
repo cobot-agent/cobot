@@ -28,6 +28,7 @@ type DelegateTool struct {
 	factory     SubAgentFactory
 	workdir     string
 	agentLookup ExternalAgentLookup // to lookup external agent configs
+	sandbox     *cobot.SandboxConfig
 }
 
 func WithDelegateWorkdir(workdir string) func(*DelegateTool) {
@@ -36,6 +37,10 @@ func WithDelegateWorkdir(workdir string) func(*DelegateTool) {
 
 func WithDelegateAgentLookup(l ExternalAgentLookup) func(*DelegateTool) {
 	return func(t *DelegateTool) { t.agentLookup = l }
+}
+
+func WithDelegateSandbox(s *cobot.SandboxConfig) func(*DelegateTool) {
+	return func(t *DelegateTool) { t.sandbox = s }
 }
 
 func NewDelegateTool(factory SubAgentFactory, opts ...func(*DelegateTool)) *DelegateTool {
@@ -141,7 +146,11 @@ func (t *DelegateTool) Execute(ctx context.Context, args json.RawMessage) (strin
 	if err != nil {
 		return "", fmt.Errorf("sub-agent error: %w", err)
 	}
-	return resp.Content, nil
+	content := resp.Content
+	if t.sandbox != nil && t.sandbox.VirtualRoot != "" {
+		content = t.sandbox.RewriteOutputPaths(content)
+	}
+	return content, nil
 }
 
 func (t *DelegateTool) ExecuteStream(ctx context.Context, args json.RawMessage, eventCh chan<- cobot.Event) (string, error) {
@@ -188,5 +197,9 @@ func (t *DelegateTool) ExecuteStream(ctx context.Context, args json.RawMessage, 
 			}
 		}
 	}
-	return result.String(), nil
+	content := result.String()
+	if t.sandbox != nil && t.sandbox.VirtualRoot != "" {
+		content = t.sandbox.RewriteOutputPaths(content)
+	}
+	return content, nil
 }

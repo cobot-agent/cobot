@@ -113,6 +113,12 @@ func (t *ShellExecTool) Execute(ctx context.Context, args json.RawMessage) (stri
 			a.Dir = resolved
 		}
 	}
+	// Security model:
+	//   The shell executes with cmd.Dir set to the sandbox root (or a resolved
+	//   subdirectory). The process runs as the OS user and can only access what
+	//   the OS user can access — the sandbox is about path visibility to the
+	//   LLM, not OS-level isolation. Command output is sanitized via
+	//   RewriteOutputPaths before being returned to the LLM.
 
 	cmdStr := a.Command
 

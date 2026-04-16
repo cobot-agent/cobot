@@ -303,3 +303,62 @@ func TestSandboxConfig_AutoResolvePath_TrailingSlashVirtualRoot(t *testing.T) {
 		t.Errorf("expected %q, got %q", expected, path)
 	}
 }
+
+func TestSandboxConfig_RealToVirtual_PathUnderRoot(t *testing.T) {
+	s := &SandboxConfig{VirtualRoot: "/home/ws", Root: "/tmp/real"}
+	got := s.RealToVirtual("/tmp/real/src/main.go")
+	expected := filepath.Join("/home/ws", "src/main.go")
+	if got != expected {
+		t.Errorf("expected %q, got %q", expected, got)
+	}
+}
+
+func TestSandboxConfig_RealToVirtual_RootExactly(t *testing.T) {
+	s := &SandboxConfig{VirtualRoot: "/home/ws", Root: "/tmp/real"}
+	got := s.RealToVirtual("/tmp/real")
+	if got != "/home/ws" {
+		t.Errorf("expected %q, got %q", "/home/ws", got)
+	}
+}
+
+func TestSandboxConfig_RealToVirtual_PathOutsideRoot_Sanitized(t *testing.T) {
+	s := &SandboxConfig{VirtualRoot: "/home/ws", Root: "/tmp/real"}
+	got := s.RealToVirtual("/etc/passwd")
+	// Must NOT leak the real path "/etc/passwd"
+	if got == "/etc/passwd" {
+		t.Errorf("RealToVirtual leaked real path %q", got)
+	}
+	// Should return sanitized virtual path with basename only
+	expected := "/home/ws/[external]/passwd"
+	if got != expected {
+		t.Errorf("expected %q, got %q", expected, got)
+	}
+}
+
+func TestSandboxConfig_RealToVirtual_PathOutsideRoot_LongPath(t *testing.T) {
+	s := &SandboxConfig{VirtualRoot: "/home/ws", Root: "/tmp/real"}
+	got := s.RealToVirtual("/usr/local/lib/some/data.db")
+	if got == "/usr/local/lib/some/data.db" {
+		t.Errorf("RealToVirtual leaked real path %q", got)
+	}
+	expected := "/home/ws/[external]/data.db"
+	if got != expected {
+		t.Errorf("expected %q, got %q", expected, got)
+	}
+}
+
+func TestSandboxConfig_RealToVirtual_NilReceiver(t *testing.T) {
+	var s *SandboxConfig
+	got := s.RealToVirtual("/any/path")
+	if got != "/any/path" {
+		t.Errorf("expected %q, got %q", "/any/path", got)
+	}
+}
+
+func TestSandboxConfig_RealToVirtual_EmptyVirtualRoot(t *testing.T) {
+	s := &SandboxConfig{Root: "/tmp/real"}
+	got := s.RealToVirtual("/tmp/real/file.txt")
+	if got != "/tmp/real/file.txt" {
+		t.Errorf("expected unchanged, got %q", got)
+	}
+}

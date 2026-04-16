@@ -178,6 +178,13 @@ func ConfigureAgentForWorkspace(a *agent.Agent, ws *workspace.Workspace, registr
 	// --- workspace tools ---
 	tools.RegisterWorkspaceTools(a.ToolRegistry(), ws, sandbox)
 
+	// Re-register memory tools with sandbox config for path sanitization in errors.
+	if store != nil {
+		a.RegisterTool(memory.NewMemorySearchTool(store, memory.WithMemorySearchSandbox(sandbox)))
+		a.RegisterTool(memory.NewMemoryStoreTool(store, memory.WithMemoryStoreSandbox(sandbox)))
+		a.RegisterTool(memory.NewL3DeepSearchTool(store, memory.WithL3DeepSearchSandbox(sandbox)))
+	}
+
 	// --- delegate tool ---
 	a.RegisterTool(tools.NewDelegateTool(func() cobot.SubAgent {
 		cfg := *a.Config() // value copy to avoid mutating parent's config
@@ -188,7 +195,7 @@ func ConfigureAgentForWorkspace(a *agent.Agent, ws *workspace.Workspace, registr
 			sub.SetProvider(a.Provider())
 		}
 		return sub
-	}, tools.WithDelegateWorkdir(ws.DataDir), tools.WithDelegateAgentLookup(ws)))
+	}, tools.WithDelegateWorkdir(ws.DataDir), tools.WithDelegateAgentLookup(ws), tools.WithDelegateSandbox(sandbox)))
 
 	return nil
 }
