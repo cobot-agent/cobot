@@ -5,6 +5,7 @@
 package bootstrap
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"github.com/cobot-agent/cobot/internal/config"
 	"github.com/cobot-agent/cobot/internal/llm"
 	"github.com/cobot-agent/cobot/internal/memory"
+	"github.com/cobot-agent/cobot/internal/skills"
 	"github.com/cobot-agent/cobot/internal/tools"
 	"github.com/cobot-agent/cobot/internal/workspace"
 	cobot "github.com/cobot-agent/cobot/pkg"
@@ -113,6 +115,26 @@ func ConfigureAgentForWorkspace(a *agent.Agent, ws *workspace.Workspace, registr
 	if agentCfg != nil && agentCfg.SystemPrompt != "" {
 		prompt := resolveSystemPrompt(agentCfg.SystemPrompt, ws)
 		_ = a.SetSystemPrompt(prompt)
+	}
+
+	// --- skills ---
+	var enabledSkills []string
+	if agentCfg != nil {
+		enabledSkills = agentCfg.EnabledSkills
+	}
+	skillDirs := []string{workspace.GlobalSkillsDir(), ws.SkillsDir()}
+	loadedSkills, err := skills.LoadSkills(context.Background(), skillDirs, enabledSkills)
+	if err != nil {
+		slog.Warn("failed to load skills", "error", err)
+	}
+	if len(loadedSkills) > 0 {
+		skillSection := skills.SkillsToPrompt(loadedSkills)
+		currentPrompt := a.GetSystemPrompt()
+		if currentPrompt == "" {
+			_ = a.SetSystemPrompt(skillSection)
+		} else {
+			_ = a.SetSystemPrompt(currentPrompt + "\n\n" + skillSection)
+		}
 	}
 
 	// --- memory ---

@@ -110,6 +110,12 @@ func (a *Agent) SetSystemPrompt(prompt string) error {
 	return nil
 }
 
+func (a *Agent) GetSystemPrompt() string {
+	a.sysPromptMu.RLock()
+	defer a.sysPromptMu.RUnlock()
+	return a.systemPrompt
+}
+
 func (a *Agent) SetProvider(p cobot.Provider) {
 	a.provider = p
 }
