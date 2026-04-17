@@ -35,6 +35,11 @@ func WorkspaceDefinitionsDir() string {
 	return filepath.Join(ConfigDir(), "workspaces")
 }
 
+// LogsDir returns the path to the debug logs directory.
+func LogsDir() string {
+	return filepath.Join(DataDir(), "logs")
+}
+
 // GlobalSkillsDir returns the path to the global shared skills directory.
 func GlobalSkillsDir() string {
 	return filepath.Join(DataDir(), "skills")

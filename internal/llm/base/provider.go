@@ -12,6 +12,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/cobot-agent/cobot/internal/debuglog"
 )
 
 // ProviderConfig holds the common fields every LLM HTTP provider needs.
@@ -40,6 +42,7 @@ func DoRequest(client *http.Client, cfg ProviderConfig, ctx context.Context, pat
 
 	url := cfg.BaseURL + path
 	slog.Debug("http request", "provider", cfg.Name, "method", "POST", "url", url, "body_bytes", len(jsonBody))
+	debuglog.LogRequest(ctx, cfg.Name, url, jsonBody)
 
 	start := time.Now()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(jsonBody))
@@ -62,11 +65,17 @@ func DoRequest(client *http.Client, cfg ProviderConfig, ctx context.Context, pat
 		defer resp.Body.Close()
 		data, _ := io.ReadAll(resp.Body)
 		slog.Debug("http response", "provider", cfg.Name, "status", resp.StatusCode, "body_bytes", len(data), "elapsed", elapsed.Round(time.Millisecond))
+		debuglog.LogResponse(ctx, cfg.Name, resp.StatusCode, data, elapsed)
 		return nil, fmt.Errorf("%s: API error %d: %s", cfg.Name, resp.StatusCode, string(data))
 	}
 
 	slog.Debug("http response", "provider", cfg.Name, "status", resp.StatusCode, "elapsed", elapsed.Round(time.Millisecond))
-	return resp.Body, nil
+
+	ct := resp.Header.Get("Content-Type")
+	if strings.HasPrefix(ct, "text/event-stream") {
+		return resp.Body, nil
+	}
+	return newLoggingReadCloser(ctx, cfg.Name, resp.Body, start), nil
 }
 
 // DefaultTransport is based on http.DefaultTransport (preserving proxy,
@@ -89,4 +98,35 @@ var DefaultTransport = func() *http.Transport {
 // NewHTTPClient returns a client with the shared transport.
 func NewHTTPClient() *http.Client {
 	return &http.Client{Transport: DefaultTransport}
+}
+
+type loggingReadCloser struct {
+	ctx      context.Context
+	provider string
+	inner    io.ReadCloser
+	buf      bytes.Buffer
+	start    time.Time
+}
+
+func newLoggingReadCloser(ctx context.Context, provider string, rc io.ReadCloser, start time.Time) io.ReadCloser {
+	if !debuglog.Enabled() {
+		return rc
+	}
+	return &loggingReadCloser{ctx: ctx, provider: provider, inner: rc, start: start}
+}
+
+func (l *loggingReadCloser) Read(p []byte) (int, error) {
+	n, err := l.inner.Read(p)
+	if n > 0 {
+		l.buf.Write(p[:n])
+	}
+	return n, err
+}
+
+func (l *loggingReadCloser) Close() error {
+	err := l.inner.Close()
+	if l.buf.Len() > 0 {
+		debuglog.LogResponse(l.ctx, l.provider, http.StatusOK, l.buf.Bytes(), time.Since(l.start))
+	}
+	return err
 }

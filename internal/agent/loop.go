@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/cobot-agent/cobot/internal/debuglog"
 	"github.com/cobot-agent/cobot/internal/memory"
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
@@ -40,6 +41,7 @@ func (a *Agent) executeToolsAndCollect(ctx context.Context, toolCalls []cobot.To
 // terminate (final response received with no tool calls).
 func (a *Agent) runLoop(ctx context.Context, prompt, debugLabel string, executeTurn func(ctx context.Context, req *cobot.ProviderRequest, turn int) (stop bool, err error)) error {
 	sm := a.sessionMgr
+	ctx = debuglog.WithSessionID(ctx, sm.SessionID())
 	slog.Debug("session", "event", debugLabel, "prompt", prompt)
 	sm.AddMessage(cobot.Message{Role: cobot.RoleUser, Content: prompt}, a.config.Model)
 

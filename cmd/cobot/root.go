@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/cobot-agent/cobot/internal/config"
+	"github.com/cobot-agent/cobot/internal/debuglog"
 	"github.com/cobot-agent/cobot/internal/workspace"
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
@@ -28,9 +29,14 @@ var rootCmd = &cobra.Command{
 	Version: "0.1.0",
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		if debugMode {
-			slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})))
-			slog.Debug("debug logging enabled")
+			if err := debuglog.Init(workspace.LogsDir()); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: debug log init failed: %v\n", err)
+				slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})))
+			}
 		}
+	},
+	PersistentPostRun: func(cmd *cobra.Command, args []string) {
+		debuglog.Close()
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return tuiCmd.RunE(cmd, args)

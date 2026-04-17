@@ -102,7 +102,7 @@ func (p *Provider) Stream(ctx context.Context, req *cobot.ProviderRequest) (<-ch
 	ch := make(chan cobot.ProviderChunk, 64)
 	go func() {
 		defer close(ch)
-		sse := base.NewSSEScannerWithContext(ctx, respBody, base.DefaultSSEIdleTimeout)
+		sse := base.NewSSEScannerWithContext(ctx, respBody, base.DefaultSSEIdleTimeout, ProviderName)
 		defer sse.Close()
 		p.readStream(sse, ch)
 	}()

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/cobot-agent/cobot/internal/debuglog"
 )
 
 // MaxScannerBuffer is the maximum size the scanner buffer can grow to (256KB).
@@ -36,10 +38,12 @@ type SSEScanner struct {
 	done        bool
 	mu          sync.Mutex
 	err         error
-	body        io.Closer          // the underlying response body, closed by watchdog
-	cancelWatch context.CancelFunc // stops the watchdog goroutine
-	activity    chan struct{}      // pulsed on every successful Scan to reset idle timer
+	body        io.Closer
+	cancelWatch context.CancelFunc
+	activity    chan struct{}
 	closeOnce   sync.Once
+	ctx         context.Context
+	provider    string
 }
 
 // NewSSEScanner creates a new SSEScanner reading from the given reader.
@@ -62,18 +66,25 @@ func NewSSEScanner(reader io.Reader) *SSEScanner {
 //
 // Callers MUST call Close() when done (typically via defer) to stop
 // the watchdog and release resources.
-func NewSSEScannerWithContext(ctx context.Context, body io.ReadCloser, idleTimeout time.Duration) *SSEScanner {
+func NewSSEScannerWithContext(ctx context.Context, body io.ReadCloser, idleTimeout time.Duration, provider ...string) *SSEScanner {
 	if idleTimeout <= 0 {
 		idleTimeout = DefaultSSEIdleTimeout
 	}
 
 	watchCtx, cancelWatch := context.WithCancel(ctx)
-	activity := make(chan struct{}, 1) // buffered to avoid blocking on pulse
+	activity := make(chan struct{}, 1)
+
+	var prov string
+	if len(provider) > 0 {
+		prov = provider[0]
+	}
 
 	s := &SSEScanner{
 		body:        body,
 		cancelWatch: cancelWatch,
 		activity:    activity,
+		ctx:         ctx,
+		provider:    prov,
 	}
 	s.scanner = bufio.NewScanner(body)
 	s.scanner.Buffer(make([]byte, 4096), MaxScannerBuffer)
@@ -156,6 +167,7 @@ func (s *SSEScanner) Next() (eventType string, data []byte, err error) {
 			s.done = true
 			return "", nil, nil
 		}
+		debuglog.LogSSE(s.ctx, s.provider, []byte(payload))
 		return "", []byte(payload), nil
 	}
 
