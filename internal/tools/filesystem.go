@@ -13,6 +13,25 @@ import (
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
+// sandboxResolvePath resolves and validates a path within the sandbox.
+// If sandbox is nil, the path is returned unchanged.
+// If sandbox is active, AutoResolvePath is called to map virtual/relative/absolute
+// paths into the sandbox, then ValidatePath ensures the resolved path stays within bounds.
+func sandboxResolvePath(sandbox *cobot.SandboxConfig, path string) (string, error) {
+	if sandbox == nil {
+		return path, nil
+	}
+	originalPath := path
+	resolved, err := sandbox.AutoResolvePath(path)
+	if err != nil {
+		return "", err
+	}
+	if err := sandbox.ValidatePath(resolved); err != nil {
+		return "", fmt.Errorf("path %q is outside allowed workspace paths", originalPath)
+	}
+	return resolved, nil
+}
+
 //go:embed embed_filesystem_read_params.json
 var filesystemReadParamsJSON []byte
 
@@ -48,7 +67,7 @@ func (t *ReadFileTool) Name() string {
 func (t *ReadFileTool) Description() string {
 	desc := "Read the contents of a file at the given path."
 	if t.sandbox != nil && t.sandbox.VirtualRoot != "" {
-		desc += fmt.Sprintf(" All paths are resolved under %q. Use %q/... for best results; relative and other paths are auto-resolved.", t.sandbox.VirtualRoot, t.sandbox.VirtualRoot)
+		desc += fmt.Sprintf(" Sandbox is active. All file paths are automatically resolved under %q — provide paths starting with %q for best results. Relative paths and other absolute paths are auto-mapped into the sandbox.", t.sandbox.VirtualRoot, t.sandbox.VirtualRoot)
 	}
 	return desc
 }
@@ -62,16 +81,10 @@ func (t *ReadFileTool) Execute(ctx context.Context, args json.RawMessage) (strin
 	if err := decodeArgs(args, &a); err != nil {
 		return "", err
 	}
-	originalPath := a.Path
-	if t.sandbox != nil {
-		resolved, err := t.sandbox.AutoResolvePath(a.Path)
-		if err != nil {
-			return "", err
-		}
+	if resolved, err := sandboxResolvePath(t.sandbox, a.Path); err != nil {
+		return "", err
+	} else {
 		a.Path = resolved
-		if err := t.sandbox.ValidatePath(a.Path); err != nil {
-			return "", fmt.Errorf("path %q is outside allowed workspace paths", originalPath)
-		}
 	}
 	data, err := os.ReadFile(a.Path)
 	if err != nil {
@@ -117,7 +130,7 @@ func (t *WriteFileTool) Name() string {
 func (t *WriteFileTool) Description() string {
 	desc := "Write content to a file at the given path."
 	if t.sandbox != nil && t.sandbox.VirtualRoot != "" {
-		desc += fmt.Sprintf(" All paths are resolved under %q. Use %q/... for best results; relative and other paths are auto-resolved.", t.sandbox.VirtualRoot, t.sandbox.VirtualRoot)
+		desc += fmt.Sprintf(" Sandbox is active. All file paths are automatically resolved under %q — provide paths starting with %q for best results. Relative paths and other absolute paths are auto-mapped into the sandbox.", t.sandbox.VirtualRoot, t.sandbox.VirtualRoot)
 	}
 	return desc
 }
@@ -131,16 +144,10 @@ func (t *WriteFileTool) Execute(ctx context.Context, args json.RawMessage) (stri
 	if err := decodeArgs(args, &a); err != nil {
 		return "", err
 	}
-	originalPath := a.Path
-	if t.sandbox != nil {
-		resolved, err := t.sandbox.AutoResolvePath(a.Path)
-		if err != nil {
-			return "", err
-		}
+	if resolved, err := sandboxResolvePath(t.sandbox, a.Path); err != nil {
+		return "", err
+	} else {
 		a.Path = resolved
-		if err := t.sandbox.ValidatePath(a.Path); err != nil {
-			return "", fmt.Errorf("path %q is outside allowed workspace paths", originalPath)
-		}
 	}
 	// Ensure parent directory exists
 	if dir := filepath.Dir(a.Path); dir != "" && dir != "." {
@@ -202,7 +209,7 @@ func (t *ListDirTool) Name() string { return "filesystem_list" }
 func (t *ListDirTool) Description() string {
 	desc := "List files and directories at the given path."
 	if t.sandbox != nil && t.sandbox.VirtualRoot != "" {
-		desc += fmt.Sprintf(" All paths are resolved under %q. Use %q/... for best results; relative and other paths are auto-resolved.", t.sandbox.VirtualRoot, t.sandbox.VirtualRoot)
+		desc += fmt.Sprintf(" Sandbox is active. All file paths are automatically resolved under %q — provide paths starting with %q for best results. Relative paths and other absolute paths are auto-mapped into the sandbox.", t.sandbox.VirtualRoot, t.sandbox.VirtualRoot)
 	}
 	return desc
 }
@@ -216,16 +223,10 @@ func (t *ListDirTool) Execute(ctx context.Context, args json.RawMessage) (string
 	if err := decodeArgs(args, &a); err != nil {
 		return "", err
 	}
-	originalPath := a.Path
-	if t.sandbox != nil {
-		resolved, err := t.sandbox.AutoResolvePath(a.Path)
-		if err != nil {
-			return "", err
-		}
+	if resolved, err := sandboxResolvePath(t.sandbox, a.Path); err != nil {
+		return "", err
+	} else {
 		a.Path = resolved
-		if err := t.sandbox.ValidatePath(a.Path); err != nil {
-			return "", fmt.Errorf("path %q is outside allowed workspace paths", originalPath)
-		}
 	}
 
 	entries, err := os.ReadDir(a.Path)
@@ -301,7 +302,7 @@ func (t *SearchFilesTool) Name() string { return "filesystem_search" }
 func (t *SearchFilesTool) Description() string {
 	desc := "Search for files matching a pattern recursively from a root directory."
 	if t.sandbox != nil && t.sandbox.VirtualRoot != "" {
-		desc += fmt.Sprintf(" All paths are resolved under %q. Use %q/... for best results; relative and other paths are auto-resolved.", t.sandbox.VirtualRoot, t.sandbox.VirtualRoot)
+		desc += fmt.Sprintf(" Sandbox is active. All file paths are automatically resolved under %q — provide paths starting with %q for best results. Relative paths and other absolute paths are auto-mapped into the sandbox.", t.sandbox.VirtualRoot, t.sandbox.VirtualRoot)
 	}
 	return desc
 }
@@ -315,16 +316,10 @@ func (t *SearchFilesTool) Execute(ctx context.Context, args json.RawMessage) (st
 	if err := decodeArgs(args, &a); err != nil {
 		return "", err
 	}
-	originalPath := a.Path
-	if t.sandbox != nil {
-		resolved, err := t.sandbox.AutoResolvePath(a.Path)
-		if err != nil {
-			return "", err
-		}
+	if resolved, err := sandboxResolvePath(t.sandbox, a.Path); err != nil {
+		return "", err
+	} else {
 		a.Path = resolved
-		if err := t.sandbox.ValidatePath(a.Path); err != nil {
-			return "", fmt.Errorf("path %q is outside allowed workspace paths", originalPath)
-		}
 	}
 
 	var matches []string

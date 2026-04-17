@@ -85,7 +85,7 @@ func (t *ShellExecTool) Name() string {
 func (t *ShellExecTool) Description() string {
 	desc := "Execute a shell command and return its output."
 	if t.config != nil && t.config.VirtualRoot != "" {
-		desc += fmt.Sprintf(" All paths are resolved under %q. Use %q/... for best results; relative and other paths are auto-resolved.", t.config.VirtualRoot, t.config.VirtualRoot)
+		desc += fmt.Sprintf(" Sandbox is active. All file paths are automatically resolved under %q — provide paths starting with %q for best results. Relative paths and other absolute paths are auto-mapped into the sandbox.", t.config.VirtualRoot, t.config.VirtualRoot)
 	} else if t.workdir != "" {
 		desc += fmt.Sprintf(" Working directory: %s — all relative paths resolve from here.", t.workdir)
 	}
@@ -106,11 +106,11 @@ func (t *ShellExecTool) Execute(ctx context.Context, args json.RawMessage) (stri
 	if t.config != nil && t.config.VirtualRoot != "" {
 		a.Command = t.config.RewritePaths(a.Command)
 		if a.Dir != "" {
-			resolved, err := t.config.AutoResolvePath(a.Dir)
-			if err != nil {
+			if resolved, err := sandboxResolvePath(t.config, a.Dir); err != nil {
 				return "", err
+			} else {
+				a.Dir = resolved
 			}
-			a.Dir = resolved
 		}
 	}
 	// Security model:
@@ -147,13 +147,16 @@ func (t *ShellExecTool) Execute(ctx context.Context, args json.RawMessage) (stri
 	}
 	cmd := exec.CommandContext(ctx, shell, shellFlag, a.Command)
 	if a.Dir != "" {
-		originalDir := a.Dir
-		if t.workdir != "" {
+		if t.config != nil && t.config.VirtualRoot != "" {
+			// Sandbox mode: AutoResolvePath already resolved a.Dir to a real
+			// absolute path within the sandbox root. No additional workdir-based
+			// validation is needed — ValidatePath was handled by AutoResolvePath.
+			cmd.Dir = a.Dir
+		} else if t.workdir != "" {
+			// Non-sandbox mode: validate that dir is within workdir boundaries.
+			originalDir := a.Dir
 			absWorkdir, err := filepath.Abs(t.workdir)
 			if err != nil {
-				if t.config != nil && t.config.VirtualRoot != "" {
-					return "", fmt.Errorf("resolve workdir: %s", t.config.RewriteOutputPaths(err.Error()))
-				}
 				return "", fmt.Errorf("resolve workdir: %w", err)
 			}
 			absDir := absWorkdir
@@ -162,9 +165,6 @@ func (t *ShellExecTool) Execute(ctx context.Context, args json.RawMessage) (stri
 			} else {
 				absDir = filepath.Join(absWorkdir, a.Dir)
 				if absDir, err = filepath.Abs(absDir); err != nil {
-					if t.config != nil && t.config.VirtualRoot != "" {
-						return "", fmt.Errorf("resolve dir: %s", t.config.RewriteOutputPaths(err.Error()))
-					}
 					return "", fmt.Errorf("resolve dir: %w", err)
 				}
 			}

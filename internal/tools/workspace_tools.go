@@ -147,6 +147,9 @@ func (t *SkillCreateTool) Execute(ctx context.Context, args json.RawMessage) (st
 	if err := os.WriteFile(path, []byte(a.Content), 0644); err != nil {
 		return "", sandboxRewriteErr(t.sandbox, fmt.Errorf("write skill file: %w", err))
 	}
+	if t.sandbox != nil && t.sandbox.VirtualRoot != "" {
+		return fmt.Sprintf("skill created: %s/skills/%s", t.sandbox.VirtualRoot, filename), nil
+	}
 	return fmt.Sprintf("skill created: %s", filename), nil
 }
 
@@ -195,6 +198,10 @@ func (t *PersonaUpdateTool) Execute(ctx context.Context, args json.RawMessage) (
 
 	if err := os.WriteFile(path, []byte(a.Content), 0644); err != nil {
 		return "", sandboxRewriteErr(t.sandbox, fmt.Errorf("write persona file: %w", err))
+	}
+	if t.sandbox != nil && t.sandbox.VirtualRoot != "" {
+		virtualPath := t.sandbox.RealToVirtual(path)
+		return fmt.Sprintf("%s updated (%s)", strings.ToLower(a.File), virtualPath), nil
 	}
 	return fmt.Sprintf("%s updated", strings.ToLower(a.File)), nil
 }
@@ -258,6 +265,9 @@ func (t *AgentConfigUpdateTool) Execute(ctx context.Context, args json.RawMessag
 	if err := config.SaveYAML(path, cfg); err != nil {
 		return "", sandboxRewriteErr(t.sandbox, fmt.Errorf("save agent config: %w", err))
 	}
+	if t.sandbox != nil && t.sandbox.VirtualRoot != "" {
+		return fmt.Sprintf("agent config updated: %s (agents/%s.yaml)", t.sandbox.VirtualRoot, params.Agent), nil
+	}
 	return fmt.Sprintf("agent config updated: %s", params.Agent), nil
 }
 
@@ -306,6 +316,9 @@ func (t *SkillUpdateTool) Execute(ctx context.Context, args json.RawMessage) (st
 
 	if err := os.WriteFile(found, []byte(params.Content), 0644); err != nil {
 		return "", sandboxRewriteErr(t.sandbox, fmt.Errorf("write skill file: %w", err))
+	}
+	if t.sandbox != nil && t.sandbox.VirtualRoot != "" {
+		return fmt.Sprintf("skill updated: %s/skills/%s", t.sandbox.VirtualRoot, filepath.Base(found)), nil
 	}
 	return fmt.Sprintf("skill updated: %s", filepath.Base(found)), nil
 }
