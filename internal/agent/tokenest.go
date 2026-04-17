@@ -57,3 +57,16 @@ func estimateMessagesUsage(messages []cobot.Message) cobot.Usage {
 		TotalTokens:      prompt + completion,
 	}
 }
+
+func estimateTurnUsage(baseUsage cobot.Usage, msgs []cobot.Message, content string, toolCalls []cobot.ToolCall) cobot.Usage {
+	if baseUsage.TotalTokens != 0 {
+		return baseUsage
+	}
+	u := estimateMessagesUsage(msgs)
+	u.CompletionTokens = estimateTokens(content)
+	for _, tc := range toolCalls {
+		u.CompletionTokens += estimateTokens(tc.Name) + estimateTokens(string(tc.Arguments))
+	}
+	u.TotalTokens = u.PromptTokens + u.CompletionTokens
+	return u
+}

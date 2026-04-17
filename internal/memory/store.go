@@ -106,18 +106,7 @@ func (s *Store) Store(ctx context.Context, content string, wingID, roomID string
 }
 
 func (s *Store) StoreByName(ctx context.Context, content, wingName, roomName, hallType string) (string, error) {
-	if hallType == "" {
-		hallType = cobot.TagFacts
-	}
-	wingID, err := s.CreateWingIfNotExists(ctx, wingName)
-	if err != nil {
-		return "", err
-	}
-	roomID, err := s.CreateRoomIfNotExists(ctx, wingID, roomName, hallType)
-	if err != nil {
-		return "", err
-	}
-	return s.Store(ctx, content, wingID, roomID)
+	return s.storeByNameOnDB(ctx, s.db, content, wingName, roomName, hallType)
 }
 
 func (s *Store) ConsolidateByName(ctx context.Context, wingName, roomName string) error {
@@ -231,6 +220,38 @@ func (s *Store) storeByNameOnDB(ctx context.Context, db *sql.DB, content, wingNa
 	return id, nil
 }
 
+// getSTMWingID returns the wing ID for the session wing in the given STM DB.
+// Returns ("", nil) if the wing doesn't exist.
+func getSTMWingID(ctx context.Context, db *sql.DB) (string, error) {
+	var w cobot.Wing
+	var kwJSON string
+	row := db.QueryRowContext(ctx, sqlSelectWingByName, stmWingName)
+	if err := row.Scan(&w.ID, &w.Name, &w.Type, &kwJSON); err == sql.ErrNoRows {
+		return "", nil
+	} else if err != nil {
+		return "", err
+	}
+	return w.ID, nil
+}
+
+// getSTMRooms returns all rooms for the given wing in the STM DB.
+func getSTMRooms(ctx context.Context, db *sql.DB, wingID string) ([]*cobot.Room, error) {
+	rows, err := db.QueryContext(ctx, sqlSelectRooms, wingID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var rooms []*cobot.Room
+	for rows.Next() {
+		var r cobot.Room
+		if err := rows.Scan(&r.ID, &r.WingID, &r.Name, &r.HallType); err != nil {
+			return nil, err
+		}
+		rooms = append(rooms, &r)
+	}
+	return rooms, rows.Err()
+}
+
 // StoreShortTerm stores a short-term memory item for the given session.
 // The category determines which room the item goes into:
 //
@@ -256,34 +277,13 @@ func (s *Store) RecallShortTerm(ctx context.Context, sessionID string) ([]*cobot
 		return nil, err
 	}
 
-	// Look up the session wing in the STM DB.
-	var wingID string
-	var w cobot.Wing
-	var kwJSON string
-	row := stmDB.QueryRowContext(ctx, sqlSelectWingByName, stmWingName)
-	if err := row.Scan(&w.ID, &w.Name, &w.Type, &kwJSON); err == sql.ErrNoRows {
+	wingID, err := getSTMWingID(ctx, stmDB)
+	if err != nil || wingID == "" {
 		return nil, nil
-	} else if err != nil {
-		return nil, err
 	}
-	wingID = w.ID
 
-	// Get all rooms for this wing.
-	rows, err := stmDB.QueryContext(ctx, sqlSelectRooms, wingID)
+	rooms, err := getSTMRooms(ctx, stmDB, wingID)
 	if err != nil {
-		return nil, err
-	}
-	var rooms []*cobot.Room
-	for rows.Next() {
-		var r cobot.Room
-		if err := rows.Scan(&r.ID, &r.WingID, &r.Name, &r.HallType); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		rooms = append(rooms, &r)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 
@@ -358,17 +358,14 @@ func (s *Store) StoreShortTermCompressed(ctx context.Context, sessionID, content
 	}
 
 	// Find or create the wing.
-	var wingID string
-	var w cobot.Wing
-	var kwJSON string
-	row := stmDB.QueryRowContext(ctx, sqlSelectWingByName, stmWingName)
-	if err := row.Scan(&w.ID, &w.Name, &w.Type, &kwJSON); err == sql.ErrNoRows {
-		// Wing doesn't exist yet; storeByNameOnDB will create it.
-		return s.storeByNameOnDB(ctx, stmDB, content, stmWingName, stmRoomCompressed, "compressed")
-	} else if err != nil {
+	wingID, err := getSTMWingID(ctx, stmDB)
+	if err != nil {
 		return "", fmt.Errorf("stm compressed: get wing: %w", err)
 	}
-	wingID = w.ID
+	if wingID == "" {
+		// Wing doesn't exist yet; storeByNameOnDB will create it.
+		return s.storeByNameOnDB(ctx, stmDB, content, stmWingName, stmRoomCompressed, "compressed")
+	}
 
 	// Find or create the compressed room.
 	var roomID string
@@ -408,31 +405,17 @@ func (s *Store) SummarizeAndPromoteSTM(ctx context.Context, sessionID string) er
 	}
 
 	// Look up the session wing in the STM DB.
-	var wingID string
-	var w cobot.Wing
-	var kwJSON string
-	row := stmDB.QueryRowContext(ctx, sqlSelectWingByName, stmWingName)
-	if err := row.Scan(&w.ID, &w.Name, &w.Type, &kwJSON); err != nil {
+	wingID, err := getSTMWingID(ctx, stmDB)
+	if err != nil || wingID == "" {
 		// Wing doesn't exist — nothing to promote.
 		return nil
 	}
-	wingID = w.ID
 
 	// Get all rooms.
-	rows, err := stmDB.QueryContext(ctx, sqlSelectRooms, wingID)
+	rooms, err := getSTMRooms(ctx, stmDB, wingID)
 	if err != nil {
 		return err
 	}
-	var rooms []*cobot.Room
-	for rows.Next() {
-		var r cobot.Room
-		if err := rows.Scan(&r.ID, &r.WingID, &r.Name, &r.HallType); err != nil {
-			rows.Close()
-			return err
-		}
-		rooms = append(rooms, &r)
-	}
-	rows.Close()
 
 	// Rooms to promote (everything except compressed).
 	promoteRoomNames := map[string]bool{

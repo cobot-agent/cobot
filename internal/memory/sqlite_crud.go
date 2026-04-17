@@ -47,7 +47,7 @@ func (s *Store) GetWings(ctx context.Context) ([]*cobot.Wing, error) {
 
 	var wings []*cobot.Wing
 	for rows.Next() {
-		w, err := scanWingRows(rows)
+		w, err := scanWing(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -225,24 +225,14 @@ func (s *Store) GetClosets(ctx context.Context, roomID string) ([]*cobot.Closet,
 
 // --- scan helpers ---
 
-func scanWing(row *sql.Row) (*cobot.Wing, error) {
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanWing(row rowScanner) (*cobot.Wing, error) {
 	var w cobot.Wing
 	var kwJSON string
 	if err := row.Scan(&w.ID, &w.Name, &w.Type, &kwJSON); err != nil {
-		return nil, err
-	}
-	if kwJSON != "" && kwJSON != "[]" {
-		if err := json.Unmarshal([]byte(kwJSON), &w.Keywords); err != nil {
-			return nil, fmt.Errorf("unmarshal keywords: %w", err)
-		}
-	}
-	return &w, nil
-}
-
-func scanWingRows(rows *sql.Rows) (*cobot.Wing, error) {
-	var w cobot.Wing
-	var kwJSON string
-	if err := rows.Scan(&w.ID, &w.Name, &w.Type, &kwJSON); err != nil {
 		return nil, err
 	}
 	if kwJSON != "" && kwJSON != "[]" {

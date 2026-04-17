@@ -103,15 +103,7 @@ func (a *Agent) Prompt(ctx context.Context, message string) (*cobot.ProviderResp
 		}
 
 		slog.Debug("agent response", "turn", turn, "content_len", len(resp.Content), "tool_calls", len(resp.ToolCalls), "stop", resp.StopReason)
-		usage := resp.Usage
-		if usage.TotalTokens == 0 {
-			usage = estimateMessagesUsage(req.Messages)
-			usage.CompletionTokens = estimateTokens(resp.Content)
-			for _, tc := range resp.ToolCalls {
-				usage.CompletionTokens += estimateTokens(tc.Name) + estimateTokens(string(tc.Arguments))
-			}
-			usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
-		}
+		usage := estimateTurnUsage(resp.Usage, req.Messages, resp.Content, resp.ToolCalls)
 		a.usageTracker.Add(usage)
 		a.PersistUsage()
 		a.AddMessage(cobot.Message{
@@ -209,11 +201,7 @@ func (a *Agent) Stream(ctx context.Context, message string) (<-chan cobot.Event,
 				if chunk.Done && len(toolCalls) == 0 {
 					slog.Debug("stream done", "turn", turn, "content_len", len(content))
 					a.AddMessage(cobot.Message{Role: cobot.RoleAssistant, Content: content})
-					if turnUsage.TotalTokens == 0 {
-						turnUsage = estimateMessagesUsage(req.Messages)
-						turnUsage.CompletionTokens = estimateTokens(content)
-						turnUsage.TotalTokens = turnUsage.PromptTokens + turnUsage.CompletionTokens
-					}
+					turnUsage = estimateTurnUsage(turnUsage, req.Messages, content, nil)
 					a.usageTracker.Add(turnUsage)
 					a.PersistUsage()
 					// Final response — store STM for this turn.
@@ -226,14 +214,7 @@ func (a *Agent) Stream(ctx context.Context, message string) (<-chan cobot.Event,
 			if len(toolCalls) > 0 {
 				slog.Debug("stream tool calls", "turn", turn, "count", len(toolCalls))
 				a.AddMessage(cobot.Message{Role: cobot.RoleAssistant, Content: content, ToolCalls: toolCalls})
-				if turnUsage.TotalTokens == 0 {
-					turnUsage = estimateMessagesUsage(req.Messages)
-					turnUsage.CompletionTokens = estimateTokens(content)
-					for _, tc := range toolCalls {
-						turnUsage.CompletionTokens += estimateTokens(tc.Name) + estimateTokens(string(tc.Arguments))
-					}
-					turnUsage.TotalTokens = turnUsage.PromptTokens + turnUsage.CompletionTokens
-				}
+				turnUsage = estimateTurnUsage(turnUsage, req.Messages, content, toolCalls)
 				a.usageTracker.Add(turnUsage)
 				a.PersistUsage()
 

@@ -47,43 +47,36 @@ func (a *Agent) runCompress(ctx context.Context, action CompressAction, msgs []c
 	}
 	defer a.compressMu.Unlock()
 
+	var summary string
+	var kept []cobot.Message
+
 	switch action {
 	case CompressSummarize:
-		summary, kept, err := a.compressor.Summarize(ctx, msgs)
+		var err error
+		summary, kept, err = a.compressor.Summarize(ctx, msgs)
 		if err != nil {
 			slog.Debug("summarize failed", "err", err)
 			return
 		}
-		optimized, err := a.compressor.OptimizeSummary(ctx, summary, msgs)
-		if err == nil && optimized != "" {
-			summary = optimized
-		}
-		a.replaceSessionMessages(summary, kept, snapshotLen)
-		a.extractMemories(ctx, summary, msgs)
-		// Store compression summary in STM compressed room.
-		if stm, ok := a.memoryStore.(cobot.ShortTermMemory); ok {
-			if _, err := stm.StoreShortTermCompressed(ctx, a.sessionID, summary); err != nil {
-				slog.Debug("stm compressed store failed", "err", err)
-			}
-		}
-
 	case CompressFull:
-		summary, err := a.compressor.Compress(ctx, msgs)
+		var err error
+		summary, err = a.compressor.Compress(ctx, msgs)
 		if err != nil {
 			slog.Debug("compress failed", "err", err)
 			return
 		}
-		optimized, err := a.compressor.OptimizeSummary(ctx, summary, msgs)
-		if err == nil && optimized != "" {
-			summary = optimized
-		}
-		a.replaceSessionMessages(summary, nil, snapshotLen)
-		a.extractMemories(ctx, summary, msgs)
-		// Store compression summary in STM compressed room.
-		if stm, ok := a.memoryStore.(cobot.ShortTermMemory); ok {
-			if _, err := stm.StoreShortTermCompressed(ctx, a.sessionID, summary); err != nil {
-				slog.Debug("stm compressed store failed", "err", err)
-			}
+	}
+
+	optimized, err := a.compressor.OptimizeSummary(ctx, summary, msgs)
+	if err == nil && optimized != "" {
+		summary = optimized
+	}
+	a.replaceSessionMessages(summary, kept, snapshotLen)
+	a.extractMemories(ctx, summary, msgs)
+	// Store compression summary in STM compressed room.
+	if stm, ok := a.memoryStore.(cobot.ShortTermMemory); ok {
+		if _, err := stm.StoreShortTermCompressed(ctx, a.sessionID, summary); err != nil {
+			slog.Debug("stm compressed store failed", "err", err)
 		}
 	}
 }
