@@ -13,7 +13,7 @@ import (
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
-//go:embed embed_cron_params.json
+//go:embed schemas/embed_cron_params.json
 var cronParamsJSON []byte
 
 var _ cobot.Tool = (*CronTool)(nil)

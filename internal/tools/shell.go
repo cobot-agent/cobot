@@ -14,7 +14,7 @@ import (
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
-//go:embed embed_shell_exec_params.json
+//go:embed schemas/embed_shell_exec_params.json
 var shellExecParamsJSON []byte
 
 type shellExecArgs struct {

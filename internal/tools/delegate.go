@@ -11,7 +11,7 @@ import (
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
-//go:embed embed_delegate_task_params.json
+//go:embed schemas/embed_delegate_task_params.json
 var delegateTaskParamsJSON []byte
 
 const delegateTimeout = 10 * time.Minute

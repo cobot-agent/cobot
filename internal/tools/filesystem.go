@@ -55,10 +55,10 @@ func sandboxRewriteErr(sandbox *cobot.SandboxConfig, err error) error {
 	return fmt.Errorf("%s", sandbox.RewriteOutputPaths(err.Error()))
 }
 
-//go:embed embed_filesystem_read_params.json
+//go:embed schemas/embed_filesystem_read_params.json
 var filesystemReadParamsJSON []byte
 
-//go:embed embed_filesystem_write_params.json
+//go:embed schemas/embed_filesystem_write_params.json
 var filesystemWriteParamsJSON []byte
 
 type readFileArgs struct {
@@ -157,10 +157,10 @@ func (t *WriteFileTool) Execute(ctx context.Context, args json.RawMessage) (stri
 	return "ok", nil
 }
 
-//go:embed embed_filesystem_list_params.json
+//go:embed schemas/embed_filesystem_list_params.json
 var filesystemListParamsJSON []byte
 
-//go:embed embed_filesystem_search_params.json
+//go:embed schemas/embed_filesystem_search_params.json
 var filesystemSearchParamsJSON []byte
 
 type listDirArgs struct {
@@ -374,7 +374,7 @@ func (t *SearchFilesTool) searchWithGo(a *searchFilesArgs, maxResults int) (stri
 	return result, nil
 }
 
-//go:embed embed_filesystem_grep_params.json
+//go:embed schemas/embed_filesystem_grep_params.json
 var filesystemGrepParamsJSON []byte
 
 type grepFilesArgs struct {

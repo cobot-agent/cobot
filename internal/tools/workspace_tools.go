@@ -14,19 +14,19 @@ import (
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
-//go:embed embed_workspace_config_update_params.json
+//go:embed schemas/embed_workspace_config_update_params.json
 var workspaceConfigUpdateParamsJSON []byte
 
-//go:embed embed_skill_create_params.json
+//go:embed schemas/embed_skill_create_params.json
 var skillCreateParamsJSON []byte
 
-//go:embed embed_persona_update_params.json
+//go:embed schemas/embed_persona_update_params.json
 var personaUpdateParamsJSON []byte
 
-//go:embed embed_agent_config_update_params.json
+//go:embed schemas/embed_agent_config_update_params.json
 var agentConfigUpdateParamsJSON []byte
 
-//go:embed embed_skill_update_params.json
+//go:embed schemas/embed_skill_update_params.json
 var skillUpdateParamsJSON []byte
 
 const maxPersonaSize = 64 * 1024 // 64 KB
