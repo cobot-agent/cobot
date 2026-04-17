@@ -86,6 +86,13 @@ type Agent struct {
 	compressor         *Compressor
 	compressMu         sync.Mutex // prevents concurrent compression runs
 	stmPromoteInterval int        // turns between STM promotions (0 = disabled)
+	cronScheduler      CronScheduler
+}
+
+// CronScheduler is a minimal interface for stopping the cron scheduler.
+// This avoids a circular dependency between agent and cron packages.
+type CronScheduler interface {
+	Stop()
 }
 
 func New(config *cobot.Config, toolRegistry cobot.ToolRegistry) *Agent {
@@ -214,6 +221,10 @@ func (a *Agent) MemoryRecall() cobot.MemoryRecall {
 	return a.memoryRecall
 }
 
+func (a *Agent) SetCronScheduler(s CronScheduler) {
+	a.cronScheduler = s
+}
+
 func (a *Agent) Config() *cobot.Config {
 	return a.config
 }
@@ -296,6 +307,11 @@ func (a *Agent) Close() error {
 	case <-done:
 	case <-time.After(30 * time.Second):
 		// Force proceed after timeout rather than blocking indefinitely.
+	}
+
+	// Stop cron scheduler if running.
+	if a.cronScheduler != nil {
+		a.cronScheduler.Stop()
 	}
 
 	// Promote valuable STM items to LTM before closing the memory store.

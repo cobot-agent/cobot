@@ -1,0 +1,31 @@
+{
+  "type": "object",
+  "properties": {
+    "action": {
+      "type": "string",
+      "enum": ["create", "list", "delete", "pause", "resume"],
+      "description": "Action to perform"
+    },
+    "schedule": {
+      "type": "string",
+      "description": "Cron expression (e.g. '0 9 * * *') or ISO timestamp for one-shot (e.g. '2026-04-18T09:00:00Z')"
+    },
+    "prompt": {
+      "type": "string",
+      "description": "Task instruction for the agent to execute when the job fires"
+    },
+    "job_id": {
+      "type": "string",
+      "description": "Job ID for delete/pause/resume actions"
+    },
+    "name": {
+      "type": "string",
+      "description": "Optional human-friendly name for the job"
+    },
+    "model": {
+      "type": "string",
+      "description": "Optional model override for job execution"
+    }
+  },
+  "required": ["action"]
+}

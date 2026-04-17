@@ -14,6 +14,7 @@ import (
 
 	"github.com/cobot-agent/cobot/internal/agent"
 	"github.com/cobot-agent/cobot/internal/config"
+	"github.com/cobot-agent/cobot/internal/cron"
 	"github.com/cobot-agent/cobot/internal/llm"
 	"github.com/cobot-agent/cobot/internal/memory"
 	"github.com/cobot-agent/cobot/internal/skills"
@@ -192,15 +193,32 @@ func ConfigureAgentForWorkspace(a *agent.Agent, ws *workspace.Workspace, registr
 
 	// --- delegate tool ---
 	a.RegisterTool(tools.NewDelegateTool(func() cobot.SubAgent {
-		cfg := *a.Config() // value copy to avoid mutating parent's config
 		filtered := a.ToolRegistry().Clone().Without("delegate_task", "memory_store", "memory_search", "l3_deep_search")
-		sub := agent.New(&cfg, filtered)
-		sub.SetRegistry(registry)
-		if err := sub.SetModel(a.Model()); err != nil {
-			sub.SetProvider(a.Provider())
-		}
-		return sub
+		return newSubAgent(a, registry, filtered)
 	}, tools.WithDelegateWorkdir(ws.SpaceDir()), tools.WithDelegateAgentLookup(ws), tools.WithDelegateSandbox(sandbox)))
+
+	// --- cron tool ---
+	cronDir := ws.CronDir()
+	cronStore := cron.NewStore(cronDir)
+	cronExecutor := cron.NewAgentExecutor(func() cron.AgentRunner {
+		filtered := a.ToolRegistry().Clone().Without("cron", "delegate_task")
+		sub := newSubAgent(a, registry, filtered)
+		_ = sub.SetSystemPrompt("You are a scheduled task executor. Complete the task efficiently and output results.")
+		return &cronAgentRunner{agent: sub}
+	})
+	// Wire memory store for result persistence.
+	if store != nil {
+		cronExecutor.WithMemoryStore(func(ctx context.Context, content, wingName, roomName, hallType string) (string, error) {
+			return store.StoreByName(ctx, content, wingName, roomName, hallType)
+		})
+	}
+	cronScheduler := cron.NewScheduler(cronStore, cronExecutor)
+	a.RegisterTool(tools.NewCronTool(cronScheduler))
+	if err := cronScheduler.Start(); err != nil {
+		slog.Warn("failed to start cron scheduler", "error", err)
+	}
+	// Store scheduler on the agent for cleanup.
+	a.SetCronScheduler(cronScheduler)
 
 	return nil
 }
@@ -242,4 +260,37 @@ func resolveAgentConfig(ws *workspace.Workspace) (*config.AgentConfig, error) {
 		return cfg, nil
 	}
 	return nil, nil
+}
+
+// newSubAgent creates a configured sub-agent sharing the parent's model and registry.
+func newSubAgent(a *agent.Agent, registry cobot.ModelResolver, filteredTools cobot.ToolRegistry) *agent.Agent {
+	cfg := *a.Config()
+	sub := agent.New(&cfg, filteredTools)
+	sub.SetRegistry(registry)
+	if err := sub.SetModel(a.Model()); err != nil {
+		sub.SetProvider(a.Provider())
+	}
+	return sub
+}
+
+// cronAgentRunner adapts an *agent.Agent (which implements cobot.SubAgent)
+// to the cron.AgentRunner interface by calling Prompt and returning the content.
+type cronAgentRunner struct {
+	agent *agent.Agent
+}
+
+func (r *cronAgentRunner) Prompt(ctx context.Context, message string) (string, error) {
+	resp, err := r.agent.Prompt(ctx, message)
+	if err != nil {
+		return "", err
+	}
+	return resp.Content, nil
+}
+
+func (r *cronAgentRunner) SetModel(spec string) error {
+	return r.agent.SetModel(spec)
+}
+
+func (r *cronAgentRunner) Close() error {
+	return r.agent.Close()
 }

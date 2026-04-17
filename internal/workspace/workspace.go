@@ -100,6 +100,11 @@ func (w *Workspace) MCPDir() string {
 	return filepath.Join(w.DataDir, "mcp")
 }
 
+// CronDir returns the directory for cron job storage.
+func (w *Workspace) CronDir() string {
+	return filepath.Join(w.DataDir, "cron")
+}
+
 func (w *Workspace) ConfigPath() string {
 	return filepath.Join(w.DataDir, "workspace.yaml")
 }
@@ -155,6 +160,7 @@ func (w *Workspace) EnsureDirs() error {
 		w.AgentsDir(),
 		w.SpaceDir(),
 		w.MCPDir(),
+		w.CronDir(),
 	}
 	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0755); err != nil {
