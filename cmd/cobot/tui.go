@@ -21,6 +21,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/cobot-agent/cobot/internal/agent"
+	"github.com/cobot-agent/cobot/internal/bootstrap"
 	"github.com/cobot-agent/cobot/internal/workspace"
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
@@ -305,7 +306,7 @@ func (m *tuiModel) handleSlashCommand(text string) tea.Cmd {
 				})
 				break
 			}
-			if err := reconfigureAgentForWorkspace(m.agent, ws, m.agent.Registry()); err != nil {
+			if err := bootstrap.ConfigureAgentForWorkspace(m.agent, ws, m.agent.Registry()); err != nil {
 				m.messages = append(m.messages, chatMessage{
 					role: "error", raw: fmt.Sprintf("Failed to switch workspace: %v", err),
 				})
@@ -705,10 +706,13 @@ var tuiCmd = &cobra.Command{
 		cleanupLog := redirectSlogForTUI()
 		defer cleanupLog()
 
-		a, ws, cleanup, err := initAgent(cfg, false)
+		res, err := bootstrap.InitAgent(cfg, false)
 		if err != nil {
 			return err
 		}
+		a := res.Agent
+		ws := res.Workspace
+		cleanup := res.Cleanup
 		defer cleanup()
 
 		wsName := ""

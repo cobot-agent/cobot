@@ -26,15 +26,11 @@ func ApplyEnvVars(cfg *cobot.Config) {
 		cfg.Workspace = v
 	}
 	if v := os.Getenv("OPENAI_API_KEY"); v != "" {
-		if cfg.APIKeys == nil {
-			cfg.APIKeys = make(map[string]string)
-		}
+		cfg.EnsureAPIKeys()
 		cfg.APIKeys["openai"] = v
 	}
 	if v := os.Getenv("ANTHROPIC_API_KEY"); v != "" {
-		if cfg.APIKeys == nil {
-			cfg.APIKeys = make(map[string]string)
-		}
+		cfg.EnsureAPIKeys()
 		cfg.APIKeys["anthropic"] = v
 	}
 }

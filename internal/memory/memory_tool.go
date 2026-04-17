@@ -189,7 +189,7 @@ func (t *L3DeepSearchTool) Execute(ctx context.Context, args json.RawMessage) (s
 
 	out := fmt.Sprintf("Deep search found %d results:\n", len(results))
 	for _, r := range results {
-		content := truncate(r.Content, 200)
+		content := cobot.Truncate(r.Content, 200)
 		out += fmt.Sprintf("  - [%.4f][%s] %s\n", r.Score, r.Tier1, content)
 	}
 	return out, nil

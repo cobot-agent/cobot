@@ -47,14 +47,6 @@ func renderSearchSQL(name string, data searchTmplData) string {
 	return strings.TrimSpace(section)
 }
 
-// truncate shortens s to at most maxLen bytes, appending "..." if truncated.
-func truncate(s string, maxLen int) string {
-	if len(s) > maxLen {
-		return s[:maxLen] + "..."
-	}
-	return s
-}
-
 // searchDrawers performs FTS5 full-text search on drawers, with optional
 // filtering by tier1 (wing) and tier2 (room). Results are scored using bm25.
 func (s *Store) searchDrawers(ctx context.Context, query *cobot.SearchQuery) ([]*cobot.SearchResult, error) {
@@ -171,7 +163,7 @@ func (s *Store) collectDeepSearch(ctx context.Context, wings []*cobot.Wing, cont
 		b.WriteString("### Related: ")
 		b.WriteString(query)
 		for _, r := range searchResults {
-			content := truncate(r.Content, 150)
+			content := cobot.Truncate(r.Content, 150)
 			b.WriteString("\n- [")
 			b.WriteString(r.Tier1)
 			b.WriteString("] ")
@@ -210,11 +202,11 @@ func (s *Store) SummarizeContent(content string) string {
 			continue
 		}
 		if len(line) > 10 {
-			return truncate(line, 200)
+			return cobot.Truncate(line, 200)
 		}
 	}
 
-	return truncate(content, 200)
+	return cobot.Truncate(content, 200)
 }
 
 // AutoSummarizeRoom generates summaries for all closets in a room.
@@ -244,7 +236,7 @@ func (s *Store) AutoSummarizeRoom(ctx context.Context, wingID, roomID string) er
 		return nil
 	}
 
-	combinedSummary := truncate(strings.Join(summaries, "; "), 500)
+	combinedSummary := cobot.Truncate(strings.Join(summaries, "; "), 500)
 
 	closet := &cobot.Closet{
 		RoomID:  roomID,

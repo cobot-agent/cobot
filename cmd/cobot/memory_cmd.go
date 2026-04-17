@@ -60,7 +60,7 @@ var memorySearchCmd = &cobra.Command{
 		}
 
 		for _, r := range results {
-			fmt.Fprintf(cmd.OutOrStdout(), "[%s] %.2f %s\n", r.ID, r.Score, truncate(r.Content, 120))
+			fmt.Fprintf(cmd.OutOrStdout(), "[%s] %.2f %s\n", r.ID, r.Score, cobot.Truncate(r.Content, 120))
 		}
 		return nil
 	},

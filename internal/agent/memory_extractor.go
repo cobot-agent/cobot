@@ -45,12 +45,12 @@ func (a *Agent) doExtractMemoriesWith(ctx context.Context, summary string, origi
 			conversationBuf.WriteString(fmt.Sprintf("\n... (%d more messages omitted)\n", len(originalMsgs)-40))
 			break
 		}
-		conversationBuf.WriteString(fmt.Sprintf("[%s]: %s\n", m.Role, truncate(m.Content, 300)))
+		conversationBuf.WriteString(fmt.Sprintf("[%s]: %s\n", m.Role, cobot.Truncate(m.Content, 300)))
 		for _, tc := range m.ToolCalls {
 			conversationBuf.WriteString(fmt.Sprintf("  tool_call: %s\n", tc.Name))
 		}
 		if m.ToolResult != nil && m.ToolResult.Output != "" {
-			conversationBuf.WriteString(fmt.Sprintf("  tool_result: %s\n", truncate(m.ToolResult.Output, 200)))
+			conversationBuf.WriteString(fmt.Sprintf("  tool_result: %s\n", cobot.Truncate(m.ToolResult.Output, 200)))
 		}
 	}
 

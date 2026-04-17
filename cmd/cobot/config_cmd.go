@@ -95,9 +95,7 @@ var configSetAuthCmd = &cobra.Command{
 
 		// Set API key if provided
 		if apiKey != "" {
-			if cfg.APIKeys == nil {
-				cfg.APIKeys = make(map[string]string)
-			}
+			cfg.EnsureAPIKeys()
 			cfg.APIKeys[provider] = apiKey
 		}
 
@@ -285,9 +283,7 @@ func setConfigValue(cfg *cobot.Config, key, value string) error {
 	default:
 		if strings.HasPrefix(key, "apikey.") {
 			provider := strings.TrimPrefix(key, "apikey.")
-			if cfg.APIKeys == nil {
-				cfg.APIKeys = make(map[string]string)
-			}
+			cfg.EnsureAPIKeys()
 			cfg.APIKeys[provider] = value
 		} else {
 			return fmt.Errorf("unknown config key: %s", key)
@@ -327,17 +323,13 @@ func interactiveConfig(cfg *cobot.Config) error {
 
 	fmt.Print("OpenAI API key: ")
 	if input, _ := reader.ReadString('\n'); strings.TrimSpace(input) != "" {
-		if cfg.APIKeys == nil {
-			cfg.APIKeys = make(map[string]string)
-		}
+		cfg.EnsureAPIKeys()
 		cfg.APIKeys["openai"] = strings.TrimSpace(input)
 	}
 
 	fmt.Print("Anthropic API key: ")
 	if input, _ := reader.ReadString('\n'); strings.TrimSpace(input) != "" {
-		if cfg.APIKeys == nil {
-			cfg.APIKeys = make(map[string]string)
-		}
+		cfg.EnsureAPIKeys()
 		cfg.APIKeys["anthropic"] = strings.TrimSpace(input)
 	}
 

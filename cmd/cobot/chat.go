@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/cobot-agent/cobot/internal/bootstrap"
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
@@ -34,10 +35,12 @@ var chatCmd = &cobra.Command{
 			cfg.Workspace = w
 		}
 
-		a, _, cleanup, err := initAgent(cfg, true)
+		res, err := bootstrap.InitAgent(cfg, true)
 		if err != nil {
 			return err
 		}
+		a := res.Agent
+		cleanup := res.Cleanup
 		defer cleanup()
 
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -55,7 +58,7 @@ var chatCmd = &cobra.Command{
 			case cobot.EventToolCall:
 				fmt.Fprintf(os.Stderr, "[Tool: %s]\n", event.ToolCall.Name)
 			case cobot.EventToolResult:
-				fmt.Fprintf(os.Stderr, "[Result: %s]\n", truncate(event.Content, 100))
+				fmt.Fprintf(os.Stderr, "[Result: %s]\n", cobot.Truncate(event.Content, 100))
 			case cobot.EventDone:
 				fmt.Println()
 			case cobot.EventError:
@@ -80,13 +83,6 @@ func ApplyChatFlags(cfg *cobot.Config, modelFlag string, promptFlag string) {
 	if promptFlag != "" {
 		cfg.SystemPrompt = promptFlag
 	}
-}
-
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "..."
 }
 
 func init() {

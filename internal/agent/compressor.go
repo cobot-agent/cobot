@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
-	"unicode/utf8"
 
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
@@ -104,7 +103,7 @@ func (c *Compressor) callLLMSummarize(ctx context.Context, messages []cobot.Mess
 			sb.WriteString(fmt.Sprintf("  tool_call: %s(%s)\n", tc.Name, string(tc.Arguments)))
 		}
 		if m.ToolResult != nil {
-			sb.WriteString(fmt.Sprintf("  tool_result: %s\n", truncate(m.ToolResult.Output, 500)))
+			sb.WriteString(fmt.Sprintf("  tool_result: %s\n", cobot.Truncate(m.ToolResult.Output, 500)))
 		}
 	}
 
@@ -140,7 +139,7 @@ func (c *Compressor) OptimizeSummary(ctx context.Context, summary string, origin
 			sb.WriteString(fmt.Sprintf("... (%d more messages)\n", len(originalMessages)-10))
 			break
 		}
-		sb.WriteString(fmt.Sprintf("[%s]: %s\n", m.Role, truncate(m.Content, 200)))
+		sb.WriteString(fmt.Sprintf("[%s]: %s\n", m.Role, cobot.Truncate(m.Content, 200)))
 	}
 
 	req := &cobot.ProviderRequest{
@@ -170,19 +169,6 @@ func (c *Compressor) OptimizeSummary(ctx context.Context, summary string, origin
 	}
 
 	return optimized, nil
-}
-
-func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	// Find last valid rune boundary at or before maxLen to avoid breaking multi-byte UTF-8.
-	for i := maxLen; i >= 0; i-- {
-		if utf8.RuneStart(s[i]) {
-			return s[:i] + "..."
-		}
-	}
-	return "..."
 }
 
 const summarizePrompt = `You are a conversation summarizer. Produce a concise summary of the following conversation that preserves:

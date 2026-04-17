@@ -21,6 +21,13 @@ type Config struct {
 	Session      SessionConfig             `yaml:"session,omitempty"`
 }
 
+// EnsureAPIKeys initializes the APIKeys map if nil.
+func (c *Config) EnsureAPIKeys() {
+	if c.APIKeys == nil {
+		c.APIKeys = make(map[string]string)
+	}
+}
+
 type SandboxConfig struct {
 	VirtualRoot     string   `yaml:"virtual_root,omitempty"` // Virtual path prefix the LLM sees (e.g. "/home/myworkspace")
 	Root            string   `yaml:"root"`                   // Real filesystem path

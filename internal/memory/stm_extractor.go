@@ -2,6 +2,8 @@ package memory
 
 import (
 	"strings"
+
+	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
 // STMItem represents a single short-term memory item extracted from a
@@ -40,7 +42,7 @@ func ExtractSTM(userMsg, assistantMsg string, toolResults []string) []STMItem {
 		todoItems := extractTODOItems(assistantMsg)
 		items = append(items, todoItems...)
 
-		summary := truncate(assistantMsg, 200)
+		summary := cobot.Truncate(assistantMsg, 200)
 		items = append(items, STMItem{
 			Content:  "Assistant: " + summary,
 			Category: "task_state",
@@ -64,7 +66,7 @@ func extractUserItems(userMsg string) []STMItem {
 	// Check for requirement phrases.
 	if hasRequirementPhrase(userMsg) {
 		items = append(items, STMItem{
-			Content:  "Requirement: " + truncate(userMsg, 200),
+			Content:  "Requirement: " + cobot.Truncate(userMsg, 200),
 			Category: "requirement",
 		})
 	}
@@ -75,7 +77,7 @@ func extractUserItems(userMsg string) []STMItem {
 
 	// Always store user message as context.
 	items = append(items, STMItem{
-		Content:  "User: " + truncate(userMsg, 200),
+		Content:  "User: " + cobot.Truncate(userMsg, 200),
 		Category: "context",
 	})
 
@@ -123,7 +125,7 @@ func extractTODOItems(text string) []STMItem {
 		for _, kw := range todoKeywords {
 			if strings.Contains(upper, strings.ToUpper(kw)) {
 				items = append(items, STMItem{
-					Content:  truncate(trimmed, 200),
+					Content:  cobot.Truncate(trimmed, 200),
 					Category: "todo",
 				})
 				break
@@ -188,25 +190,25 @@ func summarizeToolResult(result string) string {
 	// Build / test results.
 	if strings.Contains(lower, "build") || strings.Contains(lower, "compil") {
 		if strings.Contains(lower, "error") || strings.Contains(lower, "fail") {
-			return "Build failed: " + truncate(result, 150)
+			return "Build failed: " + cobot.Truncate(result, 150)
 		}
-		return "Build passed: " + truncate(result, 100)
+		return "Build passed: " + cobot.Truncate(result, 100)
 	}
 
 	if strings.Contains(lower, "test") {
 		if strings.Contains(lower, "fail") {
-			return "Tests failed: " + truncate(result, 150)
+			return "Tests failed: " + cobot.Truncate(result, 150)
 		}
 		if strings.Contains(lower, "pass") {
-			return "Tests passed: " + truncate(result, 100)
+			return "Tests passed: " + cobot.Truncate(result, 100)
 		}
 	}
 
 	// Error states.
 	if strings.Contains(lower, "error") || strings.Contains(lower, "fatal") {
-		return "Error: " + truncate(result, 150)
+		return "Error: " + cobot.Truncate(result, 150)
 	}
 
 	// Default: truncate to reasonable length.
-	return truncate(result, 200)
+	return cobot.Truncate(result, 200)
 }
