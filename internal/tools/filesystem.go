@@ -279,6 +279,55 @@ func (t *SearchFilesTool) Execute(ctx context.Context, args json.RawMessage) (st
 		maxResults = 50
 	}
 
+	// Try fd-find first
+	if result, err := t.searchWithFd(ctx, &a, maxResults); err == nil {
+		return result, nil
+	}
+
+	// Fallback to Go implementation
+	return t.searchWithGo(&a, maxResults)
+}
+
+// searchWithFd attempts to use fd-find for filename search.
+func (t *SearchFilesTool) searchWithFd(ctx context.Context, a *searchFilesArgs, maxResults int) (string, error) {
+	fdArgs := []string{
+		a.Pattern,
+		a.Path,
+		"--type", "f",
+		"--max-results", fmt.Sprintf("%d", maxResults),
+		"--absolute-path",
+	}
+	output, err := runFd(ctx, fdArgs)
+	if err != nil {
+		return "", err
+	}
+	if output == "" {
+		return "no files found matching pattern", nil
+	}
+
+	lines := strings.Split(strings.TrimRight(output, "\n"), "\n")
+	var results []string
+	for _, line := range lines {
+		if t.sandbox != nil && t.sandbox.VirtualRoot != "" {
+			line = t.sandbox.RealToVirtual(line)
+		}
+		results = append(results, line)
+	}
+
+	truncated := false
+	if len(results) > maxResults {
+		results = results[:maxResults]
+		truncated = true
+	}
+	result := strings.Join(results, "\n")
+	if truncated {
+		result += fmt.Sprintf("\n... (truncated at %d results)", maxResults)
+	}
+	return result, nil
+}
+
+// searchWithGo is the Go builtin fallback for filename search.
+func (t *SearchFilesTool) searchWithGo(a *searchFilesArgs, maxResults int) (string, error) {
 	var matches []string
 	err := filepath.WalkDir(a.Path, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -364,14 +413,78 @@ func (t *GrepFilesTool) Execute(ctx context.Context, args json.RawMessage) (stri
 		a.Path = resolved
 	}
 
-	re, err := regexp.Compile(a.Pattern)
-	if err != nil {
-		return "", fmt.Errorf("invalid regex pattern: %w", err)
-	}
-
 	maxResults := a.MaxResults
 	if maxResults <= 0 {
 		maxResults = 50
+	}
+
+	// Try ripgrep first
+	if result, err := t.grepWithRg(ctx, &a, maxResults); err == nil {
+		return result, nil
+	}
+
+	// Fallback to Go implementation
+	return t.grepWithGo(&a, maxResults)
+}
+
+// grepWithRg attempts to use ripgrep for content search.
+func (t *GrepFilesTool) grepWithRg(ctx context.Context, a *grepFilesArgs, maxResults int) (string, error) {
+	rgArgs := []string{
+		"--no-heading",
+		"--line-number",
+		"--color", "never",
+		"--max-count", "10",
+		"--max-filesize", "1M",
+	}
+	if a.Include != "" {
+		rgArgs = append(rgArgs, "--glob", a.Include)
+	}
+	rgArgs = append(rgArgs, a.Pattern, a.Path)
+
+	output, err := runRg(ctx, rgArgs)
+	if err != nil {
+		return "", err
+	}
+	if output == "" {
+		return "no matches found", nil
+	}
+
+	lines := strings.Split(strings.TrimRight(output, "\n"), "\n")
+	// Rewrite real paths to virtual paths and truncate
+	var results []string
+	for _, line := range lines {
+		if t.sandbox != nil && t.sandbox.VirtualRoot != "" {
+			// rg output is "path:linenum:content", rewrite the path part
+			idx := strings.Index(line, ":")
+			if idx >= 0 {
+				realPath := line[:idx]
+				virtualPath := t.sandbox.RealToVirtual(realPath)
+				line = virtualPath + line[idx:]
+			}
+		}
+		results = append(results, line)
+		if len(results) >= maxResults*10 { // max 10 matches per file * max files
+			break
+		}
+	}
+
+	truncated := false
+	if len(results) > maxResults*10 {
+		results = results[:maxResults*10]
+		truncated = true
+	}
+	result := strings.Join(results, "\n")
+	if truncated {
+		result += fmt.Sprintf("\n... (truncated at %d lines)", len(results))
+	}
+	return result, nil
+}
+
+// grepWithGo is the Go builtin fallback for content search.
+func (t *GrepFilesTool) grepWithGo(a *grepFilesArgs, maxResults int) (string, error) {
+	re, err := regexp.Compile(a.Pattern)
+	if err != nil {
+		return "", fmt.Errorf("invalid regex pattern: %w", err)
 	}
 
 	var results []string
