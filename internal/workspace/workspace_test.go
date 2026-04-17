@@ -116,7 +116,6 @@ func TestWorkspace_EnsureDirs(t *testing.T) {
 
 	expectedDirs := []string{
 		dataDir,
-		filepath.Join(dataDir, "memory"),
 		filepath.Join(dataDir, "sessions"),
 		filepath.Join(dataDir, "skills"),
 		filepath.Join(dataDir, "agents"),
@@ -205,9 +204,6 @@ func TestWorkspace_Accessors(t *testing.T) {
 	}
 	if ws.GetMemoryMdPath() != filepath.Join(dataDir, "MEMORY.md") {
 		t.Errorf("GetMemoryMdPath() = %s", ws.GetMemoryMdPath())
-	}
-	if ws.MemoryDir() != filepath.Join(dataDir, "memory") {
-		t.Errorf("MemoryDir() = %s", ws.MemoryDir())
 	}
 	if ws.SessionsDir() != filepath.Join(dataDir, "sessions") {
 		t.Errorf("SessionsDir() = %s", ws.SessionsDir())

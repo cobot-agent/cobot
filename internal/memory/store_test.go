@@ -12,7 +12,7 @@ import (
 
 func TestOpenCloseStore(t *testing.T) {
 	dir := t.TempDir()
-	s, err := OpenStore(dir)
+	s, err := OpenStore(dir, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -23,7 +23,7 @@ func TestOpenCloseStore(t *testing.T) {
 
 func TestWingCRUD(t *testing.T) {
 	dir := t.TempDir()
-	s, err := OpenStore(dir)
+	s, err := OpenStore(dir, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestWingCRUD(t *testing.T) {
 
 func TestRoomCRUD(t *testing.T) {
 	dir := t.TempDir()
-	s, _ := OpenStore(dir)
+	s, _ := OpenStore(dir, dir)
 	defer s.Close()
 
 	ctx := context.Background()
@@ -86,7 +86,7 @@ func TestRoomCRUD(t *testing.T) {
 
 func TestDrawerCRUD(t *testing.T) {
 	dir := t.TempDir()
-	s, _ := OpenStore(dir)
+	s, _ := OpenStore(dir, dir)
 	defer s.Close()
 
 	ctx := context.Background()
@@ -106,7 +106,7 @@ func TestDrawerCRUD(t *testing.T) {
 
 func TestClosetCRUD(t *testing.T) {
 	dir := t.TempDir()
-	s, _ := OpenStore(dir)
+	s, _ := OpenStore(dir, dir)
 	defer s.Close()
 
 	ctx := context.Background()
@@ -140,7 +140,7 @@ func TestClosetCRUD(t *testing.T) {
 
 func TestFTS5Search(t *testing.T) {
 	dir := t.TempDir()
-	s, _ := OpenStore(dir)
+	s, _ := OpenStore(dir, dir)
 	defer s.Close()
 
 	ctx := context.Background()
@@ -166,7 +166,7 @@ func TestFTS5Search(t *testing.T) {
 
 func TestStoreAndSearch(t *testing.T) {
 	dir := t.TempDir()
-	s, _ := OpenStore(dir)
+	s, _ := OpenStore(dir, dir)
 	defer s.Close()
 
 	ctx := context.Background()
@@ -201,7 +201,7 @@ func TestStoreAndSearch(t *testing.T) {
 
 func TestStoreAndSearchMultiple(t *testing.T) {
 	dir := t.TempDir()
-	s, _ := OpenStore(dir)
+	s, _ := OpenStore(dir, dir)
 	defer s.Close()
 
 	ctx := context.Background()
@@ -233,7 +233,7 @@ func TestStoreAndSearchMultiple(t *testing.T) {
 
 func TestL3DeepSearch(t *testing.T) {
 	dir := t.TempDir()
-	s, err := OpenStore(dir)
+	s, err := OpenStore(dir, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -278,7 +278,7 @@ func TestL3DeepSearch(t *testing.T) {
 
 func TestSummarizeContent(t *testing.T) {
 	dir := t.TempDir()
-	s, err := OpenStore(dir)
+	s, err := OpenStore(dir, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -312,7 +312,7 @@ func TestSummarizeContent(t *testing.T) {
 
 func TestAutoSummarizeRoom(t *testing.T) {
 	dir := t.TempDir()
-	s, err := OpenStore(dir)
+	s, err := OpenStore(dir, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -364,7 +364,7 @@ func TestAutoSummarizeRoom(t *testing.T) {
 
 func TestSTMPerSessionDBCreation(t *testing.T) {
 	dir := t.TempDir()
-	s, err := OpenStore(dir)
+	s, err := OpenStore(dir, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -404,7 +404,7 @@ func TestSTMPerSessionDBCreation(t *testing.T) {
 
 func TestSTMDataIsolatedBetweenSessions(t *testing.T) {
 	dir := t.TempDir()
-	s, err := OpenStore(dir)
+	s, err := OpenStore(dir, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -446,7 +446,7 @@ func TestSTMDataIsolatedBetweenSessions(t *testing.T) {
 
 func TestSTMPromoteToLTM(t *testing.T) {
 	dir := t.TempDir()
-	s, err := OpenStore(dir)
+	s, err := OpenStore(dir, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -505,7 +505,7 @@ func TestSTMPromoteToLTM(t *testing.T) {
 
 func TestSTMCleanupOnClear(t *testing.T) {
 	dir := t.TempDir()
-	s, err := OpenStore(dir)
+	s, err := OpenStore(dir, dir)
 	if err != nil {
 		t.Fatal(err)
 	}

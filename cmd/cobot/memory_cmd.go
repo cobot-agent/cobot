@@ -25,7 +25,7 @@ var memorySearchCmd = &cobra.Command{
 			return err
 		}
 
-		store, err := memory.OpenStore(ws.MemoryDir())
+		store, err := memory.OpenStore(ws.DataDir, ws.SessionsDir())
 		if err != nil {
 			return err
 		}
@@ -63,7 +63,7 @@ var memoryStoreCmd = &cobra.Command{
 			return err
 		}
 
-		store, err := memory.OpenStore(ws.MemoryDir())
+		store, err := memory.OpenStore(ws.DataDir, ws.SessionsDir())
 		if err != nil {
 			return err
 		}
@@ -106,7 +106,7 @@ var memoryStatusCmd = &cobra.Command{
 			return err
 		}
 
-		store, err := memory.OpenStore(ws.MemoryDir())
+		store, err := memory.OpenStore(ws.DataDir, ws.SessionsDir())
 		if err != nil {
 			return err
 		}

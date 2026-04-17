@@ -22,18 +22,17 @@ type Store struct {
 	stmDBs map[string]*sql.DB // sessionID → STM DB connection
 }
 
-// OpenStore opens a SQLite-backed memory store at the given directory.
-// It creates the directory and database file if they don't exist,
-// enables WAL mode for concurrent reads, and ensures the schema is current.
-// STM databases are stored alongside LTM in the same directory.
-func OpenStore(memoryDir string) (*Store, error) {
-	db, err := openDB(memoryDir)
+// OpenStore opens a SQLite-backed memory store.
+// dataDir is the workspace root where memory.db (LTM) will be created.
+// sessionsDir is where per-session STM databases ({sessionID}.db) are stored.
+func OpenStore(dataDir string, sessionsDir string) (*Store, error) {
+	db, err := openDB(dataDir)
 	if err != nil {
 		return nil, err
 	}
 	return &Store{
 		db:     db,
-		stmDir: memoryDir,
+		stmDir: sessionsDir,
 		stmDBs: make(map[string]*sql.DB),
 	}, nil
 }

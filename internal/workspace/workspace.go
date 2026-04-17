@@ -77,10 +77,6 @@ func (w *Workspace) GetMemoryMdPath() string {
 	return filepath.Join(w.DataDir, "MEMORY.md")
 }
 
-func (w *Workspace) MemoryDir() string {
-	return filepath.Join(w.DataDir, "memory")
-}
-
 func (w *Workspace) SessionsDir() string {
 	return filepath.Join(w.DataDir, "sessions")
 }
@@ -149,9 +145,11 @@ func (w *Workspace) EffectiveSandbox(agentSandbox *cobot.SandboxConfig) *cobot.S
 }
 
 func (w *Workspace) EnsureDirs() error {
+	// Migrate legacy layout before creating new dirs.
+	w.MigrateLegacyLayout()
+
 	dirs := []string{
 		w.DataDir,
-		w.MemoryDir(),
 		w.SessionsDir(),
 		w.SkillsDir(),
 		w.AgentsDir(),
@@ -164,6 +162,52 @@ func (w *Workspace) EnsureDirs() error {
 		}
 	}
 	return nil
+}
+
+// MigrateLegacyLayout performs a best-effort migration from the old directory
+// layout (memory/ subdirectory) to the new layout where memory.db lives at
+// the workspace root and STM session DBs live in sessions/.
+func (w *Workspace) MigrateLegacyLayout() {
+	legacyMemDir := filepath.Join(w.DataDir, "memory")
+
+	// Migrate memory.db (LTM) from memory/ to workspace root.
+	legacyDB := filepath.Join(legacyMemDir, "memory.db")
+	newDB := filepath.Join(w.DataDir, "memory.db")
+	if _, err := os.Stat(legacyDB); err == nil {
+		// Only move if the target doesn't already exist.
+		if _, err := os.Stat(newDB); os.IsNotExist(err) {
+			if err := os.Rename(legacyDB, newDB); err != nil {
+				slog.Warn("failed to migrate legacy memory.db", "from", legacyDB, "to", newDB, "err", err)
+			}
+		}
+	}
+
+	// Migrate STM session DBs from memory/ to sessions/.
+	entries, err := os.ReadDir(legacyMemDir)
+	if err != nil {
+		return // legacy dir doesn't exist, nothing to migrate
+	}
+	sessionsDir := w.SessionsDir()
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".db" {
+			continue
+		}
+		src := filepath.Join(legacyMemDir, entry.Name())
+		dst := filepath.Join(sessionsDir, entry.Name())
+		if _, err := os.Stat(dst); os.IsNotExist(err) {
+			if err := os.Rename(src, dst); err != nil {
+				slog.Warn("failed to migrate legacy STM db", "from", src, "to", dst, "err", err)
+			}
+		}
+	}
+
+	// Remove legacy memory/ dir if empty.
+	remaining, _ := os.ReadDir(legacyMemDir)
+	if len(remaining) == 0 {
+		if err := os.Remove(legacyMemDir); err != nil {
+			slog.Warn("failed to remove legacy memory dir", "dir", legacyMemDir, "err", err)
+		}
+	}
 }
 
 func (w *Workspace) SaveConfig() error {

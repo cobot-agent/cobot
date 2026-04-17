@@ -90,11 +90,17 @@ var doctorCmd = &cobra.Command{
 		fmt.Printf("\nData directory: %s\n", dataDir)
 		if info, err := os.Stat(dataDir); err == nil && info.IsDir() {
 			fmt.Println("  [OK] Directory exists")
-			memDir := ws.MemoryDir()
-			if info, err := os.Stat(memDir); err == nil && info.IsDir() {
-				fmt.Printf("  [OK] Memory dir: %s\n", memDir)
+			memDB := filepath.Join(ws.DataDir, "memory.db")
+			if _, err := os.Stat(memDB); err == nil {
+				fmt.Printf("  [OK] Memory DB: %s\n", memDB)
 			} else {
-				fmt.Printf("  [INFO] Memory dir will be created: %s\n", memDir)
+				fmt.Printf("  [INFO] Memory DB will be created: %s\n", memDB)
+			}
+			sessionsDir := ws.SessionsDir()
+			if info, err := os.Stat(sessionsDir); err == nil && info.IsDir() {
+				fmt.Printf("  [OK] Sessions dir: %s\n", sessionsDir)
+			} else {
+				fmt.Printf("  [INFO] Sessions dir will be created: %s\n", sessionsDir)
 			}
 			fmt.Printf("  Space:          %s\n", ws.SpaceDir())
 			fmt.Printf("  MCP:            %s\n", ws.MCPDir())
