@@ -38,8 +38,8 @@ func TestE2ESimpleConversation(t *testing.T) {
 	if resp.Content != "I can help with that!" {
 		t.Errorf("unexpected: %s", resp.Content)
 	}
-	if len(a.Session().Messages()) != 2 {
-		t.Errorf("expected 2 messages, got %d", len(a.Session().Messages()))
+	if len(a.SessionMgr().Session().Messages()) != 2 {
+		t.Errorf("expected 2 messages, got %d", len(a.SessionMgr().Session().Messages()))
 	}
 }
 
@@ -68,7 +68,7 @@ func TestE2EToolCallFlow(t *testing.T) {
 	if resp.Content != "The shell command output: hello" {
 		t.Errorf("unexpected: %s", resp.Content)
 	}
-	msgs := a.Session().Messages()
+	msgs := a.SessionMgr().Session().Messages()
 	if len(msgs) != 4 {
 		t.Errorf("expected 4 messages, got %d", len(msgs))
 	}

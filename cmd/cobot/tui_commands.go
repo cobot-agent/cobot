@@ -38,7 +38,7 @@ func (m *tuiModel) handleSlashCommand(text string) tea.Cmd {
 		}
 
 	case "/usage":
-		u := m.agent.SessionUsage()
+		u := m.agent.SessionMgr().SessionUsage()
 		info := fmt.Sprintf("Session usage — input: %d, output: %d, total: %d", u.PromptTokens, u.CompletionTokens, u.TotalTokens)
 		if u.ReasoningTokens > 0 {
 			info += fmt.Sprintf(", reasoning: %d", u.ReasoningTokens)
@@ -52,7 +52,7 @@ func (m *tuiModel) handleSlashCommand(text string) tea.Cmd {
 		})
 
 	case "/reset":
-		m.agent.ResetUsage()
+		m.agent.SessionMgr().ResetUsage()
 		m.messages = append(m.messages, chatMessage{role: "system", raw: "Usage counters reset."})
 
 	case "/workspace":

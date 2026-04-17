@@ -61,6 +61,8 @@ func InitAgent(cfg *cobot.Config, requireProvider bool) (*Result, error) {
 	toolReg := tools.NewRegistry()
 	a := agent.New(cfg, toolReg)
 
+	sm := a.SessionMgr()
+
 	if agentCfg != nil && agentCfg.Session != nil {
 		sc := cfg.Session
 		if agentCfg.Session.SummarizeThreshold > 0 {
@@ -75,15 +77,15 @@ func InitAgent(cfg *cobot.Config, requireProvider bool) (*Result, error) {
 		if agentCfg.Session.SummaryModel != "" {
 			sc.SummaryModel = agentCfg.Session.SummaryModel
 		}
-		a.SetSessionConfig(sc)
+		sm.SetSessionConfig(sc)
 	}
 
 	sessionStore := agent.NewSessionStore(ws.SessionsDir())
-	a.SetSessionStore(sessionStore)
+	sm.SetSessionStore(sessionStore)
 
 	if agentCfg != nil && agentCfg.SystemPrompt != "" {
 		prompt := resolveSystemPrompt(agentCfg.SystemPrompt, ws)
-		_ = a.SetSystemPrompt(prompt)
+		_ = sm.SetSystemPrompt(prompt)
 	}
 
 	// Create LLM registry for multi-provider model switching.
@@ -112,10 +114,11 @@ func InitAgent(cfg *cobot.Config, requireProvider bool) (*Result, error) {
 // It is called once during InitAgent and again when the TUI switches workspaces.
 func ConfigureAgentForWorkspace(a *agent.Agent, ws *workspace.Workspace, registry cobot.ModelResolver) error {
 	agentCfg, _ := resolveAgentConfig(ws)
+	sm := a.SessionMgr()
 
 	if agentCfg != nil && agentCfg.SystemPrompt != "" {
 		prompt := resolveSystemPrompt(agentCfg.SystemPrompt, ws)
-		_ = a.SetSystemPrompt(prompt)
+		_ = sm.SetSystemPrompt(prompt)
 	}
 
 	// --- skills ---
@@ -130,16 +133,16 @@ func ConfigureAgentForWorkspace(a *agent.Agent, ws *workspace.Workspace, registr
 	}
 	if len(loadedSkills) > 0 {
 		skillSection := skills.SkillsToPrompt(loadedSkills)
-		currentPrompt := a.GetSystemPrompt()
+		currentPrompt := sm.GetSystemPrompt()
 		if currentPrompt == "" {
-			_ = a.SetSystemPrompt(skillSection)
+			_ = sm.SetSystemPrompt(skillSection)
 		} else {
-			_ = a.SetSystemPrompt(currentPrompt + "\n\n" + skillSection)
+			_ = sm.SetSystemPrompt(currentPrompt + "\n\n" + skillSection)
 		}
 	}
 
 	// --- memory ---
-	if old := a.MemoryStore(); old != nil {
+	if old := sm.MemoryStore(); old != nil {
 		if err := old.Close(); err != nil {
 			slog.Warn("failed to close memory store", "err", err)
 		}
@@ -148,8 +151,8 @@ func ConfigureAgentForWorkspace(a *agent.Agent, ws *workspace.Workspace, registr
 	if err != nil {
 		slog.Warn("failed to open memory store", "err", err)
 	} else {
-		a.SetMemoryStore(store)
-		a.SetMemoryRecall(store)
+		sm.SetMemoryStore(store)
+		sm.SetMemoryRecall(store)
 	}
 
 	// --- sandbox ---
@@ -203,7 +206,7 @@ func ConfigureAgentForWorkspace(a *agent.Agent, ws *workspace.Workspace, registr
 	cronExecutor := cron.NewAgentExecutor(func() cron.AgentRunner {
 		filtered := a.ToolRegistry().Clone().Without("cron", "delegate_task")
 		sub := newSubAgent(a, registry, filtered)
-		_ = sub.SetSystemPrompt("You are a scheduled task executor. Complete the task efficiently and output results.")
+		_ = sub.SessionMgr().SetSystemPrompt("You are a scheduled task executor. Complete the task efficiently and output results.")
 		return &cronAgentRunner{agent: sub}
 	})
 	// Wire memory store for result persistence.

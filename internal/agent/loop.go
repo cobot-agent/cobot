@@ -26,10 +26,10 @@ func (a *Agent) executeToolsAndCollect(ctx context.Context, toolCalls []cobot.To
 		} else {
 			slog.Debug("tool completed", "call_id", tr.CallID, "result_bytes", len(tr.Output))
 		}
-		a.AddMessage(cobot.Message{
+		a.sessionMgr.AddMessage(cobot.Message{
 			Role:       cobot.RoleTool,
 			ToolResult: tr,
-		})
+		}, a.config.Model)
 	}
 	return results
 }
@@ -39,8 +39,9 @@ func (a *Agent) executeToolsAndCollect(ctx context.Context, toolCalls []cobot.To
 // (Complete vs Stream) and returns stop=true when the loop should
 // terminate (final response received with no tool calls).
 func (a *Agent) runLoop(ctx context.Context, prompt, debugLabel string, executeTurn func(ctx context.Context, req *cobot.ProviderRequest, turn int) (stop bool, err error)) error {
+	sm := a.sessionMgr
 	slog.Debug("session", "event", debugLabel, "prompt", prompt)
-	a.AddMessage(cobot.Message{Role: cobot.RoleUser, Content: prompt})
+	sm.AddMessage(cobot.Message{Role: cobot.RoleUser, Content: prompt}, a.config.Model)
 
 	// Store initial user message as STM context.
 	a.storeTurnSTM(ctx, prompt, "", nil)
@@ -54,10 +55,10 @@ func (a *Agent) runLoop(ctx context.Context, prompt, debugLabel string, executeT
 			return err
 		}
 
-		a.turnCount++
+		sm.turnCount++
 		a.checkAndCompress(ctx)
 
-		if a.stmPromoteInterval > 0 && a.turnCount%a.stmPromoteInterval == 0 {
+		if sm.stmPromoteInterval > 0 && sm.turnCount%sm.stmPromoteInterval == 0 {
 			a.promoteSTMBackground(ctx)
 		}
 
@@ -73,16 +74,17 @@ func (a *Agent) runLoop(ctx context.Context, prompt, debugLabel string, executeT
 // conversation turn. It is a no-op when the memory store does not implement
 // ShortTermMemory.
 func (a *Agent) storeTurnSTM(ctx context.Context, userMsg, assistantMsg string, toolResults []string) {
-	if a.memoryStore == nil {
+	sm := a.sessionMgr
+	if sm.memoryStore == nil {
 		return
 	}
-	stm, ok := a.memoryStore.(cobot.ShortTermMemory)
+	stm, ok := sm.memoryStore.(cobot.ShortTermMemory)
 	if !ok {
 		return
 	}
 	items := memory.ExtractSTM(userMsg, assistantMsg, toolResults)
 	for _, item := range items {
-		if _, err := stm.StoreShortTerm(ctx, a.sessionID, item.Content, item.Category); err != nil {
+		if _, err := stm.StoreShortTerm(ctx, sm.sessionID, item.Content, item.Category); err != nil {
 			slog.Debug("stm store failed", "err", err)
 		}
 	}
@@ -94,6 +96,7 @@ func (a *Agent) Prompt(ctx context.Context, message string) (*cobot.ProviderResp
 	}
 	ctx = a.deriveCtx(ctx)
 
+	sm := a.sessionMgr
 	var result *cobot.ProviderResponse
 	err := a.runLoop(ctx, message, "prompt", func(ctx context.Context, req *cobot.ProviderRequest, turn int) (bool, error) {
 		resp, err := a.provider.Complete(ctx, req)
@@ -104,13 +107,13 @@ func (a *Agent) Prompt(ctx context.Context, message string) (*cobot.ProviderResp
 
 		slog.Debug("agent response", "turn", turn, "content_len", len(resp.Content), "tool_calls", len(resp.ToolCalls), "stop", resp.StopReason)
 		usage := estimateTurnUsage(resp.Usage, req.Messages, resp.Content, resp.ToolCalls)
-		a.usageTracker.Add(usage)
-		a.PersistUsage()
-		a.AddMessage(cobot.Message{
+		sm.usageTracker.Add(usage)
+		sm.PersistUsage()
+		sm.AddMessage(cobot.Message{
 			Role:      cobot.RoleAssistant,
 			Content:   resp.Content,
 			ToolCalls: resp.ToolCalls,
-		})
+		}, a.config.Model)
 
 		if len(resp.ToolCalls) == 0 {
 			// Final response — store STM for this turn.
@@ -155,6 +158,7 @@ func (a *Agent) Stream(ctx context.Context, message string) (<-chan cobot.Event,
 		}
 	}
 
+	sm := a.sessionMgr
 	a.streamWg.Add(1)
 	go func() {
 		defer a.streamWg.Done()
@@ -200,10 +204,10 @@ func (a *Agent) Stream(ctx context.Context, message string) (<-chan cobot.Event,
 				}
 				if chunk.Done && len(toolCalls) == 0 {
 					slog.Debug("stream done", "turn", turn, "content_len", len(content))
-					a.AddMessage(cobot.Message{Role: cobot.RoleAssistant, Content: content})
+					sm.AddMessage(cobot.Message{Role: cobot.RoleAssistant, Content: content}, a.config.Model)
 					turnUsage = estimateTurnUsage(turnUsage, req.Messages, content, nil)
-					a.usageTracker.Add(turnUsage)
-					a.PersistUsage()
+					sm.usageTracker.Add(turnUsage)
+					sm.PersistUsage()
 					// Final response — store STM for this turn.
 					a.storeTurnSTM(ctx, "", content, nil)
 					sendEvent(cobot.Event{Type: cobot.EventDone, Done: true, Usage: &turnUsage})
@@ -213,10 +217,10 @@ func (a *Agent) Stream(ctx context.Context, message string) (<-chan cobot.Event,
 
 			if len(toolCalls) > 0 {
 				slog.Debug("stream tool calls", "turn", turn, "count", len(toolCalls))
-				a.AddMessage(cobot.Message{Role: cobot.RoleAssistant, Content: content, ToolCalls: toolCalls})
+				sm.AddMessage(cobot.Message{Role: cobot.RoleAssistant, Content: content, ToolCalls: toolCalls}, a.config.Model)
 				turnUsage = estimateTurnUsage(turnUsage, req.Messages, content, toolCalls)
-				a.usageTracker.Add(turnUsage)
-				a.PersistUsage()
+				sm.usageTracker.Add(turnUsage)
+				sm.PersistUsage()
 
 				// Split tool calls into streaming vs normal tools.
 				var normalCalls []cobot.ToolCall
@@ -242,7 +246,7 @@ func (a *Agent) Stream(ctx context.Context, message string) (<-chan cobot.Event,
 						if !sendEvent(evt) {
 							return false, ctx.Err()
 						}
-						a.AddMessage(cobot.Message{Role: cobot.RoleTool, ToolResult: tr})
+						sm.AddMessage(cobot.Message{Role: cobot.RoleTool, ToolResult: tr}, a.config.Model)
 					}
 				}
 
@@ -257,7 +261,7 @@ func (a *Agent) Stream(ctx context.Context, message string) (<-chan cobot.Event,
 						if !sendEvent(cobot.Event{Type: cobot.EventToolResult, Content: tr.Error, Error: tr.Error}) {
 							return false, ctx.Err()
 						}
-						a.AddMessage(cobot.Message{Role: cobot.RoleTool, ToolResult: tr})
+						sm.AddMessage(cobot.Message{Role: cobot.RoleTool, ToolResult: tr}, a.config.Model)
 						continue
 					}
 					st, ok := tool.(cobot.StreamingTool)
@@ -277,7 +281,7 @@ func (a *Agent) Stream(ctx context.Context, message string) (<-chan cobot.Event,
 						if !sendEvent(resultEvt) {
 							return false, ctx.Err()
 						}
-						a.AddMessage(cobot.Message{Role: cobot.RoleTool, ToolResult: tr})
+						sm.AddMessage(cobot.Message{Role: cobot.RoleTool, ToolResult: tr}, a.config.Model)
 						continue
 					}
 					output, execErr := st.ExecuteStream(ctx, sc.Arguments, ch)
@@ -296,7 +300,7 @@ func (a *Agent) Stream(ctx context.Context, message string) (<-chan cobot.Event,
 					if !sendEvent(resultEvt) {
 						return false, ctx.Err()
 					}
-					a.AddMessage(cobot.Message{Role: cobot.RoleTool, ToolResult: tr})
+					sm.AddMessage(cobot.Message{Role: cobot.RoleTool, ToolResult: tr}, a.config.Model)
 				}
 			}
 

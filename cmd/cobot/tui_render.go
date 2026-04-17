@@ -84,7 +84,7 @@ func formatTokenCount(n int) string {
 
 // renderHub builds the status bar showing model, workspace, and token usage.
 func (m tuiModel) renderHub() string {
-	usage := m.agent.SessionUsage()
+	usage := m.agent.SessionMgr().SessionUsage()
 	parts := []string{
 		fmt.Sprintf(" ws:%s", m.workspace),
 		fmt.Sprintf("model:%s", m.agent.Model()),

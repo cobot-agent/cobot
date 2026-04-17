@@ -3,11 +3,8 @@ package agent
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"sync"
 	"time"
-
-	"github.com/google/uuid"
 
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
@@ -65,28 +62,20 @@ func (s *Session) AddMessage(m cobot.Message) {
 // --- Agent ---
 
 type Agent struct {
-	config             *cobot.Config
-	sessionConfig      cobot.SessionConfig
-	provider           cobot.Provider
-	registry           cobot.ModelResolver
-	tools              cobot.ToolRegistry
-	session            *Session
-	sessionID          string
-	sessionStore       *SessionStore
-	memoryStore        cobot.MemoryStore
-	memoryRecall       cobot.MemoryRecall
-	usageTracker       *UsageTracker
-	systemPrompt       string
-	sysPromptMu        sync.RWMutex
-	streamMu           sync.Mutex // serializes concurrent Stream calls
-	streamWg           sync.WaitGroup
-	agentCtx           context.Context
-	agentCancel        context.CancelFunc
-	turnCount          int
-	compressor         *Compressor
-	compressMu         sync.Mutex // prevents concurrent compression runs
-	stmPromoteInterval int        // turns between STM promotions (0 = disabled)
-	cronScheduler      CronScheduler
+	config     *cobot.Config
+	sessionMgr *SessionManager
+	provider   cobot.Provider
+	registry   cobot.ModelResolver
+	tools      cobot.ToolRegistry
+	compressor *Compressor
+
+	streamMu   sync.Mutex // serializes concurrent Stream calls
+	streamWg   sync.WaitGroup
+	compressMu sync.Mutex // prevents concurrent compression runs
+
+	agentCtx      context.Context
+	agentCancel   context.CancelFunc
+	cronScheduler CronScheduler
 }
 
 // CronScheduler is a minimal interface for stopping the cron scheduler.
@@ -98,30 +87,28 @@ type CronScheduler interface {
 func New(config *cobot.Config, toolRegistry cobot.ToolRegistry) *Agent {
 	agentCtx, agentCancel := context.WithCancel(context.Background())
 	return &Agent{
-		config:             config,
-		sessionConfig:      config.Session,
-		tools:              toolRegistry,
-		session:            NewSession(),
-		sessionID:          uuid.New().String(),
-		usageTracker:       NewUsageTracker(),
-		agentCtx:           agentCtx,
-		agentCancel:        agentCancel,
-		stmPromoteInterval: 10,
+		config:      config,
+		sessionMgr:  NewSessionManager(),
+		tools:       toolRegistry,
+		agentCtx:    agentCtx,
+		agentCancel: agentCancel,
 	}
 }
 
+func (a *Agent) SessionMgr() *SessionManager { return a.sessionMgr }
+
+// SetSystemPrompt delegates to SessionManager. Kept on Agent to satisfy
+// the cobot.SubAgent interface used by the delegate tool.
 func (a *Agent) SetSystemPrompt(prompt string) error {
-	a.sysPromptMu.Lock()
-	defer a.sysPromptMu.Unlock()
-	a.systemPrompt = prompt
-	return nil
+	return a.sessionMgr.SetSystemPrompt(prompt)
 }
 
+// GetSystemPrompt delegates to SessionManager.
 func (a *Agent) GetSystemPrompt() string {
-	a.sysPromptMu.RLock()
-	defer a.sysPromptMu.RUnlock()
-	return a.systemPrompt
+	return a.sessionMgr.GetSystemPrompt()
 }
+
+// Convenience delegation methods for frequently-used SessionManager methods.
 
 func (a *Agent) SetProvider(p cobot.Provider) {
 	a.provider = p
@@ -139,82 +126,8 @@ func (a *Agent) ToolRegistry() cobot.ToolRegistry {
 	return a.tools
 }
 
-func (a *Agent) Session() *Session {
-	return a.session
-}
-
-func (a *Agent) AddMessage(m cobot.Message) {
-	a.session.AddMessage(m)
-	a.persistMessage(m)
-}
-
-func (a *Agent) SetSessionStore(s *SessionStore) {
-	a.sessionStore = s
-}
-
-func (a *Agent) SetSessionConfig(sc cobot.SessionConfig) {
-	a.sessionConfig = sc
-}
-
-func (a *Agent) SessionConfig() cobot.SessionConfig {
-	return a.sessionConfig
-}
-
-func (a *Agent) SessionID() string {
-	return a.sessionID
-}
-
-func (a *Agent) persistSession() {
-	if a.sessionStore == nil {
-		return
-	}
-	if err := a.sessionStore.Save(a.sessionID, a.session, a.usageTracker.Get(), a.config.Model); err != nil {
-		slog.Debug("failed to persist session", "err", err)
-	}
-}
-
-// persistMessage appends a single message to the session JSONL file.
-func (a *Agent) persistMessage(m cobot.Message) {
-	if a.sessionStore == nil {
-		return
-	}
-	if err := a.sessionStore.InitSession(a.sessionID, a.config.Model); err != nil {
-		slog.Debug("failed to init session", "err", err)
-		return
-	}
-	if err := a.sessionStore.AppendMessage(a.sessionID, m); err != nil {
-		slog.Debug("failed to persist message", "err", err)
-	}
-}
-
-// PersistUsage appends a usage snapshot to the session JSONL file.
-func (a *Agent) PersistUsage() {
-	if a.sessionStore == nil {
-		return
-	}
-	if err := a.sessionStore.AppendUsage(a.sessionID, a.usageTracker.Get()); err != nil {
-		slog.Debug("failed to persist usage", "err", err)
-	}
-}
-
 func (a *Agent) RegisterTool(tool cobot.Tool) {
 	a.tools.Register(tool)
-}
-
-func (a *Agent) SetMemoryStore(s cobot.MemoryStore) {
-	a.memoryStore = s
-}
-
-func (a *Agent) MemoryStore() cobot.MemoryStore {
-	return a.memoryStore
-}
-
-func (a *Agent) SetMemoryRecall(r cobot.MemoryRecall) {
-	a.memoryRecall = r
-}
-
-func (a *Agent) MemoryRecall() cobot.MemoryRecall {
-	return a.memoryRecall
 }
 
 func (a *Agent) SetCronScheduler(s CronScheduler) {
@@ -255,19 +168,11 @@ func (a *Agent) initCompressor() {
 		return
 	}
 	ctxWindow := ContextWindowForModel(a.config.Model, nil)
-	a.compressor = NewCompressor(a.sessionConfig, ctxWindow, a.provider, a.config.Model)
+	a.compressor = NewCompressor(a.sessionMgr.sessionConfig, ctxWindow, a.provider, a.config.Model)
 }
 
 func (a *Agent) Model() string {
 	return a.config.Model
-}
-
-func (a *Agent) SessionUsage() cobot.Usage {
-	return a.usageTracker.Get()
-}
-
-func (a *Agent) ResetUsage() {
-	a.usageTracker.Reset()
 }
 
 // deriveCtx returns a context derived from agentCtx that also cancels if the
@@ -311,16 +216,17 @@ func (a *Agent) Close() error {
 	}
 
 	// Promote valuable STM items to LTM before closing the memory store.
-	if a.memoryStore != nil {
-		if stm, ok := a.memoryStore.(cobot.ShortTermMemory); ok {
+	sm := a.sessionMgr
+	if sm.memoryStore != nil {
+		if stm, ok := sm.memoryStore.(cobot.ShortTermMemory); ok {
 			go func() {
-				_ = stm.PromoteToLongTerm(context.Background(), a.sessionID)
-				_ = stm.ClearShortTerm(context.Background(), a.sessionID)
+				_ = stm.PromoteToLongTerm(context.Background(), sm.sessionID)
+				_ = stm.ClearShortTerm(context.Background(), sm.sessionID)
 			}()
 		}
 		// Give background promotion a moment to finish.
 		time.Sleep(100 * time.Millisecond)
-		if err := a.memoryStore.Close(); err != nil {
+		if err := sm.memoryStore.Close(); err != nil {
 			return fmt.Errorf("close memory store: %w", err)
 		}
 	}

@@ -83,7 +83,7 @@ func TestUsageTrackerConcurrent(t *testing.T) {
 
 func TestAgentSessionUsage(t *testing.T) {
 	a := New(&cobot.Config{MaxTurns: 10}, newTestRegistry())
-	u := a.SessionUsage()
+	u := a.SessionMgr().SessionUsage()
 	if u.PromptTokens != 0 {
 		t.Errorf("initial usage should be zero, got PromptTokens=%d", u.PromptTokens)
 	}
@@ -91,9 +91,9 @@ func TestAgentSessionUsage(t *testing.T) {
 
 func TestAgentResetUsage(t *testing.T) {
 	a := New(&cobot.Config{MaxTurns: 10}, newTestRegistry())
-	a.usageTracker.Add(cobot.Usage{PromptTokens: 500, CompletionTokens: 200, TotalTokens: 700})
-	a.ResetUsage()
-	u := a.SessionUsage()
+	a.sessionMgr.usageTracker.Add(cobot.Usage{PromptTokens: 500, CompletionTokens: 200, TotalTokens: 700})
+	a.SessionMgr().ResetUsage()
+	u := a.SessionMgr().SessionUsage()
 	if u.PromptTokens != 0 {
 		t.Errorf("after reset should be zero, got PromptTokens=%d", u.PromptTokens)
 	}

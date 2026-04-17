@@ -13,28 +13,30 @@ func (a *Agent) checkAndCompress(ctx context.Context) {
 		return
 	}
 
-	action := a.compressor.Check(a.usageTracker.Get(), a.turnCount)
+	sm := a.sessionMgr
+	action := a.compressor.Check(sm.usageTracker.Get(), sm.turnCount)
 	if action == CompressNone {
 		return
 	}
 
-	msgs, snapshotLen := a.session.MessagesSnapshot()
-	slog.Debug("compression triggered", "action", action, "turns", a.turnCount, "total_tokens", a.usageTracker.Get().TotalTokens, "messages", len(msgs))
+	msgs, snapshotLen := sm.session.MessagesSnapshot()
+	slog.Debug("compression triggered", "action", action, "turns", sm.turnCount, "total_tokens", sm.usageTracker.Get().TotalTokens, "messages", len(msgs))
 
 	go a.runCompress(ctx, action, msgs, snapshotLen)
 }
 
 // promoteSTMBackground triggers an asynchronous STM→LTM promotion.
 func (a *Agent) promoteSTMBackground(ctx context.Context) {
-	if a.memoryStore == nil {
+	sm := a.sessionMgr
+	if sm.memoryStore == nil {
 		return
 	}
-	stm, ok := a.memoryStore.(cobot.ShortTermMemory)
+	stm, ok := sm.memoryStore.(cobot.ShortTermMemory)
 	if !ok {
 		return
 	}
 	go func() {
-		if err := stm.SummarizeAndPromoteSTM(ctx, a.sessionID); err != nil {
+		if err := stm.SummarizeAndPromoteSTM(ctx, sm.sessionID); err != nil {
 			slog.Debug("periodic STM promotion failed", "err", err)
 		}
 	}()
@@ -74,27 +76,30 @@ func (a *Agent) runCompress(ctx context.Context, action CompressAction, msgs []c
 	a.replaceSessionMessages(summary, kept, snapshotLen)
 	a.extractMemories(ctx, summary, msgs)
 	// Store compression summary in STM compressed room.
-	if stm, ok := a.memoryStore.(cobot.ShortTermMemory); ok {
-		if _, err := stm.StoreShortTermCompressed(ctx, a.sessionID, summary); err != nil {
+	sm := a.sessionMgr
+	if stm, ok := sm.memoryStore.(cobot.ShortTermMemory); ok {
+		if _, err := stm.StoreShortTermCompressed(ctx, sm.sessionID, summary); err != nil {
 			slog.Debug("stm compressed store failed", "err", err)
 		}
 	}
 }
 
 func (a *Agent) replaceSessionMessages(summary string, kept []cobot.Message, snapshotLen int) {
-	a.session.mu.Lock()
-	defer a.session.mu.Unlock()
+	sm := a.sessionMgr
+	sess := sm.session
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
 
 	// Collect messages appended after the snapshot was taken so they aren't lost.
 	var postSnapshot []cobot.Message
-	if snapshotLen < len(a.session.messages) {
-		postSnapshot = make([]cobot.Message, len(a.session.messages)-snapshotLen)
-		copy(postSnapshot, a.session.messages[snapshotLen:])
+	if snapshotLen < len(sess.messages) {
+		postSnapshot = make([]cobot.Message, len(sess.messages)-snapshotLen)
+		copy(postSnapshot, sess.messages[snapshotLen:])
 	}
 
 	var newMsgs []cobot.Message
-	if len(a.session.messages) > 0 && a.session.messages[0].Role == cobot.RoleSystem {
-		newMsgs = append(newMsgs, a.session.messages[0])
+	if len(sess.messages) > 0 && sess.messages[0].Role == cobot.RoleSystem {
+		newMsgs = append(newMsgs, sess.messages[0])
 	}
 
 	newMsgs = append(newMsgs, cobot.Message{
@@ -103,18 +108,18 @@ func (a *Agent) replaceSessionMessages(summary string, kept []cobot.Message, sna
 	})
 	newMsgs = append(newMsgs, kept...)
 	newMsgs = append(newMsgs, postSnapshot...)
-	originalCount := len(a.session.messages)
-	a.session.messages = newMsgs
+	originalCount := len(sess.messages)
+	sess.messages = newMsgs
 
 	newUsage := estimateMessagesUsage(newMsgs)
-	a.usageTracker.Set(newUsage)
+	sm.usageTracker.Set(newUsage)
 
-	if a.sessionStore != nil {
-		a.sessionStore.AppendCompact(a.sessionID, CompactMarker{
+	if sm.sessionStore != nil {
+		sm.sessionStore.AppendCompact(sm.sessionID, CompactMarker{
 			Summary:       summary,
 			OriginalCount: originalCount,
 		})
-		a.PersistUsage()
+		sm.PersistUsage()
 	}
 
 	slog.Debug("session compressed", "original_msgs", originalCount, "new_msgs", len(newMsgs), "new_tokens", newUsage.TotalTokens)

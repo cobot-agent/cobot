@@ -15,7 +15,8 @@ import (
 // It runs as a background goroutine so it does not block the main conversation.
 // The method is a no-op when memoryStore is nil.
 func (a *Agent) extractMemories(ctx context.Context, summary string, originalMsgs []cobot.Message) {
-	if a.memoryStore == nil || a.provider == nil {
+	store := a.sessionMgr.memoryStore
+	if store == nil || a.provider == nil {
 		return
 	}
 
@@ -23,7 +24,6 @@ func (a *Agent) extractMemories(ctx context.Context, summary string, originalMsg
 	// a.compressor, a.config, and a.memoryStore which may be modified
 	// concurrently by SetModel/initCompressor or Close.
 	model := a.compressorModel()
-	store := a.memoryStore
 	provider := a.provider
 
 	go func() {
