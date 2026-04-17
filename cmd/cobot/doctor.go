@@ -19,15 +19,10 @@ var doctorCmd = &cobra.Command{
 		fmt.Println("Cobot Personal Agent Doctor")
 		fmt.Println("===========================")
 
-		manager, err := workspace.NewManager()
+		ws, err := resolveWorkspace()
 		if err != nil {
-			fmt.Printf("  [ERROR] Failed to create workspace manager: %v\n", err)
+			fmt.Printf("  [ERROR] Failed to resolve workspace: %v\n", err)
 			return err
-		}
-
-		ws, err := manager.ResolveByNameOrDiscover("", ".")
-		if err != nil {
-			return fmt.Errorf("resolve workspace: %w", err)
 		}
 
 		configDir := workspace.ConfigDir()

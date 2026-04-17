@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/cobot-agent/cobot/internal/config"
-	"github.com/cobot-agent/cobot/internal/workspace"
 	cobot "github.com/cobot-agent/cobot/pkg"
 	"github.com/spf13/cobra"
 )
@@ -81,13 +80,9 @@ var configSetAuthCmd = &cobra.Command{
 			return fmt.Errorf("at least one of --api-key, --base-url, or --header is required")
 		}
 
-		m, err := workspace.NewManager()
+		ws, err := resolveWorkspace()
 		if err != nil {
-			return fmt.Errorf("create workspace manager: %w", err)
-		}
-		ws, err := m.ResolveByNameOrDiscover("", ".")
-		if err != nil {
-			return fmt.Errorf("resolve workspace: %w", err)
+			return err
 		}
 
 		cfg := cobot.DefaultConfig()
@@ -138,13 +133,9 @@ var configInitCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		force, _ := cmd.Flags().GetBool("force")
 
-		m, err := workspace.NewManager()
+		ws, err := resolveWorkspace()
 		if err != nil {
-			return fmt.Errorf("create workspace manager: %w", err)
-		}
-		ws, err := m.ResolveByNameOrDiscover("", ".")
-		if err != nil {
-			return fmt.Errorf("resolve workspace: %w", err)
+			return err
 		}
 
 		if _, err := os.Stat(ws.ConfigPath()); err == nil && !force {
@@ -174,13 +165,9 @@ var configEditCmd = &cobra.Command{
 	Use:   "edit",
 	Short: "Edit configuration file in default editor",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		m, err := workspace.NewManager()
+		ws, err := resolveWorkspace()
 		if err != nil {
-			return fmt.Errorf("create workspace manager: %w", err)
-		}
-		ws, err := m.ResolveByNameOrDiscover("", ".")
-		if err != nil {
-			return fmt.Errorf("resolve workspace: %w", err)
+			return err
 		}
 
 		if _, err := os.Stat(ws.ConfigPath()); os.IsNotExist(err) {
@@ -211,13 +198,9 @@ var configEditCmd = &cobra.Command{
 // --- helpers ---
 
 func setAndSaveConfig(cmd *cobra.Command, key, value string) error {
-	m, err := workspace.NewManager()
+	ws, err := resolveWorkspace()
 	if err != nil {
-		return fmt.Errorf("create workspace manager: %w", err)
-	}
-	ws, err := m.ResolveByNameOrDiscover("", ".")
-	if err != nil {
-		return fmt.Errorf("resolve workspace: %w", err)
+		return err
 	}
 
 	cfg := cobot.DefaultConfig()

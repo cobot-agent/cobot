@@ -24,12 +24,7 @@ var setupCmd = &cobra.Command{
 		fmt.Println("==========================")
 		fmt.Println()
 
-		manager, err := workspace.NewManager()
-		if err != nil {
-			return fmt.Errorf("create workspace manager: %w", err)
-		}
-
-		ws, err := manager.ResolveByNameOrDiscover("", ".")
+		ws, err := resolveWorkspace()
 		if err != nil {
 			return fmt.Errorf("resolve workspace: %w", err)
 		}

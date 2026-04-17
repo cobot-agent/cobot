@@ -7,7 +7,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/cobot-agent/cobot/internal/config"
-	"github.com/cobot-agent/cobot/internal/workspace"
 )
 
 var agentCmd = &cobra.Command{
@@ -94,14 +93,6 @@ var agentShowCmd = &cobra.Command{
 		fmt.Fprintf(cmd.OutOrStdout(), "Max Turns:     %d\n", cfg.MaxTurns)
 		return nil
 	},
-}
-
-func resolveWorkspace() (*workspace.Workspace, error) {
-	manager, err := workspace.NewManager()
-	if err != nil {
-		return nil, err
-	}
-	return manager.ResolveByNameOrDiscover(workspacePath, ".")
 }
 
 func init() {

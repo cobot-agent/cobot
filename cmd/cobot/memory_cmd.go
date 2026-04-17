@@ -7,7 +7,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/cobot-agent/cobot/internal/memory"
-	"github.com/cobot-agent/cobot/internal/workspace"
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
@@ -16,24 +15,12 @@ var memoryCmd = &cobra.Command{
 	Short: "Search and inspect memory palace",
 }
 
-func resolveCurrentWorkspace() (*workspace.Workspace, error) {
-	m, err := workspace.NewManager()
-	if err != nil {
-		return nil, fmt.Errorf("create workspace manager: %w", err)
-	}
-	ws, err := m.ResolveByNameOrDiscover("", ".")
-	if err != nil {
-		return nil, fmt.Errorf("resolve workspace: %w", err)
-	}
-	return ws, nil
-}
-
 var memorySearchCmd = &cobra.Command{
 	Use:   "search [query]",
 	Short: "Search memory",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		ws, err := resolveCurrentWorkspace()
+		ws, err := resolveWorkspace()
 		if err != nil {
 			return err
 		}
@@ -71,7 +58,7 @@ var memoryStoreCmd = &cobra.Command{
 	Short: "Store information in memory palace",
 	Args:  cobra.ExactArgs(3),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		ws, err := resolveCurrentWorkspace()
+		ws, err := resolveWorkspace()
 		if err != nil {
 			return err
 		}
@@ -114,7 +101,7 @@ var memoryStatusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show memory palace overview",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		ws, err := resolveCurrentWorkspace()
+		ws, err := resolveWorkspace()
 		if err != nil {
 			return err
 		}
