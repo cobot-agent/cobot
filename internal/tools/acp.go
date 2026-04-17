@@ -32,10 +32,10 @@ type ACPSubAgent struct {
 	sandbox      *cobot.SandboxConfig
 
 	// runtime state
-	mu     sync.Mutex
-	cmd    *exec.Cmd
+	mu      sync.Mutex
+	cmd     *exec.Cmd
 	baseURL string
-	nextID int64
+	nextID  int64
 	started bool
 }
 
@@ -480,10 +480,10 @@ func (a *ACPSubAgent) Stream(ctx context.Context, message string) (<-chan cobot.
 					continue
 				}
 
-			switch params.Type {
-			case "text":
-				select {
-				case eventCh <- cobot.Event{Type: cobot.EventText, Content: a.rewritePaths(params.Content)}:
+				switch params.Type {
+				case "text":
+					select {
+					case eventCh <- cobot.Event{Type: cobot.EventText, Content: a.rewritePaths(params.Content)}:
 					case <-ctx.Done():
 						return
 					}

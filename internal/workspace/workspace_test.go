@@ -15,7 +15,7 @@ func TestWorkspaceDefinition_ResolvePath_Default(t *testing.T) {
 		Type: WorkspaceTypeProject,
 	}
 	result := def.ResolvePath("/data")
-	expected := filepath.Join("/data", "myproject")
+	expected := filepath.Join("/data", "workspace", "myproject")
 	if result != expected {
 		t.Errorf("ResolvePath() = %s, want %s", result, expected)
 	}
@@ -122,7 +122,6 @@ func TestWorkspace_EnsureDirs(t *testing.T) {
 		filepath.Join(dataDir, "agents"),
 		filepath.Join(dataDir, "space"),
 		filepath.Join(dataDir, "mcp"),
-		filepath.Join(dataDir, "memory", "stm"),
 	}
 
 	for _, dir := range expectedDirs {
@@ -224,9 +223,6 @@ func TestWorkspace_Accessors(t *testing.T) {
 	}
 	if ws.MCPDir() != filepath.Join(dataDir, "mcp") {
 		t.Errorf("MCPDir() = %s", ws.MCPDir())
-	}
-	if ws.STMDir() != filepath.Join(dataDir, "memory", "stm") {
-		t.Errorf("STMDir() = %s", ws.STMDir())
 	}
 	if ws.ConfigPath() != filepath.Join(dataDir, "workspace.yaml") {
 		t.Errorf("ConfigPath() = %s", ws.ConfigPath())

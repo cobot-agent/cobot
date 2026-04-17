@@ -32,11 +32,11 @@ type PendingToolCall struct {
 // no data arrives within the idle timeout, the underlying reader is closed to
 // unblock any pending Scan() call.
 type SSEScanner struct {
-	scanner   *bufio.Scanner
-	done      bool
-	mu        sync.Mutex
-	err       error
-	body      io.Closer          // the underlying response body, closed by watchdog
+	scanner     *bufio.Scanner
+	done        bool
+	mu          sync.Mutex
+	err         error
+	body        io.Closer          // the underlying response body, closed by watchdog
 	cancelWatch context.CancelFunc // stops the watchdog goroutine
 	activity    chan struct{}      // pulsed on every successful Scan to reset idle timer
 	closeOnce   sync.Once

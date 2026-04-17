@@ -9,7 +9,12 @@ import (
 func TestDiscover_NoWorkspace(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	_, err := Discover(tmpDir)
+	manager, err := NewManager()
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+
+	_, err = manager.Discover(tmpDir)
 	if err == nil {
 		t.Fatal("expected error when no workspace found")
 	}
@@ -42,7 +47,12 @@ func TestDiscover_FindsWorkspace(t *testing.T) {
 func TestDiscoverOrDefault_ReturnsDefault(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	ws, err := DiscoverOrDefault(tmpDir)
+	manager, err := NewManager()
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+
+	ws, err := manager.ResolveByNameOrDiscover("", tmpDir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

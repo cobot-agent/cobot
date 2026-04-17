@@ -34,20 +34,20 @@ func (d *WorkspaceDefinition) ResolvePath(dataDir string) string {
 	if d.Path != "" {
 		return d.Path
 	}
-	return filepath.Join(dataDir, d.Name)
+	return filepath.Join(dataDir, "workspace", d.Name)
 }
 
 type WorkspaceConfig struct {
-	ID             string                     `yaml:"id"`
-	Name           string                     `yaml:"name"`
-	Type           WorkspaceType              `yaml:"type"`
-	Root           string                     `yaml:"root,omitempty"`
-	CreatedAt      time.Time                  `yaml:"created_at"`
-	UpdatedAt      time.Time                  `yaml:"updated_at"`
-	EnabledMCP     []string                   `yaml:"enabled_mcp,omitempty"`
-	EnabledSkills  []string                   `yaml:"enabled_skills,omitempty"`
-	Sandbox        cobot.SandboxConfig        `yaml:"sandbox,omitempty"`
-	DefaultAgent   string                     `yaml:"default_agent,omitempty"`
+	ID             string                      `yaml:"id"`
+	Name           string                      `yaml:"name"`
+	Type           WorkspaceType               `yaml:"type"`
+	Root           string                      `yaml:"root,omitempty"`
+	CreatedAt      time.Time                   `yaml:"created_at"`
+	UpdatedAt      time.Time                   `yaml:"updated_at"`
+	EnabledMCP     []string                    `yaml:"enabled_mcp,omitempty"`
+	EnabledSkills  []string                    `yaml:"enabled_skills,omitempty"`
+	Sandbox        cobot.SandboxConfig         `yaml:"sandbox,omitempty"`
+	DefaultAgent   string                      `yaml:"default_agent,omitempty"`
 	ExternalAgents []cobot.ExternalAgentConfig `yaml:"external_agents,omitempty"`
 }
 
@@ -104,11 +104,6 @@ func (w *Workspace) MCPDir() string {
 	return filepath.Join(w.DataDir, "mcp")
 }
 
-// STMDir returns the subdirectory within memory/ for per-session STM databases.
-func (w *Workspace) STMDir() string {
-	return filepath.Join(w.DataDir, "memory", "stm")
-}
-
 func (w *Workspace) ConfigPath() string {
 	return filepath.Join(w.DataDir, "workspace.yaml")
 }
@@ -122,6 +117,37 @@ func (w *Workspace) ExternalAgent(name string) (*cobot.ExternalAgentConfig, bool
 	return nil, false
 }
 
+// EffectiveSandbox returns the final SandboxConfig by merging workspace config
+// with optional agent-level overrides. Returns a config even if no sandbox root
+// is set — callers should check VirtualRoot != "" to determine if active.
+func (w *Workspace) EffectiveSandbox(agentSandbox *cobot.SandboxConfig) *cobot.SandboxConfig {
+	cfg := w.Config.Sandbox
+	if agentSandbox != nil {
+		if agentSandbox.Root != "" {
+			cfg.Root = agentSandbox.Root
+		}
+		if len(agentSandbox.AllowPaths) > 0 {
+			cfg.AllowPaths = agentSandbox.AllowPaths
+		}
+		if len(agentSandbox.BlockedCommands) > 0 {
+			cfg.BlockedCommands = agentSandbox.BlockedCommands
+		}
+	}
+
+	var virtualRoot string
+	if cfg.Root != "" {
+		virtualRoot = "/home/" + w.Config.Name
+	}
+
+	return &cobot.SandboxConfig{
+		VirtualRoot:     virtualRoot,
+		Root:            cfg.Root,
+		AllowPaths:      cfg.AllowPaths,
+		ReadonlyPaths:   cfg.ReadonlyPaths,
+		BlockedCommands: cfg.BlockedCommands,
+	}
+}
+
 func (w *Workspace) EnsureDirs() error {
 	dirs := []string{
 		w.DataDir,
@@ -131,7 +157,6 @@ func (w *Workspace) EnsureDirs() error {
 		w.AgentsDir(),
 		w.SpaceDir(),
 		w.MCPDir(),
-		w.STMDir(),
 	}
 	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0755); err != nil {
@@ -162,16 +187,6 @@ func (w *Workspace) ValidatePath(path string) error {
 	}
 	dataDir = cobot.EvalSymlinks(dataDir)
 	if cobot.IsSubpath(absPath, dataDir) {
-		return nil
-	}
-
-	// SpaceDir is a sandboxed read-write area that is also a valid path target.
-	spaceDir, err := filepath.Abs(w.SpaceDir())
-	if err != nil {
-		return fmt.Errorf("resolve space dir: %w", err)
-	}
-	spaceDir = cobot.EvalSymlinks(spaceDir)
-	if cobot.IsSubpath(absPath, spaceDir) {
 		return nil
 	}
 

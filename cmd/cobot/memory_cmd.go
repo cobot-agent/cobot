@@ -16,16 +16,16 @@ var memoryCmd = &cobra.Command{
 	Short: "Search and inspect memory palace",
 }
 
-func getCurrentWorkspaceMemoryDir() (string, error) {
+func resolveCurrentWorkspace() (*workspace.Workspace, error) {
 	m, err := workspace.NewManager()
 	if err != nil {
-		return "", fmt.Errorf("create workspace manager: %w", err)
+		return nil, fmt.Errorf("create workspace manager: %w", err)
 	}
 	ws, err := m.ResolveByNameOrDiscover("", ".")
 	if err != nil {
-		return "", fmt.Errorf("resolve workspace: %w", err)
+		return nil, fmt.Errorf("resolve workspace: %w", err)
 	}
-	return ws.MemoryDir(), nil
+	return ws, nil
 }
 
 var memorySearchCmd = &cobra.Command{
@@ -33,12 +33,12 @@ var memorySearchCmd = &cobra.Command{
 	Short: "Search memory",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		memoryDir, err := getCurrentWorkspaceMemoryDir()
+		ws, err := resolveCurrentWorkspace()
 		if err != nil {
 			return err
 		}
 
-		store, err := memory.OpenStore(memoryDir, "")
+		store, err := memory.OpenStore(ws.MemoryDir())
 		if err != nil {
 			return err
 		}
@@ -71,12 +71,12 @@ var memoryStoreCmd = &cobra.Command{
 	Short: "Store information in memory palace",
 	Args:  cobra.ExactArgs(3),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		memoryDir, err := getCurrentWorkspaceMemoryDir()
+		ws, err := resolveCurrentWorkspace()
 		if err != nil {
 			return err
 		}
 
-		store, err := memory.OpenStore(memoryDir, "")
+		store, err := memory.OpenStore(ws.MemoryDir())
 		if err != nil {
 			return err
 		}
@@ -114,12 +114,12 @@ var memoryStatusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show memory palace overview",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		memoryDir, err := getCurrentWorkspaceMemoryDir()
+		ws, err := resolveCurrentWorkspace()
 		if err != nil {
 			return err
 		}
 
-		store, err := memory.OpenStore(memoryDir, "")
+		store, err := memory.OpenStore(ws.MemoryDir())
 		if err != nil {
 			return err
 		}
@@ -130,14 +130,6 @@ var memoryStatusCmd = &cobra.Command{
 			return err
 		}
 
-		m, err := workspace.NewManager()
-		if err != nil {
-			return fmt.Errorf("create workspace manager: %w", err)
-		}
-		ws, err := m.ResolveByNameOrDiscover("", ".")
-		if err != nil {
-			return fmt.Errorf("resolve workspace: %w", err)
-		}
 		fmt.Fprintf(cmd.OutOrStdout(), "Memory Palace for workspace '%s': %d wings\n", ws.Config.Name, len(wings))
 		for _, w := range wings {
 			rooms, _ := store.GetRooms(context.Background(), w.ID)

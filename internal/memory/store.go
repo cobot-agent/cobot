@@ -13,28 +13,27 @@ import (
 )
 
 // Store provides hierarchical memory storage backed by SQLite with FTS5.
-// The LTM (long-term memory) uses a shared memory.db, while each session's
-// STM (short-term memory) gets its own per-session SQLite database.
+// Both LTM (long-term memory) and per-session STM (short-term memory)
+// databases live in the same directory.
 type Store struct {
-	db     *sql.DB              // LTM database
-	stmDir string               // directory for per-session STM DBs
-	stmMu  sync.Mutex           // protects stmDBs map
-	stmDBs map[string]*sql.DB   // sessionID → STM DB connection
+	db     *sql.DB            // LTM database
+	stmDir string             // directory for per-session STM DBs
+	stmMu  sync.Mutex         // protects stmDBs map
+	stmDBs map[string]*sql.DB // sessionID → STM DB connection
 }
 
 // OpenStore opens a SQLite-backed memory store at the given directory.
 // It creates the directory and database file if they don't exist,
 // enables WAL mode for concurrent reads, and ensures the schema is current.
-// stmDir specifies the directory for per-session STM databases; it may be
-// empty to disable STM support.
-func OpenStore(memoryDir string, stmDir string) (*Store, error) {
+// STM databases are stored alongside LTM in the same directory.
+func OpenStore(memoryDir string) (*Store, error) {
 	db, err := openDB(memoryDir)
 	if err != nil {
 		return nil, err
 	}
 	return &Store{
 		db:     db,
-		stmDir: stmDir,
+		stmDir: memoryDir,
 		stmDBs: make(map[string]*sql.DB),
 	}, nil
 }
@@ -140,8 +139,8 @@ func (s *Store) Search(ctx context.Context, query *cobot.SearchQuery) ([]*cobot.
 }
 
 var (
-	_ cobot.MemoryStore    = (*Store)(nil)
-	_ cobot.MemoryRecall   = (*Store)(nil)
+	_ cobot.MemoryStore     = (*Store)(nil)
+	_ cobot.MemoryRecall    = (*Store)(nil)
 	_ cobot.ShortTermMemory = (*Store)(nil)
 )
 
@@ -235,11 +234,12 @@ func (s *Store) storeByNameOnDB(ctx context.Context, db *sql.DB, content, wingNa
 
 // StoreShortTerm stores a short-term memory item for the given session.
 // The category determines which room the item goes into:
-//   "context"/"task_state"/"decision" → "context" room
-//   "todo"                            → "todo" room
-//   "note"/"requirement"              → "notes" room
-//   "observation"/"error"             → "observation" room
-//   "compressed"                      → "compressed" room
+//
+//	"context"/"task_state"/"decision" → "context" room
+//	"todo"                            → "todo" room
+//	"note"/"requirement"              → "notes" room
+//	"observation"/"error"             → "observation" room
+//	"compressed"                      → "compressed" room
 func (s *Store) StoreShortTerm(ctx context.Context, sessionID, content, category string) (string, error) {
 	stmDB, err := s.getSTMDB(sessionID)
 	if err != nil {

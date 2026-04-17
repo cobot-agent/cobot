@@ -20,7 +20,7 @@ func TestListDirTool_SandboxResolve(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "README.md"), []byte("# test"), 0644)
 
 	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/myworkspace", Root: dir}
-	tool := NewListDirTool(WithListSandbox(sandbox))
+	tool := NewListDirTool(sandbox)
 
 	args, _ := json.Marshal(map[string]string{"path": "/home/myworkspace"})
 	result, err := tool.Execute(context.Background(), args)
@@ -38,7 +38,7 @@ func TestListDirTool_SandboxResolve(t *testing.T) {
 func TestListDirTool_SandboxAutoResolveOutside(t *testing.T) {
 	dir := t.TempDir()
 	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/myworkspace", Root: dir}
-	tool := NewListDirTool(WithListSandbox(sandbox))
+	tool := NewListDirTool(sandbox)
 
 	args, _ := json.Marshal(map[string]string{"path": "/etc"})
 	_, err := tool.Execute(context.Background(), args)
@@ -59,7 +59,7 @@ func TestListDirTool_SandboxRelativePath(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "src", "main.go"), []byte("package main"), 0644)
 
 	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/myworkspace", Root: dir}
-	tool := NewListDirTool(WithListSandbox(sandbox))
+	tool := NewListDirTool(sandbox)
 
 	// Relative path should auto-resolve under VirtualRoot
 	args, _ := json.Marshal(map[string]string{"path": "src"})
@@ -76,7 +76,7 @@ func TestListDirTool_NoSandbox(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "test.txt"), []byte("hello"), 0644)
 
-	tool := NewListDirTool()
+	tool := NewListDirTool(nil)
 	args, _ := json.Marshal(map[string]string{"path": dir})
 	result, err := tool.Execute(context.Background(), args)
 	if err != nil {
@@ -96,7 +96,7 @@ func TestSearchFilesTool_SandboxResolve(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "src", "util.go"), []byte("package main"), 0644)
 
 	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/myworkspace", Root: dir}
-	tool := NewSearchFilesTool(WithSearchSandbox(sandbox))
+	tool := NewSearchFilesTool(sandbox)
 
 	args, _ := json.Marshal(map[string]string{"path": "/home/myworkspace", "pattern": "*.go"})
 	result, err := tool.Execute(context.Background(), args)
@@ -114,7 +114,7 @@ func TestSearchFilesTool_SandboxResolve(t *testing.T) {
 func TestSearchFilesTool_SandboxAutoResolveOutside(t *testing.T) {
 	dir := t.TempDir()
 	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/myworkspace", Root: dir}
-	tool := NewSearchFilesTool(WithSearchSandbox(sandbox))
+	tool := NewSearchFilesTool(sandbox)
 
 	// /tmp auto-resolves to /home/myworkspace/tmp → dir/tmp (doesn't exist)
 	args, _ := json.Marshal(map[string]string{"path": "/tmp", "pattern": "*.txt"})
@@ -134,7 +134,7 @@ func TestSearchFilesTool_SandboxRelativePath(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "src", "main.go"), []byte("package main"), 0644)
 
 	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/myworkspace", Root: dir}
-	tool := NewSearchFilesTool(WithSearchSandbox(sandbox))
+	tool := NewSearchFilesTool(sandbox)
 
 	// Relative path auto-resolves
 	args, _ := json.Marshal(map[string]string{"path": "src", "pattern": "*.go"})
@@ -151,7 +151,7 @@ func TestSearchFilesTool_NoSandbox(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "test.txt"), []byte("hello"), 0644)
 
-	tool := NewSearchFilesTool()
+	tool := NewSearchFilesTool(nil)
 	args, _ := json.Marshal(map[string]string{"path": dir, "pattern": "*.txt"})
 	result, err := tool.Execute(context.Background(), args)
 	if err != nil {
@@ -166,7 +166,7 @@ func TestSearchFilesTool_NoSandbox(t *testing.T) {
 
 func TestReadFileTool_Description_Sandbox(t *testing.T) {
 	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/ws", Root: "/tmp/real"}
-	tool := NewReadFileTool(WithReadSandbox(sandbox))
+	tool := NewReadFileTool(sandbox)
 	desc := tool.Description()
 	if !strings.Contains(desc, "/home/ws") {
 		t.Errorf("description should mention VirtualRoot, got %q", desc)
@@ -175,7 +175,7 @@ func TestReadFileTool_Description_Sandbox(t *testing.T) {
 
 func TestWriteFileTool_Description_Sandbox(t *testing.T) {
 	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/ws", Root: "/tmp/real"}
-	tool := NewWriteFileTool(WithWriteSandbox(sandbox))
+	tool := NewWriteFileTool(sandbox)
 	desc := tool.Description()
 	if !strings.Contains(desc, "/home/ws") {
 		t.Errorf("description should mention VirtualRoot, got %q", desc)
@@ -184,7 +184,7 @@ func TestWriteFileTool_Description_Sandbox(t *testing.T) {
 
 func TestListDirTool_Description_Sandbox(t *testing.T) {
 	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/ws", Root: "/tmp/real"}
-	tool := NewListDirTool(WithListSandbox(sandbox))
+	tool := NewListDirTool(sandbox)
 	desc := tool.Description()
 	if !strings.Contains(desc, "/home/ws") {
 		t.Errorf("description should mention VirtualRoot, got %q", desc)
@@ -193,7 +193,7 @@ func TestListDirTool_Description_Sandbox(t *testing.T) {
 
 func TestSearchFilesTool_Description_Sandbox(t *testing.T) {
 	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/ws", Root: "/tmp/real"}
-	tool := NewSearchFilesTool(WithSearchSandbox(sandbox))
+	tool := NewSearchFilesTool(sandbox)
 	desc := tool.Description()
 	if !strings.Contains(desc, "/home/ws") {
 		t.Errorf("description should mention VirtualRoot, got %q", desc)
@@ -207,7 +207,7 @@ func TestReadFileTool_SandboxVirtualPathHeader(t *testing.T) {
 	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/myworkspace", Root: dir}
 	os.WriteFile(filepath.Join(dir, "hello.txt"), []byte("world"), 0644)
 
-	tool := NewReadFileTool(WithReadSandbox(sandbox))
+	tool := NewReadFileTool(sandbox)
 	args, _ := json.Marshal(map[string]string{"path": "/home/myworkspace/hello.txt"})
 	result, err := tool.Execute(context.Background(), args)
 	if err != nil {
@@ -227,7 +227,7 @@ func TestReadFileTool_NoSandboxNoHeader(t *testing.T) {
 	f := filepath.Join(dir, "test.txt")
 	os.WriteFile(f, []byte("hello world"), 0644)
 
-	tool := NewReadFileTool()
+	tool := NewReadFileTool(nil)
 	args, _ := json.Marshal(map[string]string{"path": f})
 	result, err := tool.Execute(context.Background(), args)
 	if err != nil {
@@ -247,7 +247,7 @@ func TestWriteFileTool_SandboxVirtualPathOutput(t *testing.T) {
 	dir := t.TempDir()
 	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/myworkspace", Root: dir}
 
-	tool := NewWriteFileTool(WithWriteSandbox(sandbox))
+	tool := NewWriteFileTool(sandbox)
 	args, _ := json.Marshal(map[string]string{"path": "/home/myworkspace/output.txt", "content": "hello"})
 	result, err := tool.Execute(context.Background(), args)
 	if err != nil {
@@ -263,7 +263,7 @@ func TestWriteFileTool_NoSandboxOutput(t *testing.T) {
 	dir := t.TempDir()
 	f := filepath.Join(dir, "output.txt")
 
-	tool := NewWriteFileTool()
+	tool := NewWriteFileTool(nil)
 	args, _ := json.Marshal(map[string]string{"path": f, "content": "written content"})
 	result, err := tool.Execute(context.Background(), args)
 	if err != nil {
@@ -281,7 +281,7 @@ func TestReadFileTool_SandboxAutoResolvesAbsolute(t *testing.T) {
 	os.MkdirAll(filepath.Join(dir, "etc"), 0755)
 	os.WriteFile(filepath.Join(dir, "etc", "passwd"), []byte("root:x:0:0"), 0644)
 	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/myworkspace", Root: dir}
-	tool := NewReadFileTool(WithReadSandbox(sandbox))
+	tool := NewReadFileTool(sandbox)
 
 	// /etc/passwd auto-resolves to /home/myworkspace/etc/passwd → dir/etc/passwd
 	args, _ := json.Marshal(map[string]string{"path": "/etc/passwd"})
@@ -298,7 +298,7 @@ func TestWriteFileTool_SandboxAutoResolvesAbsolute(t *testing.T) {
 	dir := t.TempDir()
 	os.MkdirAll(filepath.Join(dir, "tmp"), 0755) // create parent dir for auto-resolved path
 	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/myworkspace", Root: dir}
-	tool := NewWriteFileTool(WithWriteSandbox(sandbox))
+	tool := NewWriteFileTool(sandbox)
 
 	// /tmp/output.txt auto-resolves to /home/myworkspace/tmp/output.txt
 	args, _ := json.Marshal(map[string]string{"path": "/tmp/output.txt", "content": "test"})
@@ -324,7 +324,7 @@ func TestListDirTool_SandboxAutoResolvesAbsolute(t *testing.T) {
 	os.MkdirAll(filepath.Join(dir, "var", "log"), 0755)
 	os.WriteFile(filepath.Join(dir, "var", "log", "app.log"), []byte("log data"), 0644)
 	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/myworkspace", Root: dir}
-	tool := NewListDirTool(WithListSandbox(sandbox))
+	tool := NewListDirTool(sandbox)
 
 	args, _ := json.Marshal(map[string]string{"path": "/var/log"})
 	result, err := tool.Execute(context.Background(), args)
@@ -341,7 +341,7 @@ func TestSearchFilesTool_SandboxAutoResolvesAbsolute(t *testing.T) {
 	os.MkdirAll(filepath.Join(dir, "usr", "local"), 0755)
 	os.WriteFile(filepath.Join(dir, "usr", "local", "app.go"), []byte("package main"), 0644)
 	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/myworkspace", Root: dir}
-	tool := NewSearchFilesTool(WithSearchSandbox(sandbox))
+	tool := NewSearchFilesTool(sandbox)
 
 	args, _ := json.Marshal(map[string]string{"path": "/usr/local", "pattern": "*.go"})
 	result, err := tool.Execute(context.Background(), args)
@@ -359,7 +359,7 @@ func TestReadFileTool_SandboxRealRootPathMatch(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "hello.txt"), []byte("world"), 0644)
 	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/ws", Root: dir}
-	tool := NewReadFileTool(WithReadSandbox(sandbox))
+	tool := NewReadFileTool(sandbox)
 
 	// LLM accidentally uses the real Root path instead of VirtualRoot
 	args, _ := json.Marshal(map[string]string{"path": dir + "/hello.txt"})
@@ -378,7 +378,7 @@ func TestWriteFileTool_SandboxRelativeAutoResolve(t *testing.T) {
 	dir := t.TempDir()
 	os.MkdirAll(filepath.Join(dir, "src"), 0755)
 	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/myworkspace", Root: dir}
-	tool := NewWriteFileTool(WithWriteSandbox(sandbox))
+	tool := NewWriteFileTool(sandbox)
 
 	// Relative path should auto-resolve under VirtualRoot
 	args, _ := json.Marshal(map[string]string{"path": "src/main.go", "content": "package main"})
@@ -405,10 +405,10 @@ func TestAllFilesystemTools_WithSandbox(t *testing.T) {
 	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/test", Root: t.TempDir()}
 
 	registry := NewRegistry()
-	registry.Register(NewReadFileTool(WithReadSandbox(sandbox)))
-	registry.Register(NewWriteFileTool(WithWriteSandbox(sandbox)))
-	registry.Register(NewListDirTool(WithListSandbox(sandbox)))
-	registry.Register(NewSearchFilesTool(WithSearchSandbox(sandbox)))
+	registry.Register(NewReadFileTool(sandbox))
+	registry.Register(NewWriteFileTool(sandbox))
+	registry.Register(NewListDirTool(sandbox))
+	registry.Register(NewSearchFilesTool(sandbox))
 
 	expectedNames := []string{"filesystem_read", "filesystem_write", "filesystem_list", "filesystem_search"}
 	for _, name := range expectedNames {
@@ -426,10 +426,10 @@ func TestAllFilesystemTools_WithSandbox(t *testing.T) {
 
 func TestAllFilesystemTools_WithoutSandbox(t *testing.T) {
 	registry := NewRegistry()
-	registry.Register(NewReadFileTool())
-	registry.Register(NewWriteFileTool())
-	registry.Register(NewListDirTool())
-	registry.Register(NewSearchFilesTool())
+	registry.Register(NewReadFileTool(nil))
+	registry.Register(NewWriteFileTool(nil))
+	registry.Register(NewListDirTool(nil))
+	registry.Register(NewSearchFilesTool(nil))
 
 	expectedNames := []string{"filesystem_read", "filesystem_write", "filesystem_list", "filesystem_search"}
 	for _, name := range expectedNames {
@@ -445,7 +445,7 @@ func TestAllFilesystemTools_WithoutSandbox(t *testing.T) {
 func TestWriteFileTool_SandboxCreatesParentDirs(t *testing.T) {
 	dir := t.TempDir()
 	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/ws", Root: dir}
-	tool := NewWriteFileTool(WithWriteSandbox(sandbox))
+	tool := NewWriteFileTool(sandbox)
 
 	// Write to a nested path where parent dirs don't exist
 	args, _ := json.Marshal(map[string]string{"path": "/home/ws/deep/nested/file.txt", "content": "hello"})

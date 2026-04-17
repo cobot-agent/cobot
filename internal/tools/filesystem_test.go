@@ -16,7 +16,7 @@ func TestReadFileTool(t *testing.T) {
 	f := filepath.Join(dir, "test.txt")
 	os.WriteFile(f, []byte("hello world"), 0644)
 
-	tool := NewReadFileTool()
+	tool := NewReadFileTool(nil)
 	args, _ := json.Marshal(map[string]string{"path": f})
 	result, err := tool.Execute(context.Background(), args)
 	if err != nil {
@@ -31,7 +31,7 @@ func TestWriteFileTool(t *testing.T) {
 	dir := t.TempDir()
 	f := filepath.Join(dir, "output.txt")
 
-	tool := NewWriteFileTool()
+	tool := NewWriteFileTool(nil)
 	args, _ := json.Marshal(map[string]string{"path": f, "content": "written content"})
 	result, err := tool.Execute(context.Background(), args)
 	if err != nil {
@@ -47,7 +47,7 @@ func TestWriteFileTool(t *testing.T) {
 }
 
 func TestReadFileNotFound(t *testing.T) {
-	tool := NewReadFileTool()
+	tool := NewReadFileTool(nil)
 	args, _ := json.Marshal(map[string]string{"path": "/nonexistent/file.txt"})
 	_, err := tool.Execute(context.Background(), args)
 	if err == nil {
@@ -87,7 +87,7 @@ func TestReadFileTool_SandboxResolve(t *testing.T) {
 	os.MkdirAll(filepath.Join(dir, "src"), 0755)
 	os.WriteFile(filepath.Join(dir, "src", "main.go"), []byte("package main"), 0644)
 
-	tool := NewReadFileTool(WithReadSandbox(sandbox))
+	tool := NewReadFileTool(sandbox)
 
 	// Virtual path resolves correctly
 	args, _ := json.Marshal(map[string]string{"path": "/home/test/src/main.go"})
@@ -105,7 +105,7 @@ func TestReadFileTool_SandboxRejectOutside(t *testing.T) {
 	dir := t.TempDir()
 	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/test", Root: dir}
 
-	tool := NewReadFileTool(WithReadSandbox(sandbox))
+	tool := NewReadFileTool(sandbox)
 
 	args, _ := json.Marshal(map[string]string{"path": "/etc/passwd"})
 	_, err := tool.Execute(context.Background(), args)
@@ -120,7 +120,7 @@ func TestReadFileTool_SandboxRejectRelative(t *testing.T) {
 	os.MkdirAll(filepath.Join(dir, "src"), 0755)
 	os.WriteFile(filepath.Join(dir, "src", "main.go"), []byte("package main"), 0644)
 
-	tool := NewReadFileTool(WithReadSandbox(sandbox))
+	tool := NewReadFileTool(sandbox)
 
 	// Relative paths are now auto-resolved under VirtualRoot, so this should succeed
 	args, _ := json.Marshal(map[string]string{"path": "src/main.go"})
@@ -138,7 +138,7 @@ func TestWriteFileTool_SandboxResolve(t *testing.T) {
 	dir := t.TempDir()
 	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/test", Root: dir}
 
-	tool := NewWriteFileTool(WithWriteSandbox(sandbox))
+	tool := NewWriteFileTool(sandbox)
 
 	args, _ := json.Marshal(map[string]string{"path": "/home/test/output.txt", "content": "hello"})
 	result, err := tool.Execute(context.Background(), args)
@@ -159,7 +159,7 @@ func TestWriteFileTool_SandboxRejectOutside(t *testing.T) {
 	dir := t.TempDir()
 	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/test", Root: dir}
 
-	tool := NewWriteFileTool(WithWriteSandbox(sandbox))
+	tool := NewWriteFileTool(sandbox)
 
 	// /tmp/evil.txt is auto-resolved to dir/tmp/evil.txt inside the sandbox,
 	// so it succeeds (the path is safely contained within the sandbox).

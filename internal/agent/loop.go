@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 
-	cobot "github.com/cobot-agent/cobot/pkg"
 	"github.com/cobot-agent/cobot/internal/memory"
+	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
 func (a *Agent) buildRequest(ctx context.Context) *cobot.ProviderRequest {

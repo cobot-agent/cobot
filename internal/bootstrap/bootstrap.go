@@ -143,8 +143,7 @@ func ConfigureAgentForWorkspace(a *agent.Agent, ws *workspace.Workspace, registr
 			slog.Warn("failed to close memory store", "err", err)
 		}
 	}
-	dataDir := ws.MemoryDir()
-	store, err := memory.OpenStore(dataDir, ws.STMDir())
+	store, err := memory.OpenStore(ws.MemoryDir())
 	if err != nil {
 		slog.Warn("failed to open memory store", "err", err)
 	} else {
@@ -153,47 +152,31 @@ func ConfigureAgentForWorkspace(a *agent.Agent, ws *workspace.Workspace, registr
 	}
 
 	// --- sandbox ---
-	sandboxRoot := resolveSandboxRoot(ws)
-	sandboxCfg := ws.Config.Sandbox
-	if agentCfg != nil && agentCfg.Sandbox != nil {
-		if agentCfg.Sandbox.Root != "" {
-			sandboxCfg.Root = agentCfg.Sandbox.Root
-			sandboxRoot = agentCfg.Sandbox.Root
-		}
-		if len(agentCfg.Sandbox.AllowPaths) > 0 {
-			sandboxCfg.AllowPaths = agentCfg.Sandbox.AllowPaths
-		}
-		if len(agentCfg.Sandbox.BlockedCommands) > 0 {
-			sandboxCfg.BlockedCommands = agentCfg.Sandbox.BlockedCommands
-		}
+	var agentSandbox *cobot.SandboxConfig
+	if agentCfg != nil {
+		agentSandbox = agentCfg.Sandbox
 	}
-	var virtualRoot string
-	if sandboxCfg.Root != "" {
-		virtualRoot = "/home/" + ws.Config.Name
-	}
-	sandbox := &cobot.SandboxConfig{
-		VirtualRoot:   virtualRoot,
-		Root:          sandboxCfg.Root,
-		AllowPaths:    sandboxCfg.AllowPaths,
-		ReadonlyPaths: sandboxCfg.ReadonlyPaths,
-	}
-	a.RegisterTool(tools.NewReadFileTool(tools.WithReadSandbox(sandbox)))
-	a.RegisterTool(tools.NewWriteFileTool(tools.WithWriteSandbox(sandbox)))
-	a.RegisterTool(tools.NewListDirTool(tools.WithListSandbox(sandbox)))
-	a.RegisterTool(tools.NewSearchFilesTool(tools.WithSearchSandbox(sandbox)))
+	sandbox := ws.EffectiveSandbox(agentSandbox)
 
-	// Shell tool gets the full sandbox config so it can rewrite virtual paths.
-	shellSandbox := &cobot.SandboxConfig{
-		VirtualRoot:     virtualRoot,
-		Root:            sandboxCfg.Root,
-		AllowPaths:      sandboxCfg.AllowPaths,
-		ReadonlyPaths:   sandboxCfg.ReadonlyPaths,
-		AllowNetwork:    sandboxCfg.AllowNetwork,
-		BlockedCommands: sandboxCfg.BlockedCommands,
+	a.RegisterTool(tools.NewReadFileTool(sandbox))
+	a.RegisterTool(tools.NewWriteFileTool(sandbox))
+	a.RegisterTool(tools.NewListDirTool(sandbox))
+	a.RegisterTool(tools.NewSearchFilesTool(sandbox))
+
+	// Shell tool needs AllowNetwork too
+	shellSandbox := *sandbox
+	if agentCfg != nil && agentCfg.Sandbox != nil {
+		shellSandbox.AllowNetwork = agentCfg.Sandbox.AllowNetwork
 	}
+
+	sandboxRoot := resolveSandboxRoot(ws)
+	if agentSandbox != nil && agentSandbox.Root != "" {
+		sandboxRoot = agentSandbox.Root
+	}
+
 	a.RegisterTool(tools.NewShellExecTool(
 		tools.WithShellWorkdir(sandboxRoot),
-		tools.WithShellSandboxConfig(shellSandbox),
+		tools.WithShellSandboxConfig(&shellSandbox),
 	))
 
 	// --- workspace tools ---

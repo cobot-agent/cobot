@@ -1,11 +1,11 @@
 package tools
 
 import (
-	"io/fs"
 	"context"
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,6 +32,27 @@ func sandboxResolvePath(sandbox *cobot.SandboxConfig, path string) (string, erro
 	return resolved, nil
 }
 
+// sandboxTool provides common sandbox functionality for filesystem tools.
+type sandboxTool struct {
+	sandbox *cobot.SandboxConfig
+}
+
+// describeWithSandbox appends the sandbox notice to a tool description.
+func (s *sandboxTool) describeWithSandbox(desc string) string {
+	if s.sandbox != nil && s.sandbox.VirtualRoot != "" {
+		return desc + fmt.Sprintf(" Sandbox is active. All file paths are automatically resolved under %q — provide paths starting with %q for best results. Relative paths and other absolute paths are auto-mapped into the sandbox.", s.sandbox.VirtualRoot, s.sandbox.VirtualRoot)
+	}
+	return desc
+}
+
+// sandboxRewriteErr rewrites real paths to virtual paths in error messages.
+func sandboxRewriteErr(sandbox *cobot.SandboxConfig, err error) error {
+	if sandbox == nil || sandbox.VirtualRoot == "" {
+		return err
+	}
+	return fmt.Errorf("%s", sandbox.RewriteOutputPaths(err.Error()))
+}
+
 //go:embed embed_filesystem_read_params.json
 var filesystemReadParamsJSON []byte
 
@@ -43,21 +64,11 @@ type readFileArgs struct {
 }
 
 type ReadFileTool struct {
-	sandbox *cobot.SandboxConfig
+	sandboxTool
 }
 
-type ReadFileToolOption func(*ReadFileTool)
-
-func WithReadSandbox(s *cobot.SandboxConfig) ReadFileToolOption {
-	return func(t *ReadFileTool) { t.sandbox = s }
-}
-
-func NewReadFileTool(opts ...ReadFileToolOption) *ReadFileTool {
-	t := &ReadFileTool{}
-	for _, opt := range opts {
-		opt(t)
-	}
-	return t
+func NewReadFileTool(sandbox *cobot.SandboxConfig) *ReadFileTool {
+	return &ReadFileTool{sandboxTool{sandbox: sandbox}}
 }
 
 func (t *ReadFileTool) Name() string {
@@ -65,11 +76,7 @@ func (t *ReadFileTool) Name() string {
 }
 
 func (t *ReadFileTool) Description() string {
-	desc := "Read the contents of a file at the given path."
-	if t.sandbox != nil && t.sandbox.VirtualRoot != "" {
-		desc += fmt.Sprintf(" Sandbox is active. All file paths are automatically resolved under %q — provide paths starting with %q for best results. Relative paths and other absolute paths are auto-mapped into the sandbox.", t.sandbox.VirtualRoot, t.sandbox.VirtualRoot)
-	}
-	return desc
+	return t.describeWithSandbox("Read the contents of a file at the given path.")
 }
 
 func (t *ReadFileTool) Parameters() json.RawMessage {
@@ -88,10 +95,7 @@ func (t *ReadFileTool) Execute(ctx context.Context, args json.RawMessage) (strin
 	}
 	data, err := os.ReadFile(a.Path)
 	if err != nil {
-		if t.sandbox != nil {
-			return "", fmt.Errorf("%s", t.sandbox.RewriteOutputPaths(err.Error()))
-		}
-		return "", err
+		return "", sandboxRewriteErr(t.sandbox, err)
 	}
 	if t.sandbox != nil && t.sandbox.VirtualRoot != "" {
 		virtualPath := t.sandbox.RealToVirtual(a.Path)
@@ -106,21 +110,11 @@ type writeFileArgs struct {
 }
 
 type WriteFileTool struct {
-	sandbox *cobot.SandboxConfig
+	sandboxTool
 }
 
-type WriteFileToolOption func(*WriteFileTool)
-
-func WithWriteSandbox(s *cobot.SandboxConfig) WriteFileToolOption {
-	return func(t *WriteFileTool) { t.sandbox = s }
-}
-
-func NewWriteFileTool(opts ...WriteFileToolOption) *WriteFileTool {
-	t := &WriteFileTool{}
-	for _, opt := range opts {
-		opt(t)
-	}
-	return t
+func NewWriteFileTool(sandbox *cobot.SandboxConfig) *WriteFileTool {
+	return &WriteFileTool{sandboxTool{sandbox: sandbox}}
 }
 
 func (t *WriteFileTool) Name() string {
@@ -128,11 +122,7 @@ func (t *WriteFileTool) Name() string {
 }
 
 func (t *WriteFileTool) Description() string {
-	desc := "Write content to a file at the given path."
-	if t.sandbox != nil && t.sandbox.VirtualRoot != "" {
-		desc += fmt.Sprintf(" Sandbox is active. All file paths are automatically resolved under %q — provide paths starting with %q for best results. Relative paths and other absolute paths are auto-mapped into the sandbox.", t.sandbox.VirtualRoot, t.sandbox.VirtualRoot)
-	}
-	return desc
+	return t.describeWithSandbox("Write content to a file at the given path.")
 }
 
 func (t *WriteFileTool) Parameters() json.RawMessage {
@@ -152,17 +142,11 @@ func (t *WriteFileTool) Execute(ctx context.Context, args json.RawMessage) (stri
 	// Ensure parent directory exists
 	if dir := filepath.Dir(a.Path); dir != "" && dir != "." {
 		if err := os.MkdirAll(dir, 0755); err != nil {
-			if t.sandbox != nil {
-				return "", fmt.Errorf("%s", t.sandbox.RewriteOutputPaths(err.Error()))
-			}
-			return "", err
+			return "", sandboxRewriteErr(t.sandbox, err)
 		}
 	}
 	if err := os.WriteFile(a.Path, []byte(a.Content), 0644); err != nil {
-		if t.sandbox != nil {
-			return "", fmt.Errorf("%s", t.sandbox.RewriteOutputPaths(err.Error()))
-		}
-		return "", err
+		return "", sandboxRewriteErr(t.sandbox, err)
 	}
 	if t.sandbox != nil && t.sandbox.VirtualRoot != "" {
 		virtualPath := t.sandbox.RealToVirtual(a.Path)
@@ -175,6 +159,7 @@ var (
 	_ cobot.Tool = (*ReadFileTool)(nil)
 	_ cobot.Tool = (*WriteFileTool)(nil)
 )
+
 //go:embed embed_filesystem_list_params.json
 var filesystemListParamsJSON []byte
 
@@ -187,31 +172,17 @@ type listDirArgs struct {
 }
 
 type ListDirTool struct {
-	sandbox *cobot.SandboxConfig
+	sandboxTool
 }
 
-type ListDirToolOption func(*ListDirTool)
-
-func WithListSandbox(s *cobot.SandboxConfig) ListDirToolOption {
-	return func(t *ListDirTool) { t.sandbox = s }
-}
-
-func NewListDirTool(opts ...ListDirToolOption) *ListDirTool {
-	t := &ListDirTool{}
-	for _, opt := range opts {
-		opt(t)
-	}
-	return t
+func NewListDirTool(sandbox *cobot.SandboxConfig) *ListDirTool {
+	return &ListDirTool{sandboxTool{sandbox: sandbox}}
 }
 
 func (t *ListDirTool) Name() string { return "filesystem_list" }
 
 func (t *ListDirTool) Description() string {
-	desc := "List files and directories at the given path."
-	if t.sandbox != nil && t.sandbox.VirtualRoot != "" {
-		desc += fmt.Sprintf(" Sandbox is active. All file paths are automatically resolved under %q — provide paths starting with %q for best results. Relative paths and other absolute paths are auto-mapped into the sandbox.", t.sandbox.VirtualRoot, t.sandbox.VirtualRoot)
-	}
-	return desc
+	return t.describeWithSandbox("List files and directories at the given path.")
 }
 
 func (t *ListDirTool) Parameters() json.RawMessage {
@@ -231,10 +202,7 @@ func (t *ListDirTool) Execute(ctx context.Context, args json.RawMessage) (string
 
 	entries, err := os.ReadDir(a.Path)
 	if err != nil {
-		if t.sandbox != nil {
-			return "", fmt.Errorf("%s", t.sandbox.RewriteOutputPaths(err.Error()))
-		}
-		return "", err
+		return "", sandboxRewriteErr(t.sandbox, err)
 	}
 
 	// When sandbox is active, compute the virtual path prefix for display
@@ -280,31 +248,17 @@ type searchFilesArgs struct {
 }
 
 type SearchFilesTool struct {
-	sandbox *cobot.SandboxConfig
+	sandboxTool
 }
 
-type SearchFilesToolOption func(*SearchFilesTool)
-
-func WithSearchSandbox(s *cobot.SandboxConfig) SearchFilesToolOption {
-	return func(t *SearchFilesTool) { t.sandbox = s }
-}
-
-func NewSearchFilesTool(opts ...SearchFilesToolOption) *SearchFilesTool {
-	t := &SearchFilesTool{}
-	for _, opt := range opts {
-		opt(t)
-	}
-	return t
+func NewSearchFilesTool(sandbox *cobot.SandboxConfig) *SearchFilesTool {
+	return &SearchFilesTool{sandboxTool{sandbox: sandbox}}
 }
 
 func (t *SearchFilesTool) Name() string { return "filesystem_search" }
 
 func (t *SearchFilesTool) Description() string {
-	desc := "Search for files matching a pattern recursively from a root directory."
-	if t.sandbox != nil && t.sandbox.VirtualRoot != "" {
-		desc += fmt.Sprintf(" Sandbox is active. All file paths are automatically resolved under %q — provide paths starting with %q for best results. Relative paths and other absolute paths are auto-mapped into the sandbox.", t.sandbox.VirtualRoot, t.sandbox.VirtualRoot)
-	}
-	return desc
+	return t.describeWithSandbox("Search for files matching a pattern recursively from a root directory.")
 }
 
 func (t *SearchFilesTool) Parameters() json.RawMessage {
@@ -342,10 +296,7 @@ func (t *SearchFilesTool) Execute(ctx context.Context, args json.RawMessage) (st
 		return nil
 	})
 	if err != nil {
-		if t.sandbox != nil {
-			return "", fmt.Errorf("%s", t.sandbox.RewriteOutputPaths(err.Error()))
-		}
-		return "", err
+		return "", sandboxRewriteErr(t.sandbox, err)
 	}
 
 	if len(matches) == 0 {

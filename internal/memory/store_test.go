@@ -12,7 +12,7 @@ import (
 
 func TestOpenCloseStore(t *testing.T) {
 	dir := t.TempDir()
-	s, err := OpenStore(dir, filepath.Join(dir, "stm"))
+	s, err := OpenStore(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -23,7 +23,7 @@ func TestOpenCloseStore(t *testing.T) {
 
 func TestWingCRUD(t *testing.T) {
 	dir := t.TempDir()
-	s, err := OpenStore(dir, filepath.Join(dir, "stm"))
+	s, err := OpenStore(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestWingCRUD(t *testing.T) {
 
 func TestRoomCRUD(t *testing.T) {
 	dir := t.TempDir()
-	s, _ := OpenStore(dir, filepath.Join(dir, "stm"))
+	s, _ := OpenStore(dir)
 	defer s.Close()
 
 	ctx := context.Background()
@@ -86,7 +86,7 @@ func TestRoomCRUD(t *testing.T) {
 
 func TestDrawerCRUD(t *testing.T) {
 	dir := t.TempDir()
-	s, _ := OpenStore(dir, filepath.Join(dir, "stm"))
+	s, _ := OpenStore(dir)
 	defer s.Close()
 
 	ctx := context.Background()
@@ -106,7 +106,7 @@ func TestDrawerCRUD(t *testing.T) {
 
 func TestClosetCRUD(t *testing.T) {
 	dir := t.TempDir()
-	s, _ := OpenStore(dir, filepath.Join(dir, "stm"))
+	s, _ := OpenStore(dir)
 	defer s.Close()
 
 	ctx := context.Background()
@@ -140,7 +140,7 @@ func TestClosetCRUD(t *testing.T) {
 
 func TestFTS5Search(t *testing.T) {
 	dir := t.TempDir()
-	s, _ := OpenStore(dir, filepath.Join(dir, "stm"))
+	s, _ := OpenStore(dir)
 	defer s.Close()
 
 	ctx := context.Background()
@@ -166,7 +166,7 @@ func TestFTS5Search(t *testing.T) {
 
 func TestStoreAndSearch(t *testing.T) {
 	dir := t.TempDir()
-	s, _ := OpenStore(dir, filepath.Join(dir, "stm"))
+	s, _ := OpenStore(dir)
 	defer s.Close()
 
 	ctx := context.Background()
@@ -201,7 +201,7 @@ func TestStoreAndSearch(t *testing.T) {
 
 func TestStoreAndSearchMultiple(t *testing.T) {
 	dir := t.TempDir()
-	s, _ := OpenStore(dir, filepath.Join(dir, "stm"))
+	s, _ := OpenStore(dir)
 	defer s.Close()
 
 	ctx := context.Background()
@@ -233,7 +233,7 @@ func TestStoreAndSearchMultiple(t *testing.T) {
 
 func TestL3DeepSearch(t *testing.T) {
 	dir := t.TempDir()
-	s, err := OpenStore(dir, filepath.Join(dir, "stm"))
+	s, err := OpenStore(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -278,7 +278,7 @@ func TestL3DeepSearch(t *testing.T) {
 
 func TestSummarizeContent(t *testing.T) {
 	dir := t.TempDir()
-	s, err := OpenStore(dir, filepath.Join(dir, "stm"))
+	s, err := OpenStore(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -312,7 +312,7 @@ func TestSummarizeContent(t *testing.T) {
 
 func TestAutoSummarizeRoom(t *testing.T) {
 	dir := t.TempDir()
-	s, err := OpenStore(dir, filepath.Join(dir, "stm"))
+	s, err := OpenStore(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -364,8 +364,7 @@ func TestAutoSummarizeRoom(t *testing.T) {
 
 func TestSTMPerSessionDBCreation(t *testing.T) {
 	dir := t.TempDir()
-	stmDir := filepath.Join(dir, "stm")
-	s, err := OpenStore(dir, stmDir)
+	s, err := OpenStore(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -383,11 +382,11 @@ func TestSTMPerSessionDBCreation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Verify STM DB files were created.
-	if _, err := os.Stat(filepath.Join(stmDir, "session-1.db")); err != nil {
+	// Verify STM DB files were created in the memory directory.
+	if _, err := os.Stat(filepath.Join(dir, "session-1.db")); err != nil {
 		t.Errorf("session-1.db not created: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(stmDir, "session-2.db")); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, "session-2.db")); err != nil {
 		t.Errorf("session-2.db not created: %v", err)
 	}
 
@@ -405,8 +404,7 @@ func TestSTMPerSessionDBCreation(t *testing.T) {
 
 func TestSTMDataIsolatedBetweenSessions(t *testing.T) {
 	dir := t.TempDir()
-	stmDir := filepath.Join(dir, "stm")
-	s, err := OpenStore(dir, stmDir)
+	s, err := OpenStore(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -448,8 +446,7 @@ func TestSTMDataIsolatedBetweenSessions(t *testing.T) {
 
 func TestSTMPromoteToLTM(t *testing.T) {
 	dir := t.TempDir()
-	stmDir := filepath.Join(dir, "stm")
-	s, err := OpenStore(dir, stmDir)
+	s, err := OpenStore(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -476,7 +473,7 @@ func TestSTMPromoteToLTM(t *testing.T) {
 	}
 
 	// Verify STM DB was deleted.
-	if _, err := os.Stat(filepath.Join(stmDir, "promote-test.db")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(dir, "promote-test.db")); !os.IsNotExist(err) {
 		t.Error("STM DB file should be deleted after promotion")
 	}
 
@@ -508,8 +505,7 @@ func TestSTMPromoteToLTM(t *testing.T) {
 
 func TestSTMCleanupOnClear(t *testing.T) {
 	dir := t.TempDir()
-	stmDir := filepath.Join(dir, "stm")
-	s, err := OpenStore(dir, stmDir)
+	s, err := OpenStore(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -521,7 +517,7 @@ func TestSTMCleanupOnClear(t *testing.T) {
 	s.StoreShortTerm(ctx, "cleanup-test", "temporary data", "context")
 
 	// Verify file exists.
-	dbPath := filepath.Join(stmDir, "cleanup-test.db")
+	dbPath := filepath.Join(dir, "cleanup-test.db")
 	if _, err := os.Stat(dbPath); err != nil {
 		t.Fatalf("STM DB file not created: %v", err)
 	}

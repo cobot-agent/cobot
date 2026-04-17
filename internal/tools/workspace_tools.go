@@ -331,16 +331,6 @@ func RegisterWorkspaceTools(registry cobot.ToolRegistry, ws *workspace.Workspace
 	registry.Register(&SkillUpdateTool{workspace: ws, sandbox: sandbox})
 }
 
-// sandboxRewriteErr wraps err so that any real filesystem paths in its message
-// are replaced with virtual paths.  If sandbox is nil or inactive, err is
-// returned unchanged.
-func sandboxRewriteErr(sandbox *cobot.SandboxConfig, err error) error {
-	if sandbox == nil || sandbox.VirtualRoot == "" {
-		return err
-	}
-	return fmt.Errorf("%s", sandbox.RewriteOutputPaths(err.Error()))
-}
-
 var (
 	_ cobot.Tool = (*WorkspaceConfigUpdateTool)(nil)
 	_ cobot.Tool = (*SkillCreateTool)(nil)
