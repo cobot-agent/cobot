@@ -201,10 +201,6 @@ func (a *Agent) RegisterTool(tool cobot.Tool) {
 	a.tools.Register(tool)
 }
 
-func (a *Agent) SetToolRegistry(r cobot.ToolRegistry) {
-	a.tools = r
-}
-
 func (a *Agent) SetMemoryStore(s cobot.MemoryStore) {
 	a.memoryStore = s
 }

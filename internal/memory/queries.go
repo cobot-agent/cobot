@@ -16,7 +16,6 @@ const sqlInsertRoom = `INSERT INTO rooms (id, wing_id, name, hall_type) VALUES (
 const sqlSelectRooms = `SELECT id, wing_id, name, hall_type FROM rooms WHERE wing_id = ? ORDER BY name`
 const sqlSelectRoom = `SELECT id, wing_id, name, hall_type FROM rooms WHERE id = ? AND wing_id = ?`
 const sqlSelectRoomByName = `SELECT id, wing_id, name, hall_type FROM rooms WHERE wing_id = ? AND name = ?`
-const sqlDeleteRoomByName = `DELETE FROM rooms WHERE wing_id = ? AND name = ?`
 
 // --- Drawers ---
 

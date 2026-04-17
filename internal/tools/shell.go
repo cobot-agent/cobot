@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	cobot "github.com/cobot-agent/cobot/pkg"
@@ -212,7 +213,7 @@ func checkNetworkCommand(cmdStr string) error {
 
 // isNetworkCommandUsed checks if a network command is referenced in the given command string.
 func isNetworkCommandUsed(cmdStr, nc string) bool {
-	fields := parseFields(cmdStr)
+	fields := strings.Fields(cmdStr)
 	if len(fields) > 0 {
 		baseCmd := filepath.Base(fields[0])
 		if baseCmd == nc {
@@ -231,46 +232,11 @@ func isNetworkCommandUsed(cmdStr, nc string) bool {
 		"`" + nc + "`",
 	}
 	for _, p := range patterns {
-		if contains(cmdStr, p) {
+		if strings.Contains(cmdStr, p) {
 			return true
 		}
 	}
 	return false
-}
-
-func contains(s, sub string) bool {
-	return len(s) >= len(sub) && findSubstring(s, sub)
-}
-
-func findSubstring(s, sub string) bool {
-	for i := 0; i <= len(s)-len(sub); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
-}
-
-func parseFields(s string) []string {
-	var fields []string
-	var current []byte
-	inSpace := true
-	for i := 0; i < len(s); i++ {
-		if s[i] == ' ' || s[i] == '\t' {
-			if !inSpace {
-				fields = append(fields, string(current))
-				current = current[:0]
-				inSpace = true
-			}
-		} else {
-			current = append(current, s[i])
-			inSpace = false
-		}
-	}
-	if len(current) > 0 {
-		fields = append(fields, string(current))
-	}
-	return fields
 }
 
 var _ cobot.Tool = (*ShellExecTool)(nil)
