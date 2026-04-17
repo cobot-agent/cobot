@@ -171,15 +171,7 @@ func capPerCategory(items []STMItem) []STMItem {
 // isSignificant returns true if the tool result contains useful information
 // worth keeping in short-term memory.
 func isSignificant(result string) bool {
-	if result == "" {
-		return false
-	}
-	if len(result) < 5 {
-		return false
-	}
-	// Skip empty or very short results.
-	trimmed := strings.TrimSpace(result)
-	return len(trimmed) >= 5
+	return len(strings.TrimSpace(result)) >= 5
 }
 
 // summarizeToolResult creates a brief summary of a tool result for STM.
