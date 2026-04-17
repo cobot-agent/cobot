@@ -393,3 +393,48 @@ func TestSandboxConfig_RealToVirtual_EmptyVirtualRoot(t *testing.T) {
 		t.Errorf("expected unchanged, got %q", got)
 	}
 }
+
+// --- ValidatePath tests ---
+
+func TestSandboxConfig_ValidatePath_NilReceiver(t *testing.T) {
+	var s *SandboxConfig
+	if err := s.ValidatePath("/any/path"); err != nil {
+		t.Errorf("nil receiver should return nil, got %v", err)
+	}
+}
+
+func TestSandboxConfig_ValidatePath_EmptyRoot(t *testing.T) {
+	s := &SandboxConfig{VirtualRoot: "/home/ws"}
+	if err := s.ValidatePath("/any/path"); err != nil {
+		t.Errorf("empty Root should return nil, got %v", err)
+	}
+}
+
+func TestSandboxConfig_ValidatePath_WithinRoot(t *testing.T) {
+	s := &SandboxConfig{VirtualRoot: "/home/ws", Root: "/tmp/real"}
+	if err := s.ValidatePath("/tmp/real/src/main.go"); err != nil {
+		t.Errorf("path within root should be valid, got %v", err)
+	}
+}
+
+func TestSandboxConfig_ValidatePath_RootExactly(t *testing.T) {
+	s := &SandboxConfig{VirtualRoot: "/home/ws", Root: "/tmp/real"}
+	if err := s.ValidatePath("/tmp/real"); err != nil {
+		t.Errorf("root path itself should be valid, got %v", err)
+	}
+}
+
+func TestSandboxConfig_ValidatePath_OutsideRoot(t *testing.T) {
+	s := &SandboxConfig{VirtualRoot: "/home/ws", Root: "/tmp/real"}
+	if err := s.ValidatePath("/etc/passwd"); err == nil {
+		t.Error("path outside root should fail validation")
+	}
+}
+
+func TestSandboxConfig_ValidatePath_PartialPrefixMatch(t *testing.T) {
+	// Ensure /tmp/realfile is not matched as under /tmp/real
+	s := &SandboxConfig{VirtualRoot: "/home/ws", Root: "/tmp/real"}
+	if err := s.ValidatePath("/tmp/realfile"); err == nil {
+		t.Error("partial prefix match should fail validation")
+	}
+}

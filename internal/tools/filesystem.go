@@ -48,7 +48,7 @@ func (t *ReadFileTool) Name() string {
 func (t *ReadFileTool) Description() string {
 	desc := "Read the contents of a file at the given path."
 	if t.sandbox != nil && t.sandbox.VirtualRoot != "" {
-		desc += fmt.Sprintf(" Paths MUST start with %q (e.g. %s/file.txt). Relative paths are auto-resolved under %s.", t.sandbox.VirtualRoot, t.sandbox.VirtualRoot, t.sandbox.VirtualRoot)
+		desc += fmt.Sprintf(" All paths are resolved under %q. Use %q/... for best results; relative and other paths are auto-resolved.", t.sandbox.VirtualRoot, t.sandbox.VirtualRoot)
 	}
 	return desc
 }
@@ -69,9 +69,9 @@ func (t *ReadFileTool) Execute(ctx context.Context, args json.RawMessage) (strin
 			return "", err
 		}
 		a.Path = resolved
-	}
-	if t.sandbox != nil && !t.sandbox.IsAllowed(a.Path, false) {
-		return "", fmt.Errorf("path %q is outside allowed workspace paths", originalPath)
+		if err := t.sandbox.ValidatePath(a.Path); err != nil {
+			return "", fmt.Errorf("path %q is outside allowed workspace paths", originalPath)
+		}
 	}
 	data, err := os.ReadFile(a.Path)
 	if err != nil {
@@ -117,7 +117,7 @@ func (t *WriteFileTool) Name() string {
 func (t *WriteFileTool) Description() string {
 	desc := "Write content to a file at the given path."
 	if t.sandbox != nil && t.sandbox.VirtualRoot != "" {
-		desc += fmt.Sprintf(" Paths MUST start with %q (e.g. %s/file.txt). Relative paths are auto-resolved under %s.", t.sandbox.VirtualRoot, t.sandbox.VirtualRoot, t.sandbox.VirtualRoot)
+		desc += fmt.Sprintf(" All paths are resolved under %q. Use %q/... for best results; relative and other paths are auto-resolved.", t.sandbox.VirtualRoot, t.sandbox.VirtualRoot)
 	}
 	return desc
 }
@@ -138,9 +138,9 @@ func (t *WriteFileTool) Execute(ctx context.Context, args json.RawMessage) (stri
 			return "", err
 		}
 		a.Path = resolved
-	}
-	if t.sandbox != nil && !t.sandbox.IsAllowed(a.Path, true) {
-		return "", fmt.Errorf("path %q is outside allowed workspace paths", originalPath)
+		if err := t.sandbox.ValidatePath(a.Path); err != nil {
+			return "", fmt.Errorf("path %q is outside allowed workspace paths", originalPath)
+		}
 	}
 	// Ensure parent directory exists
 	if dir := filepath.Dir(a.Path); dir != "" && dir != "." {
@@ -202,7 +202,7 @@ func (t *ListDirTool) Name() string { return "filesystem_list" }
 func (t *ListDirTool) Description() string {
 	desc := "List files and directories at the given path."
 	if t.sandbox != nil && t.sandbox.VirtualRoot != "" {
-		desc += fmt.Sprintf(" Paths MUST start with %q (e.g. %s/file.txt). Relative paths are auto-resolved under %s.", t.sandbox.VirtualRoot, t.sandbox.VirtualRoot, t.sandbox.VirtualRoot)
+		desc += fmt.Sprintf(" All paths are resolved under %q. Use %q/... for best results; relative and other paths are auto-resolved.", t.sandbox.VirtualRoot, t.sandbox.VirtualRoot)
 	}
 	return desc
 }
@@ -223,9 +223,9 @@ func (t *ListDirTool) Execute(ctx context.Context, args json.RawMessage) (string
 			return "", err
 		}
 		a.Path = resolved
-	}
-	if t.sandbox != nil && !t.sandbox.IsAllowed(a.Path, false) {
-		return "", fmt.Errorf("path %q is outside allowed workspace paths", originalPath)
+		if err := t.sandbox.ValidatePath(a.Path); err != nil {
+			return "", fmt.Errorf("path %q is outside allowed workspace paths", originalPath)
+		}
 	}
 
 	entries, err := os.ReadDir(a.Path)
@@ -301,7 +301,7 @@ func (t *SearchFilesTool) Name() string { return "filesystem_search" }
 func (t *SearchFilesTool) Description() string {
 	desc := "Search for files matching a pattern recursively from a root directory."
 	if t.sandbox != nil && t.sandbox.VirtualRoot != "" {
-		desc += fmt.Sprintf(" Paths MUST start with %q (e.g. %s/file.txt). Relative paths are auto-resolved under %s.", t.sandbox.VirtualRoot, t.sandbox.VirtualRoot, t.sandbox.VirtualRoot)
+		desc += fmt.Sprintf(" All paths are resolved under %q. Use %q/... for best results; relative and other paths are auto-resolved.", t.sandbox.VirtualRoot, t.sandbox.VirtualRoot)
 	}
 	return desc
 }
@@ -322,9 +322,9 @@ func (t *SearchFilesTool) Execute(ctx context.Context, args json.RawMessage) (st
 			return "", err
 		}
 		a.Path = resolved
-	}
-	if t.sandbox != nil && !t.sandbox.IsAllowed(a.Path, false) {
-		return "", fmt.Errorf("path %q is outside allowed workspace paths", originalPath)
+		if err := t.sandbox.ValidatePath(a.Path); err != nil {
+			return "", fmt.Errorf("path %q is outside allowed workspace paths", originalPath)
+		}
 	}
 
 	var matches []string

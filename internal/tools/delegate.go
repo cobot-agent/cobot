@@ -107,7 +107,11 @@ func (t *DelegateTool) setupSubAgent(params delegateParams) (cobot.SubAgent, err
 		if wd == "" {
 			wd = t.workdir
 		}
-		acp := NewACPSubAgent(cmd, args, wd, timeout)
+		var acpOpts []func(*ACPSubAgent)
+		if t.sandbox != nil {
+			acpOpts = append(acpOpts, WithACPSandbox(t.sandbox))
+		}
+		acp := NewACPSubAgent(cmd, args, wd, timeout, acpOpts...)
 		if params.Model != "" {
 			if err := acp.SetModel(params.Model); err != nil {
 				return nil, fmt.Errorf("set model: %w", err)

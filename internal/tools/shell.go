@@ -85,7 +85,7 @@ func (t *ShellExecTool) Name() string {
 func (t *ShellExecTool) Description() string {
 	desc := "Execute a shell command and return its output."
 	if t.config != nil && t.config.VirtualRoot != "" {
-		desc += fmt.Sprintf(" Working directory: %s — paths MUST start with %q. Relative paths are auto-resolved.", t.config.VirtualRoot, t.config.VirtualRoot)
+		desc += fmt.Sprintf(" All paths are resolved under %q. Use %q/... for best results; relative and other paths are auto-resolved.", t.config.VirtualRoot, t.config.VirtualRoot)
 	} else if t.workdir != "" {
 		desc += fmt.Sprintf(" Working directory: %s — all relative paths resolve from here.", t.workdir)
 	}

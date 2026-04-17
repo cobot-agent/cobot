@@ -213,6 +213,25 @@ func (s *SandboxConfig) RealToVirtual(realPath string) string {
 	return s.VirtualRoot + "/[external]/" + filepath.Base(absPath)
 }
 
+// ValidatePath validates that the given resolved real path is within the sandbox root.
+// This is a defense-in-depth check to be called after AutoResolvePath. It returns an error
+// if the path escapes the sandbox root. If the sandbox is not configured, it returns nil.
+func (s *SandboxConfig) ValidatePath(resolvedPath string) error {
+	if s == nil || s.Root == "" {
+		return nil
+	}
+	absPath, err := filepath.Abs(resolvedPath)
+	if err != nil {
+		return fmt.Errorf("cannot resolve path %q: %w", resolvedPath, err)
+	}
+	absPath = filepath.Clean(absPath)
+	absRoot := filepath.Clean(s.Root)
+	if absPath == absRoot || strings.HasPrefix(absPath, absRoot+string(filepath.Separator)) {
+		return nil
+	}
+	return fmt.Errorf("path %q is outside sandbox root", resolvedPath)
+}
+
 func (s *SandboxConfig) IsBlockedCommand(cmd string) bool {
 	fields := strings.Fields(cmd)
 	if len(fields) == 0 {

@@ -29,6 +29,7 @@ type ACPSubAgent struct {
 	timeout      time.Duration
 	systemPrompt string
 	model        string
+	sandbox      *cobot.SandboxConfig
 
 	// runtime state
 	mu     sync.Mutex
@@ -39,19 +40,28 @@ type ACPSubAgent struct {
 }
 
 // NewACPSubAgent creates a new external ACP sub-agent.
-func NewACPSubAgent(command string, args []string, workdir string, timeout time.Duration) *ACPSubAgent {
+func NewACPSubAgent(command string, args []string, workdir string, timeout time.Duration, opts ...func(*ACPSubAgent)) *ACPSubAgent {
 	if command == "" {
 		command = "opencode"
 	}
 	if timeout == 0 {
 		timeout = 10 * time.Minute
 	}
-	return &ACPSubAgent{
+	a := &ACPSubAgent{
 		command: command,
 		args:    args,
 		workdir: workdir,
 		timeout: timeout,
 	}
+	for _, opt := range opts {
+		opt(a)
+	}
+	return a
+}
+
+// WithACPSandbox sets the sandbox config for path rewriting in ACP responses.
+func WithACPSandbox(s *cobot.SandboxConfig) func(*ACPSubAgent) {
+	return func(a *ACPSubAgent) { a.sandbox = s }
 }
 
 // SetModel stores the model spec for subsequent requests.
@@ -357,7 +367,7 @@ func (a *ACPSubAgent) Prompt(ctx context.Context, message string) (*cobot.Provid
 	}
 
 	resp := &cobot.ProviderResponse{
-		Content:    result.Content,
+		Content:    a.rewritePaths(result.Content),
 		ToolCalls:  result.ToolCalls,
 		StopReason: stopReason,
 	}
@@ -451,7 +461,7 @@ func (a *ACPSubAgent) Stream(ctx context.Context, message string) (<-chan cobot.
 				if err := json.Unmarshal(evt.Result, &result); err == nil && result.Content != "" {
 					// If the result has leftover content, emit it
 					select {
-					case eventCh <- cobot.Event{Type: cobot.EventText, Content: result.Content}:
+					case eventCh <- cobot.Event{Type: cobot.EventText, Content: a.rewritePaths(result.Content)}:
 					case <-ctx.Done():
 						return
 					}
@@ -470,10 +480,10 @@ func (a *ACPSubAgent) Stream(ctx context.Context, message string) (<-chan cobot.
 					continue
 				}
 
-				switch params.Type {
-				case "text":
-					select {
-					case eventCh <- cobot.Event{Type: cobot.EventText, Content: params.Content}:
+			switch params.Type {
+			case "text":
+				select {
+				case eventCh <- cobot.Event{Type: cobot.EventText, Content: a.rewritePaths(params.Content)}:
 					case <-ctx.Done():
 						return
 					}
@@ -525,6 +535,15 @@ func (a *ACPSubAgent) Stream(ctx context.Context, message string) (<-chan cobot.
 	}()
 
 	return eventCh, nil
+}
+
+// rewritePaths rewrites real filesystem paths to virtual paths in text output.
+// Returns the text unchanged if sandbox is not configured.
+func (a *ACPSubAgent) rewritePaths(text string) string {
+	if a.sandbox == nil || a.sandbox.VirtualRoot == "" {
+		return text
+	}
+	return a.sandbox.RewriteOutputPaths(text)
 }
 
 // freePort returns a random available TCP port on localhost.
