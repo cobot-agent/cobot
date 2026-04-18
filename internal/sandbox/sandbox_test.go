@@ -177,9 +177,10 @@ func TestSandboxConfig_RewritePaths_EmptyVirtualRoot(t *testing.T) {
 
 func TestSandboxConfig_RewritePaths_SinglePath(t *testing.T) {
 	vr := VirtualHome("ws")
-	s := &SandboxConfig{VirtualRoot: vr, Root: "/tmp/real"}
+	root := t.TempDir()
+	s := &SandboxConfig{VirtualRoot: vr, Root: root}
 	input := "cat " + PathJoinVirtual(vr, "src/main.go")
-	expected := "cat /tmp/real/src/main.go"
+	expected := "cat " + filepath.Join(root, "src/main.go")
 	got := s.RewritePaths(input)
 	if got != expected {
 		t.Errorf("expected %q, got %q", expected, got)
@@ -188,9 +189,10 @@ func TestSandboxConfig_RewritePaths_SinglePath(t *testing.T) {
 
 func TestSandboxConfig_RewritePaths_MultiplePaths(t *testing.T) {
 	vr := VirtualHome("ws")
-	s := &SandboxConfig{VirtualRoot: vr, Root: "/tmp/real"}
+	root := t.TempDir()
+	s := &SandboxConfig{VirtualRoot: vr, Root: root}
 	input := "cp " + PathJoinVirtual(vr, "a.txt") + " " + PathJoinVirtual(vr, "b.txt")
-	expected := "cp /tmp/real/a.txt /tmp/real/b.txt"
+	expected := "cp " + filepath.Join(root, "a.txt") + " " + filepath.Join(root, "b.txt")
 	got := s.RewritePaths(input)
 	if got != expected {
 		t.Errorf("expected %q, got %q", expected, got)
@@ -199,9 +201,10 @@ func TestSandboxConfig_RewritePaths_MultiplePaths(t *testing.T) {
 
 func TestSandboxConfig_RewritePaths_CommandString(t *testing.T) {
 	vr := VirtualHome("myworkspace")
-	s := &SandboxConfig{VirtualRoot: vr, Root: "/var/data/ws"}
+	root := t.TempDir()
+	s := &SandboxConfig{VirtualRoot: vr, Root: root}
 	input := "grep -r 'TODO' " + PathJoinVirtual(vr, "src") + " && echo done > " + PathJoinVirtual(vr, "out.log")
-	expected := "grep -r 'TODO' /var/data/ws/src && echo done > /var/data/ws/out.log"
+	expected := "grep -r 'TODO' " + filepath.Join(root, "src") + " && echo done > " + filepath.Join(root, "out.log")
 	got := s.RewritePaths(input)
 	if got != expected {
 		t.Errorf("expected %q, got %q", expected, got)
@@ -219,8 +222,10 @@ func TestSandboxConfig_RewritePaths_NoMatch(t *testing.T) {
 
 func TestSandboxConfig_RewriteError_SanitizesMessage(t *testing.T) {
 	vr := VirtualHome("ws")
-	s := &SandboxConfig{VirtualRoot: vr, Root: "/tmp/real"}
-	original := errors.New("open /tmp/real/secret.txt: permission denied")
+	root := t.TempDir()
+	s := &SandboxConfig{VirtualRoot: vr, Root: root}
+	secretPath := filepath.Join(root, "secret.txt")
+	original := errors.New("open " + secretPath + ": permission denied")
 	rewritten := s.RewriteError(original)
 
 	if rewritten == nil {
@@ -229,7 +234,7 @@ func TestSandboxConfig_RewriteError_SanitizesMessage(t *testing.T) {
 	if !errors.Is(rewritten, original) {
 		t.Fatal("rewritten error should preserve original cause")
 	}
-	if strings.Contains(rewritten.Error(), "/tmp/real") {
+	if strings.Contains(rewritten.Error(), root) {
 		t.Fatalf("rewritten error leaked real path: %q", rewritten.Error())
 	}
 	if !strings.Contains(rewritten.Error(), PathJoinVirtual(vr, "secret.txt")) {
@@ -372,8 +377,9 @@ func TestSandboxConfig_AutoResolvePath_TrailingSlashVirtualRoot(t *testing.T) {
 
 func TestSandboxConfig_RealToVirtual_PathUnderRoot(t *testing.T) {
 	vr := VirtualHome("ws")
-	s := &SandboxConfig{VirtualRoot: vr, Root: "/tmp/real"}
-	got := s.RealToVirtual("/tmp/real/src/main.go")
+	root := t.TempDir()
+	s := &SandboxConfig{VirtualRoot: vr, Root: root}
+	got := s.RealToVirtual(filepath.Join(root, "src", "main.go"))
 	expected := PathJoinVirtual(vr, "src/main.go")
 	if got != expected {
 		t.Errorf("expected %q, got %q", expected, got)
@@ -382,8 +388,9 @@ func TestSandboxConfig_RealToVirtual_PathUnderRoot(t *testing.T) {
 
 func TestSandboxConfig_RealToVirtual_RootExactly(t *testing.T) {
 	vr := VirtualHome("ws")
-	s := &SandboxConfig{VirtualRoot: vr, Root: "/tmp/real"}
-	got := s.RealToVirtual("/tmp/real")
+	root := t.TempDir()
+	s := &SandboxConfig{VirtualRoot: vr, Root: root}
+	got := s.RealToVirtual(root)
 	if got != vr {
 		t.Errorf("expected %q, got %q", vr, got)
 	}
@@ -391,9 +398,12 @@ func TestSandboxConfig_RealToVirtual_RootExactly(t *testing.T) {
 
 func TestSandboxConfig_RealToVirtual_PathOutsideRoot_Sanitized(t *testing.T) {
 	vr := VirtualHome("ws")
-	s := &SandboxConfig{VirtualRoot: vr, Root: "/tmp/real"}
-	got := s.RealToVirtual("/etc/passwd")
-	if got == "/etc/passwd" {
+	root := t.TempDir()
+	outside := t.TempDir()
+	s := &SandboxConfig{VirtualRoot: vr, Root: root}
+	outsideFile := filepath.Join(outside, "passwd")
+	got := s.RealToVirtual(outsideFile)
+	if got == outsideFile {
 		t.Errorf("RealToVirtual leaked real path %q", got)
 	}
 	expected := PathJoinVirtual(vr, "[external]", "passwd")
@@ -404,9 +414,12 @@ func TestSandboxConfig_RealToVirtual_PathOutsideRoot_Sanitized(t *testing.T) {
 
 func TestSandboxConfig_RealToVirtual_PathOutsideRoot_LongPath(t *testing.T) {
 	vr := VirtualHome("ws")
-	s := &SandboxConfig{VirtualRoot: vr, Root: "/tmp/real"}
-	got := s.RealToVirtual("/usr/local/lib/some/data.db")
-	if got == "/usr/local/lib/some/data.db" {
+	root := t.TempDir()
+	outside := t.TempDir()
+	s := &SandboxConfig{VirtualRoot: vr, Root: root}
+	outsideFile := filepath.Join(outside, "some", "data.db")
+	got := s.RealToVirtual(outsideFile)
+	if got == outsideFile {
 		t.Errorf("RealToVirtual leaked real path %q", got)
 	}
 	expected := PathJoinVirtual(vr, "[external]", "data.db")

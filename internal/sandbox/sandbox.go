@@ -23,6 +23,15 @@ func normalizePath(path string) (string, error) {
 	return filepath.Clean(EvalSymlinks(absPath)), nil
 }
 
+// trimPrefixFold removes prefix from s using case-insensitive matching.
+// This is needed on Windows where drive letters and path segments may differ in case.
+func trimPrefixFold(s, prefix string) string {
+	if len(s) >= len(prefix) && strings.EqualFold(s[:len(prefix)], prefix) {
+		return s[len(prefix):]
+	}
+	return s
+}
+
 func pathMatchesRoot(path, root, sep string) bool {
 	if path == root || strings.HasPrefix(path, root+sep) {
 		return true
@@ -130,7 +139,7 @@ func (s *SandboxConfig) AutoResolvePath(path string) (string, error) {
 	if s.Root != "" {
 		absRoot := filepath.Clean(s.Root)
 		if pathMatchesRoot(nativePath, absRoot, string(filepath.Separator)) {
-			rel := strings.TrimPrefix(nativePath, absRoot)
+			rel := trimPrefixFold(nativePath, absRoot)
 			if rel == "" || rel == string(filepath.Separator) {
 				return s.ResolvePath(vr)
 			}
@@ -171,7 +180,7 @@ func (s *SandboxConfig) ResolvePath(path string) (string, error) {
 		return "", fmt.Errorf("path %q must start with %q (sandbox enforced)", path, s.VirtualRoot)
 	}
 
-	rel := strings.TrimPrefix(filepath.ToSlash(cleaned), filepath.ToSlash(vr))
+	rel := trimPrefixFold(filepath.ToSlash(cleaned), filepath.ToSlash(vr))
 	if rel == "" || rel == "/" {
 		return s.Root, nil
 	}
@@ -213,13 +222,16 @@ func (s *SandboxConfig) RealToVirtual(realPath string) string {
 		return PathJoinVirtual(s.VirtualRoot, "[external]", filepath.Base(realPath))
 	}
 	absPath = filepath.Clean(absPath)
-	absRoot := filepath.Clean(s.Root)
+	absRoot, err := filepath.Abs(s.Root)
+	if err != nil {
+		return PathJoinVirtual(s.VirtualRoot, "[external]", filepath.Base(realPath))
+	}
 	absRootSep := absRoot + string(filepath.Separator)
-	if absPath == absRoot {
+	if strings.EqualFold(absPath, absRoot) {
 		return s.VirtualRoot
 	}
-	if strings.HasPrefix(absPath, absRootSep) {
-		rel := filepath.ToSlash(strings.TrimPrefix(absPath, absRootSep))
+	if pathMatchesRoot(absPath, absRoot, string(filepath.Separator)) {
+		rel := filepath.ToSlash(trimPrefixFold(absPath, absRootSep))
 		return PathJoinVirtual(s.VirtualRoot, VirtualToNative(rel))
 	}
 	return PathJoinVirtual(s.VirtualRoot, "[external]", filepath.Base(absPath))

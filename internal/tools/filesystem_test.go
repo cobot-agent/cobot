@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -262,17 +263,18 @@ func TestShellExecTool_SandboxRewriteDir(t *testing.T) {
 		WithShellSandboxConfig(sandbox),
 	)
 
-	// The LLM sends dir as a virtual path; the tool should resolve it.
+	cmd := "pwd"
+	if runtime.GOOS == "windows" {
+		cmd = "cd"
+	}
 	vp := sandpkg.PathJoinVirtual(vr, "subdir")
-	args, _ := json.Marshal(map[string]string{"command": "pwd", "dir": vp})
+	args, _ := json.Marshal(map[string]string{"command": cmd, "dir": vp})
 	result, err := tool.Execute(context.Background(), args)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	result = strings.TrimSpace(strings.ReplaceAll(result, "\r\n", "\n"))
 
-	// With RewriteOutputPaths, the real path in output should be replaced
-	// with the virtual path. pwd returns the real dir, which gets rewritten.
 	expected := sandpkg.PathJoinVirtual(vr, "subdir")
 	if result != expected {
 		t.Errorf("expected %q, got %q", expected, result)

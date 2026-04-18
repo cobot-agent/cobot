@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -501,7 +502,6 @@ func TestWriteFileTool_SandboxCreatesParentDirs(t *testing.T) {
 
 func TestShellExecTool_SandboxAutoResolvesDir(t *testing.T) {
 	dir := t.TempDir()
-	// Create the "src" directory so the shell can chdir into it.
 	os.MkdirAll(filepath.Join(dir, "src"), 0755)
 	vr := sandboxpkg.VirtualHome("ws")
 	sandbox := &sandboxpkg.SandboxConfig{
@@ -513,13 +513,15 @@ func TestShellExecTool_SandboxAutoResolvesDir(t *testing.T) {
 		WithShellSandboxConfig(sandbox),
 	)
 
-	// LLM passes a relative dir — should auto-resolve
-	args, _ := json.Marshal(map[string]string{"command": "pwd", "dir": "src"})
+	cmd := "pwd"
+	if runtime.GOOS == "windows" {
+		cmd = "cd"
+	}
+	args, _ := json.Marshal(map[string]string{"command": cmd, "dir": "src"})
 	result, err := tool.Execute(context.Background(), args)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// The output should contain the virtual path (RewriteOutputPaths rewrites real → virtual)
 	if !strings.Contains(result, vr) && result != "" {
 		t.Errorf("expected output with virtual path, got %q", result)
 	}
