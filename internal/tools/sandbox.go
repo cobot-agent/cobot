@@ -34,7 +34,7 @@ type sandboxTool struct {
 // describeWithSandbox appends the sandbox notice to a tool description.
 func (s *sandboxTool) describeWithSandbox(desc string) string {
 	if s.sandbox != nil && s.sandbox.VirtualRoot != "" {
-		return desc + fmt.Sprintf(" Sandbox is active. All file paths are automatically resolved under %q — provide paths starting with %q for best results. Relative paths and other absolute paths are auto-mapped into the sandbox.", s.sandbox.VirtualRoot, s.sandbox.VirtualRoot)
+		return desc + fmt.Sprintf(` Sandbox is active. All file paths are automatically resolved under "%s" — provide paths starting with "%s" for best results. Relative paths and other absolute paths are auto-mapped into the sandbox.`, s.sandbox.VirtualRoot, s.sandbox.VirtualRoot)
 	}
 	return desc
 }

@@ -87,7 +87,7 @@ func (t *ShellExecTool) Name() string {
 func (t *ShellExecTool) Description() string {
 	desc := "Execute a shell command and return its output."
 	if t.config != nil && t.config.VirtualRoot != "" {
-		desc += fmt.Sprintf(" Sandbox is active. All file paths are automatically resolved under %q — provide paths starting with %q for best results. Relative paths and other absolute paths are auto-mapped into the sandbox.", t.config.VirtualRoot, t.config.VirtualRoot)
+		desc += fmt.Sprintf(` Sandbox is active. All file paths are automatically resolved under "%s" — provide paths starting with "%s" for best results. Relative paths and other absolute paths are auto-mapped into the sandbox.`, t.config.VirtualRoot, t.config.VirtualRoot)
 	} else if t.workdir != "" {
 		desc += fmt.Sprintf(" Working directory: %s — all relative paths resolve from here.", t.workdir)
 	}
