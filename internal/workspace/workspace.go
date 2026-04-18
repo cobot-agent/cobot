@@ -99,6 +99,10 @@ func (w *Workspace) CronDir() string {
 	return filepath.Join(w.DataDir, "cron")
 }
 
+func (w *Workspace) CronRunsDir() string {
+	return filepath.Join(w.DataDir, "cron_runs")
+}
+
 func (w *Workspace) ConfigPath() string {
 	return filepath.Join(w.DataDir, "workspace.yaml")
 }
@@ -167,6 +171,7 @@ func (w *Workspace) EnsureDirs() error {
 		w.SpaceDir(),
 		w.MCPDir(),
 		w.CronDir(),
+		w.CronRunsDir(),
 	}
 	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0755); err != nil {

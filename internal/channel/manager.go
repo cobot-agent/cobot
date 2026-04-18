@@ -39,8 +39,8 @@ func (m *Manager) Unregister(id string) {
 // Get returns a channel by ID and whether it exists and is alive.
 func (m *Manager) Get(id string) (cobot.Channel, bool) {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
 	ch, ok := m.channels[id]
+	m.mu.RUnlock()
 	if !ok {
 		return nil, false
 	}
@@ -62,8 +62,12 @@ func (m *Manager) SendTo(ctx context.Context, channelID string, msg cobot.Channe
 // use Get(id) with a specific ID instead.
 func (m *Manager) FirstAliveID() string {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
+	candidates := make([]cobot.Channel, 0, len(m.channels))
 	for _, ch := range m.channels {
+		candidates = append(candidates, ch)
+	}
+	m.mu.RUnlock()
+	for _, ch := range candidates {
 		if ch.IsAlive() {
 			return ch.ID()
 		}

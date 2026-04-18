@@ -40,13 +40,18 @@ func (ch *tuiChannel) ID() string { return ch.id }
 
 func (ch *tuiChannel) Send(ctx context.Context, msg cobot.ChannelMessage) error {
 	ch.mu.RLock()
-	defer ch.mu.RUnlock()
 	if !ch.alive {
+		ch.mu.RUnlock()
 		return context.Canceled
 	}
+	notify := ch.notify
+	done := ch.done
+	ch.mu.RUnlock()
 	select {
-	case ch.notify <- msg:
+	case notify <- msg:
 		return nil
+	case <-done:
+		return context.Canceled
 	case <-ctx.Done():
 		return ctx.Err()
 	}

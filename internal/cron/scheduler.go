@@ -26,19 +26,22 @@ type Scheduler struct {
 	store    *Store
 	cron     *cron.Cron
 	executor JobExecutor
-	notifier Notifier // optional notification handler
+	notifier Notifier     // optional notification handler
+	nmu      sync.RWMutex // protects notifier
 	mu       sync.Mutex
 	jobs     map[string]cron.EntryID // jobID -> cron entry ID
+	runStore *RunStore
 }
 
 const maxCronJobs = 100
 
 const jobTimeout = 10 * time.Minute
 
-// NewScheduler creates a new Scheduler with the given store and executor.
-func NewScheduler(store *Store, executor JobExecutor) *Scheduler {
+// NewScheduler creates a new Scheduler with the given store, executor, and run store.
+func NewScheduler(store *Store, executor JobExecutor, runStore *RunStore) *Scheduler {
 	return &Scheduler{
 		store:    store,
+		runStore: runStore,
 		cron:     cron.New(),
 		executor: executor,
 		jobs:     make(map[string]cron.EntryID),
@@ -47,7 +50,17 @@ func NewScheduler(store *Store, executor JobExecutor) *Scheduler {
 
 // SetNotifier sets the optional notifier for delivering job results.
 func (s *Scheduler) SetNotifier(n Notifier) {
+	s.nmu.Lock()
 	s.notifier = n
+	s.nmu.Unlock()
+}
+
+// getNotifier returns the current notifier under read lock.
+func (s *Scheduler) getNotifier() Notifier {
+	s.nmu.RLock()
+	n := s.notifier
+	s.nmu.RUnlock()
+	return n
 }
 
 // Start loads all active jobs from the store and starts the cron scheduler.
@@ -97,7 +110,11 @@ func (s *Scheduler) RemoveJob(id string) error {
 		delete(s.jobs, id)
 	}
 	s.mu.Unlock()
-	return s.store.Delete(id)
+	if err := s.store.Delete(id); err != nil {
+		return err
+	}
+	s.CleanupJobDB(id)
+	return nil
 }
 
 // PauseJob removes a job from cron but keeps it in the store as paused.
@@ -245,11 +262,66 @@ func (s *Scheduler) runJob(job *Job) {
 	}
 
 	// Notify the originating channel if a notifier is configured.
-	if s.notifier != nil && job.ChannelID != "" {
+	if n := s.getNotifier(); n != nil && job.ChannelID != "" {
 		notifyCtx, notifyCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		s.notifier.Notify(notifyCtx, job, result, err)
+		n.Notify(notifyCtx, job, result, err)
 		notifyCancel()
 	}
+}
+
+// HasRunRecords checks if a job has execution history.
+func (s *Scheduler) HasRunRecords(jobID string) (bool, error) {
+	if s.runStore == nil {
+		return false, nil
+	}
+	return s.runStore.RunsExist(jobID)
+}
+
+// ConsolidateJobRuns returns a summary of all runs for memory storage.
+func (s *Scheduler) ConsolidateJobRuns(jobID, jobName string) (string, error) {
+	if s.runStore == nil {
+		return "", nil
+	}
+	return s.runStore.ConsolidateJobRuns(jobID, jobName)
+}
+
+// CleanupJobDB removes the run database for a job.
+func (s *Scheduler) CleanupJobDB(jobID string) {
+	if s.runStore != nil {
+		if err := s.runStore.DeleteJobDB(jobID); err != nil {
+			slog.Warn("failed to delete run db", "job_id", jobID, "error", err)
+		}
+	}
+}
+
+// ListJobRuns returns formatted execution records for a job.
+func (s *Scheduler) ListJobRuns(jobID string, limit int) (string, error) {
+	if s.runStore == nil {
+		return "Run tracking not available.", nil
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	records, err := s.runStore.ListRuns(jobID, limit)
+	if err != nil {
+		return "", err
+	}
+	if len(records) == 0 {
+		return fmt.Sprintf("No execution records for job %s.", jobID), nil
+	}
+	result := fmt.Sprintf("Execution records for job %s (%d most recent):\n", jobID, len(records))
+	for _, r := range records {
+		if r.Error != "" {
+			result += fmt.Sprintf("  [%s] FAILED (%dms): %s\n", r.RunAt.Format("2006-01-02 15:04:05"), r.Duration, r.Error)
+		} else {
+			output := r.Result
+			if len(output) > 100 {
+				output = output[:100] + "..."
+			}
+			result += fmt.Sprintf("  [%s] OK (%dms): %s\n", r.RunAt.Format("2006-01-02 15:04:05"), r.Duration, output)
+		}
+	}
+	return result, nil
 }
 
 // NewJobID generates a friendly cron job ID.

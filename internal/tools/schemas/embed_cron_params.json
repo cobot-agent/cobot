@@ -3,7 +3,7 @@
   "properties": {
     "action": {
       "type": "string",
-      "enum": ["create", "list", "delete", "pause", "resume"],
+      "enum": ["create", "list", "delete", "pause", "resume", "list_runs"],
       "description": "Action to perform"
     },
     "schedule": {
@@ -16,7 +16,7 @@
     },
     "job_id": {
       "type": "string",
-      "description": "Job ID for delete/pause/resume actions"
+      "description": "Job ID for delete/pause/resume/list_runs actions"
     },
     "name": {
       "type": "string",
@@ -25,6 +25,10 @@
     "model": {
       "type": "string",
       "description": "Optional model override for job execution"
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Max number of run records to return (for list_runs, default 20)"
     }
   },
   "required": ["action"]

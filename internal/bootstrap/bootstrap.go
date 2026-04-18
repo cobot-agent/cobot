@@ -227,21 +227,20 @@ func configureDelegateTool(a *agent.Agent, ws *workspace.Workspace, registry cob
 func configureCronTool(a *agent.Agent, ws *workspace.Workspace, store *memory.Store, registry cobot.ModelResolver) {
 	cronDir := ws.CronDir()
 	cronStore := cron.NewStore(cronDir)
+	runStore := cron.NewRunStore(ws.CronRunsDir())
 	cronExecutor := cron.NewAgentExecutor(func() cron.AgentRunner {
 		filtered := a.ToolRegistry().Clone().Without("cron", "delegate_task")
 		sub := newSubAgent(a, registry, filtered)
 		_ = sub.SessionMgr().SetSystemPrompt("You are a scheduled task executor. Complete the task efficiently and output results.")
 		return &cronAgentRunner{agent: sub}
 	})
+	cronExecutor.WithRunStore(runStore)
 	if store != nil {
-		cronExecutor.WithMemoryStore(func(ctx context.Context, content, wingName, roomName, hallType string) (string, error) {
-			return store.StoreByName(ctx, content, wingName, roomName, hallType)
-		})
 		cronExecutor.WithSTMStore(func(ctx context.Context, sessionID, content, category string) (string, error) {
 			return store.StoreShortTerm(ctx, sessionID, content, category)
 		})
 	}
-	cronScheduler := cron.NewScheduler(cronStore, cronExecutor)
+	cronScheduler := cron.NewScheduler(cronStore, cronExecutor, runStore)
 
 	// Wire up channel notification
 	channelMgr := a.ChannelManager()
