@@ -68,7 +68,8 @@ func (ch *tuiChannel) Close() {
 	}
 }
 
-// Done returns a channel that is closed when Close is called.
+// Done returns a read-only channel that is closed by Close.
+// Callers can select on it to detect shutdown.
 func (ch *tuiChannel) Done() <-chan struct{} {
 	return ch.done
 }
