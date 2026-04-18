@@ -237,6 +237,9 @@ func configureCronTool(a *agent.Agent, ws *workspace.Workspace, store *memory.St
 		cronExecutor.WithMemoryStore(func(ctx context.Context, content, wingName, roomName, hallType string) (string, error) {
 			return store.StoreByName(ctx, content, wingName, roomName, hallType)
 		})
+		cronExecutor.WithSTMStore(func(ctx context.Context, sessionID, content, category string) (string, error) {
+			return store.StoreShortTerm(ctx, sessionID, content, category)
+		})
 	}
 	cronScheduler := cron.NewScheduler(cronStore, cronExecutor)
 
