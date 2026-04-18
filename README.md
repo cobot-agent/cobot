@@ -7,56 +7,84 @@ Cobot is a multi-workspace AI agent framework with isolated per-workspace memory
 
 ## Features
 
-- **Multi-workspace**: Each workspace has isolated memory, persona files, skills, agents, and sessions
+- **Multi-workspace**: Each workspace has isolated memory, persona files, skills, agents, cron jobs, and sessions
 - **Two-tier mutability**: System-level config (`~/.config/cobot/`) is agent-immutable; workspace data (`~/.local/share/cobot/`) is agent-mutable at runtime
-- **Registry + Enable pattern**: Global registries for MCP servers and Skills; workspaces selectively enable what they need
-- **Multi-agent per workspace**: Each workspace defines multiple agents with different models, prompts, and tool sets
-- **Workspace self-evolution**: Agents can update SOUL.md, USER.md, MEMORY.md, and create private skills within their workspace
-- **MemPalace memory**: Hierarchical memory storage (Wings -> Rooms -> Drawers -> Closets) backed by SQLite (WAL mode) with FTS5 full-text search
+- **Runtime composition root**: `internal/bootstrap` wires workspace resolution, provider registry, tool registration, memory, sandboxing, and cron into one agent runtime
+- **Multi-agent per workspace**: Each workspace defines multiple agents with different models, prompts, tool sets, and session policies
+- **Workspace self-evolution**: Agents can update workspace config, agent config, persona files, and workspace-private skills through dedicated tools
+- **MemPalace memory**: Hierarchical memory storage (Wings -> Rooms -> Drawers -> Closets) backed by SQLite (WAL mode) with FTS5 full-text search plus per-session STM databases
 - **Sandbox enforcement**: Per-workspace and per-agent filesystem and shell sandboxing
+- **Scheduled automation**: Per-workspace cron jobs can run recurring or one-shot prompts and write results back into memory
 - **Project discovery**: Place a `.cobot/` directory in any project root to bind it to a workspace
-- **Multi-provider LLM**: OpenAI and Anthropic support
+- **Multi-provider and sub-agent support**: OpenAI and Anthropic providers, plus internal or external delegated sub-agents
 
 ## Directory Structure
 
-```
+```text
 ~/.config/cobot/                         # System-level, agent-immutable
-├── config.yaml                          # Global settings (API keys, default model)
-├── mcp/                                 # MCP global registry
-│   └── <name>.yaml                      # One file per MCP server
-├── skills/                              # Skills global registry
-│   ├── <name>.yaml                      # Single-file YAML skill
-│   ├── <name>.md                        # Single-file Markdown skill
-│   └── <name>/                          # Directory-form skill
+├── config.yaml                          # Global settings (API keys, default model, provider overrides)
+└── workspaces/                          # Workspace definitions (name -> root/path mapping)
+  └── <name>.yaml
+
+~/.local/share/cobot/                    # Agent-mutable runtime data
+├── logs/                                # Debug logs when --debug is enabled
+├── skills/                              # Global shared skills loaded into any workspace
+│   ├── <name>.yaml
+│   ├── <name>.md
+│   └── <name>/
 │       ├── SKILL.md
 │       └── scripts/
-└── workspaces/                          # Workspace definitions (path mappings)
-    └── <name>.yaml                      # Maps workspace name to data directory
-
-~/.local/share/cobot/                    # Workspace-level, agent-mutable
-└── <workspace-name>/
-    ├── workspace.yaml                   # Workspace config (enabled MCP/skills, sandbox, agents)
-    ├── SOUL.md                          # Agent personality (agent-mutable)
-    ├── USER.md                          # User profile (agent-mutable)
-    ├── MEMORY.md                        # Consolidated memory (agent-mutable)
+└── workspace/
+  └── <workspace-name>/
+    ├── workspace.yaml               # Workspace config (sandbox, enabled skills/MCP, default agent)
+    ├── SOUL.md                      # Workspace persona prompt
+    ├── USER.md                      # User profile / preferences
+    ├── MEMORY.md                    # Optional human-authored notes alongside structured memory
+    ├── memory.db                    # Long-term memory SQLite database
     ├── agents/
-    │   └── <agent-name>.yaml           # Per-agent config (model, tools, skills)
-    ├── skills/                          # Workspace-private skills
-    ├── memory/                          # SQLite database (WAL mode)
-    └── sessions/                        # Chat session data
+    │   └── <agent-name>.yaml        # Per-agent config (model, prompt, skills, session overrides)
+    ├── skills/                      # Workspace-private skills
+    ├── sessions/                    # Session store + per-session STM SQLite databases
+    ├── cron/                        # Persisted scheduled jobs
+    ├── space/                       # Scratch space / delegated workdir
+    └── mcp/                         # Workspace-local MCP data
 ```
 
 ### Project Discovery
 
 Add a `.cobot/` directory to any project root to bind it to a workspace:
 
-```
+```text
 <project-root>/.cobot/
 ├── workspace.yaml      # Points to workspace name
 └── AGENTS.md           # Project-level agent instructions
 ```
 
 When running `cobot` from inside a project, it automatically detects the workspace via this file.
+
+## Runtime Architecture
+
+The runtime is assembled around a small set of internal packages:
+
+- **`cmd/cobot`**: CLI entrypoints and the Bubble Tea based TUI
+- **`internal/bootstrap`**: Composition root that resolves the workspace and wires the agent, providers, tools, memory, sandbox, and cron
+- **`internal/agent`**: Conversation loop, event streaming, session management, compaction, and usage accounting
+- **`internal/workspace`**: Workspace discovery, definitions, layout, and sandbox boundary calculation
+- **`internal/llm`**: Provider registry and lazy provider initialization from `provider:model` specs
+- **`internal/tools`**: Tool registry plus filesystem, shell, delegate, cron, and workspace mutation tools
+- **`internal/memory`**: SQLite-backed long-term and short-term memory, search, extraction, and deep search
+- **`internal/skills`**: Skill loading from the global data dir and the active workspace
+- **`internal/debuglog`**: Optional session-scoped request/response logging for debugging provider traffic
+
+Startup flow for `cobot chat` and the TUI is:
+
+1. Resolve config from defaults, config file, environment, and workspace selection.
+2. Resolve or discover the active workspace.
+3. Create the agent and attach its session store.
+4. Initialize the model registry and active provider.
+5. Register sandboxed filesystem/shell tools, workspace tools, memory tools, delegate tooling, and cron.
+6. Load enabled skills and merge them into the effective system prompt.
+7. Open workspace memory (`memory.db`) plus per-session STM storage under `sessions/`.
 
 ## Installation
 
@@ -116,7 +144,7 @@ cobot chat "What tests are failing?"
 Workspace is resolved at runtime — there is no persistent "current workspace" state:
 
 | Method | Example |
-|--------|---------|
+| ------ | ------- |
 | CLI flag | `cobot chat -w my-project "hello"` |
 | Environment variable | `COBOT_WORKSPACE=my-project cobot chat "hello"` |
 | Project discovery | Walk up from CWD, find `.cobot/workspace.yaml` |
@@ -185,7 +213,7 @@ cobot tools list                  # List available tools
 cobot model list                  # List available models
 ```
 
-## Configuration
+## Configuration Files
 
 ### Global Config (`~/.config/cobot/config.yaml`)
 
@@ -200,20 +228,7 @@ memory_enabled: true
 
 Environment variable expansion: `${VAR_NAME}` patterns are resolved at load time.
 
-### MCP Server (`~/.config/cobot/mcp/<name>.yaml`)
-
-```yaml
-name: github
-description: GitHub API via MCP
-transport: command
-command: npx
-args:
-  - "@modelcontextprotocol/server-github"
-env:
-  GITHUB_TOKEN: ${GITHUB_PERSONAL_TOKEN}
-```
-
-### Workspace Config (`~/.local/share/cobot/<name>/workspace.yaml`)
+### Workspace State (`~/.local/share/cobot/workspace/<name>/workspace.yaml`)
 
 ```yaml
 name: my-project
@@ -235,9 +250,15 @@ sandbox:
   allow_network: true
 
 default_agent: main
+external_agents:
+  - name: helper
+    command: /usr/local/bin/my-agent
+    args: ["acp", "--port", "0"]
+    workdir: /path/to/project
+    timeout: 5m
 ```
 
-### Agent Config (`~/.local/share/cobot/<name>/agents/<agent>.yaml`)
+### Agent Config (`~/.local/share/cobot/workspace/<name>/agents/<agent>.yaml`)
 
 ```yaml
 name: main
@@ -250,11 +271,27 @@ enabled_skills:
   - code-review
 max_turns: 50
 sandbox: {}    # Empty = inherit workspace sandbox
+session:
+  summarize_threshold: 0.5
+  compress_threshold: 0.7
+  summarize_turns: 60
+  summary_model: openai:gpt-4o-mini
+```
+
+### Project Overlay Config (`<project-root>/.cobot/config.yaml`)
+
+When a resolved workspace has a project root, Cobot also loads an optional project-local config overlay from `.cobot/config.yaml` inside that root. This affects runtime settings such as model selection without mutating the workspace state file under the data directory.
+
+```yaml
+model: anthropic:claude-sonnet-4-20250514
+max_turns: 80
+system_prompt: |
+  Prefer concise answers for this repository.
 ```
 
 ## Memory Architecture (MemPalace)
 
-Each workspace maintains an independent MemPalace backed by SQLite (WAL mode) with FTS5 full-text search:
+Each workspace maintains an independent MemPalace backed by SQLite (WAL mode) with FTS5 full-text search. The long-term store lives in `memory.db` at the workspace root, while per-session short-term memory databases live under `sessions/`.
 
 - **Wings**: Top-level domains (e.g., `golang`, `architecture`)
 - **Rooms**: Contextual spaces within a wing, each with a tag (`facts`, `log`, or `code`)
@@ -306,9 +343,8 @@ Agents inherit their workspace's sandbox by default. Non-empty `sandbox` fields 
 Agents can update their own workspace state through dedicated tools:
 
 | File | Tool |
-|------|------|
+| ---- | ---- |
 | `SOUL.md`, `USER.md` | `persona_update` |
-| `MEMORY.md` | `persona_update` |
 | `workspace.yaml` | `workspace_config_update` |
 | `agents/<name>.yaml` | `agent_config_update` |
 | `skills/` | `skill_create`, `skill_update` |
@@ -316,16 +352,17 @@ Agents can update their own workspace state through dedicated tools:
 Additional agent tools:
 
 | Tool | Description |
-|------|-------------|
+| ---- | ----------- |
 | `filesystem_read` | Read files within sandbox |
 | `filesystem_write` | Write files within sandbox |
 | `shell_exec` | Execute shell commands within sandbox |
 | `memory_search` | Full-text search across MemPalace |
 | `memory_store` | Store content in MemPalace |
 | `l3_deep_search` | Deep semantic search across memory |
-| `delegate` | Spawn a sub-agent for parallel work |
+| `cron` | Schedule recurring or one-shot prompts |
+| `delegate_task` | Spawn an internal or external sub-agent |
 
-Config-dir files (`~/.config/cobot/`) are never modified by agents — only by CLI commands.
+Config-dir files (`~/.config/cobot/`) are never modified by agents — only by CLI commands. `MEMORY.md` may exist in a workspace, but the structured memory tools operate on the SQLite-backed memory store rather than editing that markdown file directly.
 
 ## Testing
 
