@@ -20,12 +20,36 @@ var _ cobot.Tool = (*CronTool)(nil)
 
 // CronTool allows the agent to schedule and manage recurring and one-shot tasks.
 type CronTool struct {
-	scheduler *cron.Scheduler
+	scheduler  *cron.Scheduler
+	channelMgr ChannelResolver
+	sessionID  string
+}
+
+// ChannelResolver returns the current alive channel ID.
+type ChannelResolver interface {
+	FirstAliveID() string
+}
+
+// CronToolOption is a functional option for CronTool.
+type CronToolOption func(*CronTool)
+
+// WithCronChannelResolver sets the channel resolver for dynamic channel ID lookup.
+func WithCronChannelResolver(mgr ChannelResolver) CronToolOption {
+	return func(t *CronTool) { t.channelMgr = mgr }
+}
+
+// WithCronSessionID sets the session ID for cron job notifications.
+func WithCronSessionID(id string) CronToolOption {
+	return func(t *CronTool) { t.sessionID = id }
 }
 
 // NewCronTool creates a new CronTool with the given scheduler.
-func NewCronTool(scheduler *cron.Scheduler) *CronTool {
-	return &CronTool{scheduler: scheduler}
+func NewCronTool(scheduler *cron.Scheduler, opts ...CronToolOption) *CronTool {
+	t := &CronTool{scheduler: scheduler}
+	for _, opt := range opts {
+		opt(t)
+	}
+	return t
 }
 
 func (t *CronTool) Name() string { return "cron" }
@@ -104,6 +128,10 @@ func (t *CronTool) handleCreate(ctx context.Context, params cronParams) (string,
 		Status:    "active",
 		OneShot:   oneShot,
 		CreatedAt: time.Now(),
+		SessionID: t.sessionID,
+	}
+	if t.channelMgr != nil {
+		job.ChannelID = t.channelMgr.FirstAliveID()
 	}
 
 	if err := t.scheduler.AddJob(job); err != nil {

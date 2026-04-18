@@ -22,6 +22,10 @@ type Job struct {
 	LastRun   *time.Time `yaml:"last_run,omitempty"`
 	NextRun   *time.Time `yaml:"next_run,omitempty"`
 	RunCount  int        `yaml:"run_count"`
+
+	// Notification target
+	ChannelID string `yaml:"channel_id,omitempty"`
+	SessionID string `yaml:"session_id,omitempty"`
 }
 
 // Store manages Job persistence as individual YAML files.

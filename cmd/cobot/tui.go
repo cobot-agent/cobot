@@ -58,13 +58,14 @@ type tuiModel struct {
 	// used to debounce Enter after IME composition commits.
 	lastTextInput time.Time
 
-	userStyle   lipgloss.Style
-	errorStyle  lipgloss.Style
-	toolStyle   lipgloss.Style
-	statusStyle lipgloss.Style
-	queuedStyle lipgloss.Style
-	hubStyle    lipgloss.Style
-	wsMgr       *workspace.Manager
+	userStyle      lipgloss.Style
+	errorStyle     lipgloss.Style
+	toolStyle      lipgloss.Style
+	statusStyle    lipgloss.Style
+	queuedStyle    lipgloss.Style
+	hubStyle       lipgloss.Style
+	wsMgr          *workspace.Manager
+	notificationCh chan cobot.ChannelMessage
 }
 
 type streamMsg struct {
@@ -132,7 +133,11 @@ func newTUIModel(a *agent.Agent, workspaceName string, wsMgr *workspace.Manager)
 }
 
 func (m tuiModel) Init() tea.Cmd {
-	return tea.Batch(textarea.Blink, m.spinner.Tick, tea.RequestBackgroundColor)
+	cmds := []tea.Cmd{textarea.Blink, m.spinner.Tick, tea.RequestBackgroundColor}
+	if m.notificationCh != nil {
+		cmds = append(cmds, pollNotifications(m.notificationCh))
+	}
+	return tea.Batch(cmds...)
 }
 
 func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -247,6 +252,14 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, scheduleRefresh()
 		}
 		return m, nil
+
+	case notificationMsg:
+		m.messages = append(m.messages, chatMessage{
+			role: "system",
+			raw:  msg.content,
+		})
+		m.refreshViewport()
+		return m, pollNotifications(m.notificationCh)
 	}
 
 	var inputCmd tea.Cmd
@@ -359,8 +372,20 @@ var tuiCmd = &cobra.Command{
 			return err
 		}
 
+		// Set up TUI channel for cron notifications
+		notifyCh := make(chan cobot.ChannelMessage, 16)
+		tuiCh := newTUIChannel("tui:default", notifyCh)
+		if res.ChannelMgr != nil {
+			res.ChannelMgr.Register(tuiCh)
+			defer res.ChannelMgr.Unregister(tuiCh.ID())
+			defer tuiCh.Close()
+		}
+
+		mdl := newTUIModel(a, wsName, wsMgr)
+		mdl.notificationCh = notifyCh
+
 		p := tea.NewProgram(
-			newTUIModel(a, wsName, wsMgr),
+			mdl,
 			tea.WithContext(context.Background()),
 		)
 		_, err = p.Run()

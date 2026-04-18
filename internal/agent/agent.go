@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cobot-agent/cobot/internal/channel"
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
@@ -77,6 +78,7 @@ type Agent struct {
 	agentCtx      context.Context
 	agentCancel   context.CancelFunc
 	cronScheduler CronScheduler
+	channelMgr    *channel.Manager
 }
 
 // CronScheduler is a minimal interface for stopping the cron scheduler.
@@ -133,6 +135,14 @@ func (a *Agent) RegisterTool(tool cobot.Tool) {
 
 func (a *Agent) SetCronScheduler(s CronScheduler) {
 	a.cronScheduler = s
+}
+
+func (a *Agent) SetChannelManager(mgr *channel.Manager) {
+	a.channelMgr = mgr
+}
+
+func (a *Agent) ChannelManager() *channel.Manager {
+	return a.channelMgr
 }
 
 func (a *Agent) Config() *cobot.Config {

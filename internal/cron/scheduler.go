@@ -16,11 +16,17 @@ type JobExecutor interface {
 	ExecuteJob(ctx context.Context, job *Job) (string, error)
 }
 
+// Notifier delivers cron job results to the originating channel.
+type Notifier interface {
+	Notify(ctx context.Context, job *Job, result string, err error)
+}
+
 // Scheduler manages cron job lifecycle using robfig/cron.
 type Scheduler struct {
 	store    *Store
 	cron     *cron.Cron
 	executor JobExecutor
+	notifier Notifier // optional notification handler
 	mu       sync.Mutex
 	jobs     map[string]cron.EntryID // jobID -> cron entry ID
 }
@@ -37,6 +43,11 @@ func NewScheduler(store *Store, executor JobExecutor) *Scheduler {
 		executor: executor,
 		jobs:     make(map[string]cron.EntryID),
 	}
+}
+
+// SetNotifier sets the optional notifier for delivering job results.
+func (s *Scheduler) SetNotifier(n Notifier) {
+	s.notifier = n
 }
 
 // Start loads all active jobs from the store and starts the cron scheduler.
@@ -231,6 +242,13 @@ func (s *Scheduler) runJob(job *Job) {
 	if updateErr := s.store.Update(job); updateErr != nil {
 		slog.Warn("failed to update job after run",
 			"job_id", job.ID, "error", updateErr)
+	}
+
+	// Notify the originating channel if a notifier is configured.
+	if s.notifier != nil && job.ChannelID != "" {
+		notifyCtx, notifyCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		s.notifier.Notify(notifyCtx, job, result, err)
+		notifyCancel()
 	}
 }
 

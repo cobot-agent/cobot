@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/cobot-agent/cobot/internal/agent"
+	"github.com/cobot-agent/cobot/internal/channel"
 	"github.com/cobot-agent/cobot/internal/config"
 	"github.com/cobot-agent/cobot/internal/cron"
 	"github.com/cobot-agent/cobot/internal/llm"
@@ -27,9 +28,10 @@ import (
 // Result bundles everything InitAgent produces so callers don't juggle
 // multiple return values.
 type Result struct {
-	Agent     *agent.Agent
-	Workspace *workspace.Workspace
-	Cleanup   func()
+	Agent      *agent.Agent
+	Workspace  *workspace.Workspace
+	ChannelMgr *channel.Manager
+	Cleanup    func()
 }
 
 // InitAgent creates a fully-wired Agent for the given Config. When
@@ -61,6 +63,9 @@ func InitAgent(cfg *cobot.Config, requireProvider bool) (*Result, error) {
 	// Create tool registry externally and inject it into the agent.
 	toolReg := tools.NewRegistry()
 	a := agent.New(cfg, toolReg)
+
+	channelMgr := channel.NewManager()
+	a.SetChannelManager(channelMgr)
 
 	sm := a.SessionMgr()
 
@@ -107,7 +112,7 @@ func InitAgent(cfg *cobot.Config, requireProvider bool) (*Result, error) {
 
 	// a.Close() already closes the memory store; no need for separate cleanup.
 	cleanup := func() { a.Close() }
-	return &Result{Agent: a, Workspace: ws, Cleanup: cleanup}, nil
+	return &Result{Agent: a, Workspace: ws, ChannelMgr: channelMgr, Cleanup: cleanup}, nil
 }
 
 // ConfigureAgentForWorkspace (re)configures an existing agent for a workspace:
@@ -234,7 +239,23 @@ func configureCronTool(a *agent.Agent, ws *workspace.Workspace, store *memory.St
 		})
 	}
 	cronScheduler := cron.NewScheduler(cronStore, cronExecutor)
-	a.RegisterTool(tools.NewCronTool(cronScheduler))
+
+	// Wire up channel notification
+	channelMgr := a.ChannelManager()
+	if channelMgr != nil {
+		sessionID := a.SessionMgr().SessionID()
+		cronNotifier := channel.NewCronNotifier(channelMgr, func(sid string) bool {
+			return sid == sessionID
+		})
+		cronScheduler.SetNotifier(cronNotifier)
+		a.RegisterTool(tools.NewCronTool(cronScheduler,
+			tools.WithCronChannelResolver(channelMgr),
+			tools.WithCronSessionID(sessionID),
+		))
+	} else {
+		a.RegisterTool(tools.NewCronTool(cronScheduler))
+	}
+
 	if err := cronScheduler.Start(); err != nil {
 		slog.Warn("failed to start cron scheduler", "error", err)
 	}
