@@ -14,12 +14,17 @@ type notificationMsg struct {
 	content string
 }
 
+// notificationShutdownMsg is sent when the notification channel is closed,
+// signalling BubbleTea to stop polling.
+type notificationShutdownMsg struct{}
+
 // tuiChannel implements cobot.Channel for the TUI.
 type tuiChannel struct {
 	id     string
 	alive  bool
 	mu     sync.RWMutex
 	notify chan<- cobot.ChannelMessage
+	done   chan struct{} // closed in Close to unblock pollNotifications
 }
 
 func newTUIChannel(id string, notify chan<- cobot.ChannelMessage) *tuiChannel {
@@ -27,6 +32,7 @@ func newTUIChannel(id string, notify chan<- cobot.ChannelMessage) *tuiChannel {
 		id:     id,
 		alive:  true,
 		notify: notify,
+		done:   make(chan struct{}),
 	}
 }
 
@@ -55,17 +61,32 @@ func (ch *tuiChannel) IsAlive() bool {
 func (ch *tuiChannel) Close() {
 	ch.mu.Lock()
 	defer ch.mu.Unlock()
-	ch.alive = false
+	if ch.alive {
+		ch.alive = false
+		close(ch.done) // unblock pollNotifications goroutine
+		close(ch.notify)
+	}
+}
+
+// Done returns a channel that is closed when Close is called.
+func (ch *tuiChannel) Done() <-chan struct{} {
+	return ch.done
 }
 
 // pollNotifications returns a tea.Cmd that waits for channel messages
 // and converts them to notificationMsg for the BubbleTea Update loop.
-func pollNotifications(notify <-chan cobot.ChannelMessage) tea.Cmd {
+// When the notify channel is closed, it returns notificationShutdownMsg
+// to cleanly stop the polling cycle.
+func pollNotifications(notify <-chan cobot.ChannelMessage, done <-chan struct{}) tea.Cmd {
 	return func() tea.Msg {
-		msg, ok := <-notify
-		if !ok {
-			return nil
+		select {
+		case msg, ok := <-notify:
+			if !ok {
+				return notificationShutdownMsg{}
+			}
+			return notificationMsg{content: msg.Content}
+		case <-done:
+			return notificationShutdownMsg{}
 		}
-		return notificationMsg{content: msg.Content}
 	}
 }

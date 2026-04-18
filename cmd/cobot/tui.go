@@ -66,6 +66,7 @@ type tuiModel struct {
 	hubStyle       lipgloss.Style
 	wsMgr          *workspace.Manager
 	notificationCh chan cobot.ChannelMessage
+	tuiChDone      <-chan struct{}
 }
 
 type streamMsg struct {
@@ -135,7 +136,7 @@ func newTUIModel(a *agent.Agent, workspaceName string, wsMgr *workspace.Manager)
 func (m tuiModel) Init() tea.Cmd {
 	cmds := []tea.Cmd{textarea.Blink, m.spinner.Tick, tea.RequestBackgroundColor}
 	if m.notificationCh != nil {
-		cmds = append(cmds, pollNotifications(m.notificationCh))
+		cmds = append(cmds, pollNotifications(m.notificationCh, m.tuiChDone))
 	}
 	return tea.Batch(cmds...)
 }
@@ -259,7 +260,11 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			raw:  msg.content,
 		})
 		m.refreshViewport()
-		return m, pollNotifications(m.notificationCh)
+		return m, pollNotifications(m.notificationCh, m.tuiChDone)
+
+	case notificationShutdownMsg:
+		// Notification channel closed (TUI exiting), stop polling.
+		return m, nil
 	}
 
 	var inputCmd tea.Cmd
@@ -383,6 +388,7 @@ var tuiCmd = &cobra.Command{
 
 		mdl := newTUIModel(a, wsName, wsMgr)
 		mdl.notificationCh = notifyCh
+		mdl.tuiChDone = tuiCh.Done()
 
 		p := tea.NewProgram(
 			mdl,

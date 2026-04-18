@@ -57,6 +57,9 @@ func (m *Manager) SendTo(ctx context.Context, channelID string, msg cobot.Channe
 }
 
 // FirstAliveID returns the ID of the first alive channel, or empty string.
+// Note: map iteration order is non-deterministic; with a single channel (current
+// design) this is fine. When multiple channels are supported, callers should
+// use Get(id) with a specific ID instead.
 func (m *Manager) FirstAliveID() string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
