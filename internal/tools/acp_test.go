@@ -677,3 +677,42 @@ sleep 60
 		t.Errorf("error = %q, want error about timeout or URL", err.Error())
 	}
 }
+
+func TestACPSubAgent_ServerStartupContextCancel(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping on windows")
+	}
+
+	script := `#!/bin/sh
+echo "no url here"
+sleep 60
+`
+	f, err := os.CreateTemp("", "acp_mock_*.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(f.Name())
+	if _, err := f.WriteString(script); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(f.Name(), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	a := NewACPSubAgent("/bin/sh", []string{f.Name()}, "", 5*time.Second)
+	defer a.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(100*time.Millisecond, cancel)
+
+	_, err = a.Prompt(ctx, "hi")
+	if err == nil {
+		t.Fatal("expected context cancellation error")
+	}
+	if !strings.Contains(err.Error(), "context cancelled while waiting for ACP server") {
+		t.Fatalf("error = %q, want context cancellation during startup", err.Error())
+	}
+}

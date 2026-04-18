@@ -148,6 +148,9 @@ func (a *ACPSubAgent) start(ctx context.Context) error {
 		return fmt.Errorf("timed out waiting for ACP server URL from %q (check that the server prints its URL on startup)", a.command)
 	case <-ctx.Done():
 		_ = a.killLocked()
+		if ctx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("timed out waiting for ACP server URL from %q (check that the server prints its URL on startup): %w", a.command, ctx.Err())
+		}
 		return fmt.Errorf("context cancelled while waiting for ACP server: %w", ctx.Err())
 	}
 }
