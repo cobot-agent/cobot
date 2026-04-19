@@ -116,16 +116,23 @@ func (m *Manager) Notify(ctx context.Context, channelID string, msg cobot.Channe
 		return
 	}
 
+	// Fan out to all alive instances concurrently.
+	var wg sync.WaitGroup
 	for _, e := range entries {
 		if !e.ch.IsAlive() {
 			slog.Debug("notify: skipping dead channel instance", "channel", channelID, "session", e.sessionID)
 			continue
 		}
-		if err := e.ch.Send(ctx, msg); err != nil {
-			slog.Warn("failed to deliver notification",
-				"channel", channelID, "session", e.sessionID, "error", err)
-		}
+		wg.Add(1)
+		go func(entry channelEntry) {
+			defer wg.Done()
+			if err := entry.ch.Send(ctx, msg); err != nil {
+				slog.Warn("failed to deliver notification",
+					"channel", channelID, "session", entry.sessionID, "error", err)
+			}
+		}(e)
 	}
+	wg.Wait()
 }
 
 // Heartbeat records a heartbeat from the given session.

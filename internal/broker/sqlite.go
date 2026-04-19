@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"time"
@@ -15,6 +16,10 @@ import (
 
 // sqliteTimeFmt matches SQLite strftime('%%Y-%%m-%%d %%H:%%M:%%f', 'now') output so text comparisons work correctly.
 const sqliteTimeFmt = "2006-01-02 15:04:05.000000"
+
+// sessionTTL is the duration after which a session without heartbeat is
+// considered dead. Used by ListByChannel, ListAll and Cleanup.
+const sessionTTL = 60 * time.Second
 
 // SQLiteBroker implements the broker.Broker interface using SQLite WAL mode
 // for multi-process coordination.
@@ -39,6 +44,11 @@ func NewSQLiteBroker(dbPath string) (*SQLiteBroker, error) {
 	if err := b.initSchema(); err != nil {
 		_ = db.Close()
 		return nil, err
+	}
+	// Purge receipts from dead sessions on startup so they don't accumulate
+	// across restarts (session IDs change every restart).
+	if err := b.cleanStaleReceipts(context.Background()); err != nil {
+		slog.Warn("broker startup: failed to clean stale receipts", "error", err)
 	}
 	return b, nil
 }
@@ -162,13 +172,13 @@ func (b *SQLiteBroker) Heartbeat(ctx context.Context, sessionID string) error {
 }
 
 func (b *SQLiteBroker) ListByChannel(ctx context.Context, channelID string) ([]*broker.SessionInfo, error) {
-	threshold := time.Now().UTC().Add(-60 * time.Second).Format(sqliteTimeFmt)
+	threshold := time.Now().UTC().Add(-sessionTTL).Format(sqliteTimeFmt)
 	return b.listSessions(ctx, `SELECT session_id, channel_id, pid, started_at FROM sessions
 		WHERE channel_id = ? AND last_heartbeat > ?`, channelID, threshold)
 }
 
 func (b *SQLiteBroker) ListAll(ctx context.Context) ([]*broker.SessionInfo, error) {
-	threshold := time.Now().UTC().Add(-60 * time.Second).Format(sqliteTimeFmt)
+	threshold := time.Now().UTC().Add(-sessionTTL).Format(sqliteTimeFmt)
 	return b.listSessions(ctx, `SELECT session_id, channel_id, pid, started_at FROM sessions
 		WHERE last_heartbeat > ?`, threshold)
 }
@@ -271,19 +281,30 @@ func (b *SQLiteBroker) Ack(ctx context.Context, msgID, sessionID string) error {
 
 // --- Cleanup and Close ---
 
+// cleanStaleReceipts removes receipts belonging to sessions that no longer
+// exist. Called on startup to prevent bloat from previous session IDs.
+func (b *SQLiteBroker) cleanStaleReceipts(ctx context.Context) error {
+	_, err := b.db.ExecContext(ctx, `
+		DELETE FROM receipts
+		WHERE session_id NOT IN (SELECT session_id FROM sessions);
+	`)
+	return err
+}
+
 // Cleanup deletes expired sessions and fully delivered messages.
 // Typically called periodically by the leader process.
 func (b *SQLiteBroker) Cleanup(ctx context.Context) error {
-	threshold := time.Now().UTC().Add(-60 * time.Second).Format(sqliteTimeFmt)
+	threshold := time.Now().UTC().Add(-sessionTTL).Format(sqliteTimeFmt)
 	var errs []error
 
-	// Delete sessions without heartbeat for 60 seconds.
+	// Delete sessions without heartbeat for the TTL duration.
 	_, err := b.db.ExecContext(ctx, `DELETE FROM sessions WHERE last_heartbeat < ?;`, threshold)
 	if err != nil {
 		errs = append(errs, fmt.Errorf("cleanup sessions: %w", err))
 	}
 
 	// Delete messages that have been acked by all active sessions for that channel.
+	// Batched to LIMIT 1000 to avoid holding write locks too long.
 	_, err = b.db.ExecContext(ctx, `
 		DELETE FROM messages
 		WHERE id IN (
@@ -299,6 +320,7 @@ func (b *SQLiteBroker) Cleanup(ctx context.Context) error {
 					  WHERE r.message_id = m.id AND r.session_id = s.session_id
 				  )
 			)
+			LIMIT 1000
 		);
 	`)
 	if err != nil {
