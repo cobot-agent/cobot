@@ -59,7 +59,7 @@ func (t *CronTool) currentChannelID() string {
 }
 
 func (t *CronTool) Description() string {
-	return `Schedule and manage recurring and one-shot tasks. Actions: create (schedule a new job), list (show all jobs), delete (remove a job), pause (temporarily stop a job), resume (restart a paused job), list_runs (show execution history for a job). Use cron expressions like "0 9 * * *" for recurring tasks or ISO timestamps like "2026-04-18T09:00:00Z" for one-shot tasks. Results are stored in per-job run databases and can be viewed with list_runs.`
+	return `Schedule and manage recurring and one-shot tasks. Actions: create (schedule a new job), list (show all jobs), delete (remove a job), pause (temporarily stop a job), resume (restart a paused job), list_runs (show execution history for a job). Use cron expressions like "0 9 * * *" for recurring tasks or ISO timestamps for one-shot tasks. Results are stored in per-job run databases and can be viewed with list_runs.`
 }
 
 func (t *CronTool) Parameters() json.RawMessage {

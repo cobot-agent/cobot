@@ -68,8 +68,8 @@ func (ch *tuiChannel) Close() {
 	defer ch.mu.Unlock()
 	if ch.alive {
 		ch.alive = false
-		close(ch.done) // unblock pollNotifications goroutine
-		close(ch.notify)
+		close(ch.done)  // unblock Send and pollNotifications
+		ch.notify = nil // prevent further sends; GC will collect
 	}
 }
 

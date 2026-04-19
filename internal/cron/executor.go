@@ -87,7 +87,7 @@ func (e *AgentExecutor) ExecuteJob(ctx context.Context, job *Job) (string, error
 		stmContent := fmt.Sprintf("Cron job %q (id=%s) result: %s",
 			job.Name, job.ID, result)
 		if err != nil {
-			stmContent = fmt.Sprintf("Cron job %q (id=%s) failed: %s",
+			stmContent = fmt.Sprintf("Cron job %q (id=%s) failed: %v",
 				job.Name, job.ID, err)
 		}
 		if _, stmErr := e.STMStore(ctx, job.SessionID, stmContent, "observation"); stmErr != nil {

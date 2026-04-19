@@ -98,7 +98,7 @@ func (n *CronNotifier) Notify(ctx context.Context, job *cron.Job, result string,
 	}
 
 	if execErr != nil {
-		msg.Content = fmt.Sprintf("❌ Job %s failed: %s", job.Name, execErr)
+		msg.Content = fmt.Sprintf("❌ Job %s failed: %v", job.Name, execErr)
 	} else {
 		msg.Content = fmt.Sprintf("✅ Job %s result:\n%s", job.Name, result)
 	}

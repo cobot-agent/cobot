@@ -100,15 +100,23 @@ func (rs *RunStore) ListRuns(jobID string, limit int) ([]*RunRecord, error) {
 		if err := rows.Scan(&r.ID, &runAt, &r.Duration, &r.Result, &r.Error); err != nil {
 			return nil, err
 		}
-		r.RunAt, _ = time.Parse(time.RFC3339, runAt)
+		r.RunAt, err = time.Parse(time.RFC3339, runAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse run_at timestamp for job %s: %w", jobID, err)
+		}
 		records = append(records, r)
 	}
 	return records, rows.Err()
 }
 
 // DeleteJobDB removes the entire database for a job.
+// Returns nil if the database does not exist (idempotent).
 func (rs *RunStore) DeleteJobDB(jobID string) error {
-	return os.Remove(rs.dbPath(jobID))
+	err := os.Remove(rs.dbPath(jobID))
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }
 
 // RunsExist checks if any run records exist for a job.
@@ -122,6 +130,9 @@ func (rs *RunStore) RunsExist(jobID string) (bool, error) {
 		return false, err
 	}
 	defer db.Close()
+	if err := rs.ensureSchema(db); err != nil {
+		return false, err
+	}
 	var count int
 	err = db.QueryRow(`SELECT COUNT(*) FROM runs`).Scan(&count)
 	return count > 0, err
