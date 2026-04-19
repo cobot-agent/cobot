@@ -233,11 +233,12 @@ func configureDelegateTool(a *agent.Agent, ws *workspace.Workspace, registry cob
 }
 
 func configureCronTool(a *agent.Agent, ws *workspace.Workspace, registry cobot.ModelResolver) {
-	// Stop previous scheduler if switching workspaces.
+	// --- Stop previous scheduler if switching workspaces. ---
 	if a.CronScheduler() != nil {
 		a.CronScheduler().Stop()
 	}
 
+	// --- Create cron executor with sub-agent factory. ---
 	cronDir := ws.CronDir()
 	cronStore := cron.NewStore(cronDir)
 	runStore := cron.NewRunStore(ws.CronRunsDir())
@@ -245,11 +246,11 @@ func configureCronTool(a *agent.Agent, ws *workspace.Workspace, registry cobot.M
 		filtered := a.ToolRegistry().Clone().Without("cron", "delegate_task")
 		sub := newSubAgent(a, registry, filtered)
 		_ = sub.SessionMgr().SetSystemPrompt("You are a scheduled task executor. Complete the task efficiently and output results.")
-		return &cronAgentRunner{agent: sub}
+		return &cron.AgentRunnerAdapter{Agent: sub}
 	})
 	cronExecutor.WithRunStore(runStore)
 
-	// Wire up channel notification
+	// --- Wire up scheduler, channel notification, and register tool. ---
 	channelMgr := a.ChannelManager()
 	cronScheduler := cron.NewScheduler(cronStore, cronExecutor, runStore, channelMgr)
 	a.RegisterTool(tools.NewCronTool(cronScheduler,
@@ -316,26 +317,4 @@ func newSubAgent(a *agent.Agent, registry cobot.ModelResolver, filteredTools cob
 		sub.SetProvider(a.Provider())
 	}
 	return sub
-}
-
-// cronAgentRunner adapts an *agent.Agent (which implements cobot.SubAgent)
-// to the cron.AgentRunner interface by calling Prompt and returning the content.
-type cronAgentRunner struct {
-	agent *agent.Agent
-}
-
-func (r *cronAgentRunner) Prompt(ctx context.Context, message string) (string, error) {
-	resp, err := r.agent.Prompt(ctx, message)
-	if err != nil {
-		return "", err
-	}
-	return resp.Content, nil
-}
-
-func (r *cronAgentRunner) SetModel(spec string) error {
-	return r.agent.SetModel(spec)
-}
-
-func (r *cronAgentRunner) Close() error {
-	return r.agent.Close()
 }

@@ -10,7 +10,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/robfig/cron/v3"
 
-	"github.com/cobot-agent/cobot/internal/textutil"
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
@@ -223,11 +222,20 @@ func (s *Scheduler) runJob(job *Job) {
 	}
 
 	now := time.Now()
+	s.updateAndPersistJob(job, now)
+
+	s.notifyJobResult(job, result, err)
+}
+
+// updateAndPersistJob updates job state (LastRun, RunCount, NextRun, Status)
+// and persists the change, all under s.mu to avoid races with PauseJob/ResumeJob.
+func (s *Scheduler) updateAndPersistJob(job *Job, now time.Time) {
 	job.LastRun = &now
 	job.RunCount++
 
-	// Snapshot existence under lock, update next-run or finalize one-shot.
 	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	_, stillScheduled := s.jobs[job.ID]
 	if !job.OneShot {
 		if entryID, ok := s.jobs[job.ID]; ok {
@@ -242,31 +250,33 @@ func (s *Scheduler) runJob(job *Job) {
 			delete(s.jobs, job.ID)
 		}
 	}
-	s.mu.Unlock()
 
-	// Persist update. Skip if job was removed mid-execution.
+	// Persist under lock to prevent races with PauseJob/ResumeJob.
 	if !stillScheduled {
 		slog.Debug("skipping update for removed job", "job_id", job.ID)
 	} else if updateErr := s.store.Update(job); updateErr != nil {
 		slog.Warn("failed to update job after run",
 			"job_id", job.ID, "error", updateErr)
 	}
+}
 
-	// Notify the originating channel if a notifier is configured.
-	if n := s.notifier; n != nil && job.ChannelID != "" {
-		notifyCtx, notifyCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		msg := cobot.ChannelMessage{
-			Type:  cobot.MessageTypeCronResult,
-			Title: fmt.Sprintf("Cron job %q completed", job.Name),
-		}
-		if err != nil {
-			msg.Content = fmt.Sprintf("❌ Job %s failed: %v", job.Name, err)
-		} else {
-			msg.Content = fmt.Sprintf("✅ Job %s result:\n%s", job.Name, result)
-		}
-		n.Notify(notifyCtx, job.ChannelID, msg)
-		notifyCancel()
+// notifyJobResult sends a notification about the job execution result.
+func (s *Scheduler) notifyJobResult(job *Job, result string, err error) {
+	if s.notifier == nil || job.ChannelID == "" {
+		return
 	}
+	notifyCtx, notifyCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	msg := cobot.ChannelMessage{
+		Type:  cobot.MessageTypeCronResult,
+		Title: fmt.Sprintf("Cron job %q completed", job.Name),
+	}
+	if err != nil {
+		msg.Content = fmt.Sprintf("❌ Job %s failed: %v", job.Name, err)
+	} else {
+		msg.Content = fmt.Sprintf("✅ Job %s result:\n%s", job.Name, result)
+	}
+	s.notifier.Notify(notifyCtx, job.ChannelID, msg)
+	notifyCancel()
 }
 
 // HasRunRecords checks if a job has execution history.
@@ -286,28 +296,12 @@ func (s *Scheduler) CleanupJobDB(jobID string) {
 	}
 }
 
-// ListJobRuns returns formatted execution records for a job.
-func (s *Scheduler) ListJobRuns(jobID string, limit int) (string, error) {
+// ListJobRuns returns execution records for a job.
+func (s *Scheduler) ListJobRuns(jobID string, limit int) ([]*RunRecord, error) {
 	if s.runStore == nil {
-		return "Run tracking not available.", nil
+		return nil, nil
 	}
-	records, err := s.runStore.ListRuns(jobID, limit)
-	if err != nil {
-		return "", err
-	}
-	if len(records) == 0 {
-		return fmt.Sprintf("No execution records for job %s.", jobID), nil
-	}
-	result := fmt.Sprintf("Execution records for job %s (%d most recent):\n", jobID, len(records))
-	for _, r := range records {
-		if r.Error != "" {
-			result += fmt.Sprintf("  [%s] FAILED (%dms): %s\n", r.RunAt.Format("2006-01-02 15:04:05"), r.Duration, r.Error)
-		} else {
-			output := textutil.Truncate(r.Result, 100)
-			result += fmt.Sprintf("  [%s] OK (%dms): %s\n", r.RunAt.Format("2006-01-02 15:04:05"), r.Duration, output)
-		}
-	}
-	return result, nil
+	return s.runStore.ListRuns(jobID, limit)
 }
 
 // NewJobID generates a friendly cron job ID.

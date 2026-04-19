@@ -80,6 +80,7 @@ func (m *Manager) AllAliveIDs() []string {
 func (m *Manager) Notify(ctx context.Context, channelID string, msg cobot.ChannelMessage) {
 	ch, alive := m.Get(channelID)
 	if !alive {
+		slog.Debug("notify: channel not found or not alive", "channel", channelID)
 		return
 	}
 	if err := ch.Send(ctx, msg); err != nil {
@@ -164,48 +165,26 @@ func (m *Manager) StopHealthCheck() {
 // expireStale removes channels whose last heartbeat exceeds the timeout.
 // Local channels are never expired.
 func (m *Manager) expireStale(timeout time.Duration) {
-	m.mu.RLock()
+	m.mu.Lock()
 	now := time.Now()
-	var stale []string
-	for id := range m.channels {
+	var toClose []cobot.Channel
+	for id, ch := range m.channels {
 		if _, isLocal := m.local[id]; isLocal {
 			continue
 		}
 		last, ok := m.lastHB[id]
-		if !ok || now.Sub(last) > timeout {
-			stale = append(stale, id)
-		}
-	}
-	m.mu.RUnlock()
-
-	for _, id := range stale {
-		m.mu.Lock()
-		ch, ok := m.channels[id]
-		if !ok {
-			m.mu.Unlock()
+		if ok && now.Sub(last) <= timeout {
 			continue
 		}
-		if _, isLocal := m.local[id]; isLocal {
-			m.mu.Unlock()
-			continue
-		}
-		last, hasLastHB := m.lastHB[id]
-		if hasLastHB && now.Sub(last) <= timeout {
-			m.mu.Unlock()
-			continue
-		}
-
 		delete(m.channels, id)
 		delete(m.lastHB, id)
 		delete(m.local, id)
-		m.mu.Unlock()
+		toClose = append(toClose, ch)
+	}
+	m.mu.Unlock()
 
-		lastStr := "<missing>"
-		if hasLastHB {
-			lastStr = last.Format(time.RFC3339)
-		}
-		slog.Warn("channel heartbeat timeout, removing",
-			"channel", id, "last_heartbeat", lastStr)
+	for _, ch := range toClose {
+		slog.Warn("channel heartbeat timeout, removing", "channel", ch.ID())
 		ch.Close()
 	}
 }

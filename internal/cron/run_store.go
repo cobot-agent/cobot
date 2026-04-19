@@ -109,7 +109,6 @@ func (rs *RunStore) ListRuns(jobID string, limit int) ([]*RunRecord, error) {
 	if limit <= 0 {
 		limit = 20
 	}
-	// Validate before any filesystem access to prevent path traversal.
 	if err := ValidateJobID(jobID); err != nil {
 		return nil, err
 	}
@@ -120,28 +119,29 @@ func (rs *RunStore) ListRuns(jobID string, limit int) ([]*RunRecord, error) {
 		}
 		return nil, err
 	}
+	db, err := rs.getDB(jobID)
+	if err != nil {
+		return nil, err
+	}
 	var records []*RunRecord
-	err := rs.withDB(jobID, func(db *sql.DB) error {
-		rows, err := db.Query(`SELECT id, run_at, duration_ms, result, error FROM runs ORDER BY run_at DESC LIMIT ?`, limit)
+	rows, err := db.Query(`SELECT id, run_at, duration_ms, result, error FROM runs ORDER BY run_at DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		r := &RunRecord{JobID: jobID}
+		var runAt string
+		if err := rows.Scan(&r.ID, &runAt, &r.Duration, &r.Result, &r.Error); err != nil {
+			return nil, err
+		}
+		r.RunAt, err = time.Parse(time.RFC3339, runAt)
 		if err != nil {
-			return err
+			return nil, fmt.Errorf("parse run_at timestamp for job %s: %w", jobID, err)
 		}
-		defer rows.Close()
-		for rows.Next() {
-			r := &RunRecord{JobID: jobID}
-			var runAt string
-			if err := rows.Scan(&r.ID, &runAt, &r.Duration, &r.Result, &r.Error); err != nil {
-				return err
-			}
-			r.RunAt, err = time.Parse(time.RFC3339, runAt)
-			if err != nil {
-				return fmt.Errorf("parse run_at timestamp for job %s: %w", jobID, err)
-			}
-			records = append(records, r)
-		}
-		return rows.Err()
-	})
-	return records, err
+		records = append(records, r)
+	}
+	return records, rows.Err()
 }
 
 // DeleteJobDB removes the entire database for a job.

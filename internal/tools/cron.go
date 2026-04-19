@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/cobot-agent/cobot/internal/textutil"
+
 	"github.com/cobot-agent/cobot/internal/cron"
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
@@ -212,6 +214,21 @@ func (t *CronTool) handleListRuns(params cronParams) (string, error) {
 	if params.JobID == "" {
 		return "", fmt.Errorf("job_id is required for list_runs action")
 	}
-	// Get runs via scheduler
-	return t.scheduler.ListJobRuns(params.JobID, params.Limit)
+	records, err := t.scheduler.ListJobRuns(params.JobID, params.Limit)
+	if err != nil {
+		return "", err
+	}
+	if len(records) == 0 {
+		return fmt.Sprintf("No execution records for job %s.", params.JobID), nil
+	}
+	result := fmt.Sprintf("Execution records for job %s (%d most recent):\n", params.JobID, len(records))
+	for _, r := range records {
+		if r.Error != "" {
+			result += fmt.Sprintf("  [%s] FAILED (%dms): %s\n", r.RunAt.Format("2006-01-02 15:04:05"), r.Duration, r.Error)
+		} else {
+			output := textutil.Truncate(r.Result, 100)
+			result += fmt.Sprintf("  [%s] OK (%dms): %s\n", r.RunAt.Format("2006-01-02 15:04:05"), r.Duration, output)
+		}
+	}
+	return result, nil
 }
