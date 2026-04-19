@@ -27,7 +27,7 @@ type CronTool struct {
 // CronToolOption is a functional option for CronTool.
 type CronToolOption func(*CronTool)
 
-// WithCronChannelIDFunc sets a function that returns the current channel ID.
+// WithCronChannelIDFn sets a function that returns the current channel ID.
 // Cron job results are sent back to the originating channel.
 func WithCronChannelIDFn(fn func() string) CronToolOption {
 	return func(t *CronTool) { t.channelIDFn = fn }
@@ -45,8 +45,7 @@ func NewCronTool(scheduler *cron.Scheduler, opts ...CronToolOption) *CronTool {
 func (t *CronTool) Name() string { return "cron" }
 
 // currentChannelID returns the channel ID from the injected function, or empty string.
-// NOTE: Currently returns the first alive channel. Future work should pass channelID
-// through the tool execution context for proper multi-channel routing.
+// The default wiring (bootstrap.go) selects the first alive channel.
 func (t *CronTool) currentChannelID() string {
 	if t.channelIDFn != nil {
 		return t.channelIDFn()

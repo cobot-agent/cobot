@@ -58,6 +58,9 @@ func (s *Store) jobPath(id string) string {
 
 // Create writes a new job to disk.
 func (s *Store) Create(job *Job) error {
+	if err := ValidateJobID(job.ID); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(s.dir, 0755); err != nil {
 		return fmt.Errorf("create cron dir: %w", err)
 	}
@@ -118,6 +121,10 @@ func (s *Store) List() ([]*Job, error) {
 func (s *Store) Update(job *Job) error {
 	if err := ValidateJobID(job.ID); err != nil {
 		return err
+	}
+	path := s.jobPath(job.ID)
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return fmt.Errorf("job not found: %s", job.ID)
 	}
 	data, err := yaml.Marshal(job)
 	if err != nil {

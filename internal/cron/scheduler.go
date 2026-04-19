@@ -86,6 +86,9 @@ func (s *Scheduler) Start() error {
 // Stop halts the cron scheduler and removes all entries.
 func (s *Scheduler) Stop() {
 	s.cron.Stop()
+	if s.runStore != nil {
+		s.runStore.Close()
+	}
 }
 
 // AddJob creates a new cron entry and persists the job.
