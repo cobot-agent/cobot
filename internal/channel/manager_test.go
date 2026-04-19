@@ -33,7 +33,7 @@ func TestManagerRegisterAndGet(t *testing.T) {
 	mgr := NewManager()
 	ch := &mockChannel{BaseChannel: cobot.NewBaseChannel("test:1")}
 
-	mgr.Register(ch)
+	mgr.Register(ch, "test-session")
 
 	got, alive := mgr.Get("test:1")
 	if !alive {
@@ -57,8 +57,8 @@ func TestManagerUnregister(t *testing.T) {
 	mgr := NewManager()
 	ch := &mockChannel{BaseChannel: cobot.NewBaseChannel("test:1")}
 
-	mgr.Register(ch)
-	mgr.Unregister("test:1")
+	mgr.Register(ch, "test-session")
+	mgr.Unregister("test:1", "test-session")
 
 	_, alive := mgr.Get("test:1")
 	if alive {
@@ -70,7 +70,7 @@ func TestManagerGetDeadChannel(t *testing.T) {
 	mgr := NewManager()
 	ch := &mockChannel{BaseChannel: cobot.NewBaseChannel("test:1")}
 
-	mgr.Register(ch)
+	mgr.Register(ch, "test-session")
 	ch.Close()
 
 	_, alive := mgr.Get("test:1")
@@ -90,8 +90,8 @@ func TestManagerAllAliveIDs(t *testing.T) {
 	// With alive channels
 	ch1 := &mockChannel{BaseChannel: cobot.NewBaseChannel("test:1")}
 	ch2 := &mockChannel{BaseChannel: cobot.NewBaseChannel("test:2")}
-	mgr.Register(ch1)
-	mgr.Register(ch2)
+	mgr.Register(ch1, "session-1")
+	mgr.Register(ch2, "session-2")
 	ids := mgr.AllAliveIDs()
 	if len(ids) != 2 {
 		t.Fatalf("expected 2 IDs, got %d", len(ids))
@@ -111,7 +111,7 @@ func TestManagerHeartbeat(t *testing.T) {
 
 	mgr := NewManager()
 	ch := &mockChannel{BaseChannel: cobot.NewBaseChannel("test:1")}
-	mgr.Register(ch)
+	mgr.Register(ch, "test-session")
 
 	// Start health check: 50ms interval, 150ms timeout (3x)
 	mgr.StartHealthCheck(ctx, 50*time.Millisecond)
@@ -139,7 +139,7 @@ func TestManagerHeartbeatKeepsAlive(t *testing.T) {
 
 	mgr := NewManager()
 	ch := &mockChannel{BaseChannel: cobot.NewBaseChannel("test:1")}
-	mgr.Register(ch)
+	mgr.Register(ch, "test-session")
 
 	mgr.StartHealthCheck(ctx, 50*time.Millisecond)
 
@@ -152,7 +152,7 @@ func TestManagerHeartbeatKeepsAlive(t *testing.T) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				mgr.Heartbeat("test:1")
+				mgr.Heartbeat("test-session")
 			}
 		}
 	}()
@@ -182,8 +182,8 @@ func TestManagerMarkLocalSkipsExpiry(t *testing.T) {
 
 	mgr := NewManager()
 	ch := &mockChannel{BaseChannel: cobot.NewBaseChannel("local:1")}
-	mgr.Register(ch)
-	mgr.MarkLocal("local:1")
+	mgr.Register(ch, "test-session")
+	mgr.MarkLocal("test-session")
 
 	// Start health check: 50ms interval, 150ms timeout (3x)
 	mgr.StartHealthCheck(ctx, 50*time.Millisecond)
@@ -221,7 +221,7 @@ func TestManagerHealthCheckRestart(t *testing.T) {
 
 	mgr := NewManager()
 	ch1 := &mockChannel{BaseChannel: cobot.NewBaseChannel("test:1")}
-	mgr.Register(ch1)
+	mgr.Register(ch1, "test-session")
 
 	// Start health check, then restart it
 	mgr.StartHealthCheck(ctx, 50*time.Millisecond)

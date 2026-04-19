@@ -11,65 +11,90 @@ import (
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
+type channelEntry struct {
+	ch        cobot.Channel
+	sessionID string
+}
+
 // Manager tracks active channels and routes messages to them.
 type Manager struct {
 	mu       sync.RWMutex
-	channels map[string]cobot.Channel
-	lastHB   map[string]time.Time // last heartbeat timestamp per channel
-	local    map[string]struct{}  // local channels never expire
-	cancelHC context.CancelFunc   // stops health check goroutine
-	hcDone   chan struct{}        // signals health check goroutine exited
+	channels map[string][]channelEntry // channelID -> entries
+	lastHB   map[string]time.Time      // last heartbeat timestamp per sessionID
+	local    map[string]struct{}       // local sessionIDs never expire
+	cancelHC context.CancelFunc        // stops health check goroutine
+	hcDone   chan struct{}             // signals health check goroutine exited
 }
 
 func NewManager() *Manager {
 	return &Manager{
-		channels: make(map[string]cobot.Channel),
+		channels: make(map[string][]channelEntry),
 		lastHB:   make(map[string]time.Time),
 		local:    make(map[string]struct{}),
 	}
 }
 
 // Register adds a channel to the manager and records an initial heartbeat.
-func (m *Manager) Register(ch cobot.Channel) {
+func (m *Manager) Register(ch cobot.Channel, sessionID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.channels[ch.ID()] = ch
-	m.lastHB[ch.ID()] = time.Now()
+	m.channels[ch.ID()] = append(m.channels[ch.ID()], channelEntry{ch: ch, sessionID: sessionID})
+	m.lastHB[sessionID] = time.Now()
 }
 
-// Unregister removes a channel from the manager.
-func (m *Manager) Unregister(id string) {
+// Unregister removes a channel entry from the manager.
+func (m *Manager) Unregister(channelID, sessionID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	delete(m.channels, id)
-	delete(m.lastHB, id)
-	delete(m.local, id)
+	entries := m.channels[channelID]
+	for i, e := range entries {
+		if e.sessionID == sessionID {
+			// remove entry at i
+			entries[i] = entries[len(entries)-1]
+			entries = entries[:len(entries)-1]
+			break
+		}
+	}
+	if len(entries) == 0 {
+		delete(m.channels, channelID)
+	} else {
+		m.channels[channelID] = entries
+	}
+	delete(m.lastHB, sessionID)
+	delete(m.local, sessionID)
 }
 
 // Get returns a channel by ID and whether it exists and is alive.
 func (m *Manager) Get(id string) (cobot.Channel, bool) {
 	m.mu.RLock()
-	ch, ok := m.channels[id]
+	entries := m.channels[id]
 	m.mu.RUnlock()
-	if !ok {
-		return nil, false
+	for _, e := range entries {
+		if e.ch.IsAlive() {
+			return e.ch, true
+		}
 	}
-	return ch, ch.IsAlive()
+	return nil, false
 }
 
 // AllAliveIDs returns the IDs of all alive channels.
 func (m *Manager) AllAliveIDs() []string {
 	m.mu.RLock()
-	channels := make([]cobot.Channel, 0, len(m.channels))
-	for _, ch := range m.channels {
-		channels = append(channels, ch)
+	channelsCopy := make(map[string][]channelEntry, len(m.channels))
+	for k, v := range m.channels {
+		entries := make([]channelEntry, len(v))
+		copy(entries, v)
+		channelsCopy[k] = entries
 	}
 	m.mu.RUnlock()
 
 	var ids []string
-	for _, ch := range channels {
-		if ch.IsAlive() {
-			ids = append(ids, ch.ID())
+	for id, entries := range channelsCopy {
+		for _, e := range entries {
+			if e.ch.IsAlive() {
+				ids = append(ids, id)
+				break
+			}
 		}
 	}
 	sort.Strings(ids)
@@ -77,40 +102,51 @@ func (m *Manager) AllAliveIDs() []string {
 }
 
 // Notify delivers a message to the specified channel (implements cobot.Notifier).
+// It fans out to all registered instances for the channel.
 func (m *Manager) Notify(ctx context.Context, channelID string, msg cobot.ChannelMessage) {
-	ch, alive := m.Get(channelID)
-	if !alive {
-		slog.Debug("notify: channel not found or not alive", "channel", channelID)
+	m.mu.RLock()
+	entries := make([]channelEntry, len(m.channels[channelID]))
+	copy(entries, m.channels[channelID])
+	m.mu.RUnlock()
+
+	if len(entries) == 0 {
+		slog.Debug("notify: channel not found", "channel", channelID)
 		return
 	}
-	if err := ch.Send(ctx, msg); err != nil {
-		slog.Warn("failed to deliver notification",
-			"channel", channelID, "error", err)
+
+	for _, e := range entries {
+		if !e.ch.IsAlive() {
+			slog.Debug("notify: skipping dead channel instance", "channel", channelID, "session", e.sessionID)
+			continue
+		}
+		if err := e.ch.Send(ctx, msg); err != nil {
+			slog.Warn("failed to deliver notification",
+				"channel", channelID, "session", e.sessionID, "error", err)
+		}
 	}
 }
 
-// Heartbeat records a heartbeat from the given channel.
-// Returns error if the channel is not registered.
-// This is called by the channel (or its proxy) to signal it is still alive.
-func (m *Manager) Heartbeat(id string) error {
+// Heartbeat records a heartbeat from the given session.
+// Returns error if the session is not registered.
+func (m *Manager) Heartbeat(sessionID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, ok := m.channels[id]; !ok {
-		return fmt.Errorf("channel %q not registered", id)
+	if _, ok := m.lastHB[sessionID]; !ok {
+		return fmt.Errorf("session %q not registered", sessionID)
 	}
-	m.lastHB[id] = time.Now()
+	m.lastHB[sessionID] = time.Now()
 	return nil
 }
 
-// MarkLocal marks a channel as local (in-process). Local channels are never
+// MarkLocal marks a session as local (in-process). Local sessions are never
 // expired by the health check, since they share the process lifetime.
-func (m *Manager) MarkLocal(id string) {
+func (m *Manager) MarkLocal(sessionID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.local[id] = struct{}{}
+	m.local[sessionID] = struct{}{}
 }
 
-// StartHealthCheck begins periodic expiry of channels whose last heartbeat
+// StartHealthCheck begins periodic expiry of sessions whose last heartbeat
 // exceeds 3× the given interval. Dead channels are closed and unregistered.
 // Call StopHealthCheck to terminate. If a previous health check is running it
 // is stopped first.
@@ -130,7 +166,7 @@ func (m *Manager) StartHealthCheck(parent context.Context, interval time.Duratio
 	m.hcDone = done
 	m.mu.Unlock()
 
-	timeout := interval * 3 // channel is dead if no heartbeat for 3 intervals
+	timeout := interval * 3 // session is dead if no heartbeat for 3 intervals
 	go func() {
 		defer close(done)
 		ticker := time.NewTicker(interval)
@@ -162,24 +198,34 @@ func (m *Manager) StopHealthCheck() {
 	}
 }
 
-// expireStale removes channels whose last heartbeat exceeds the timeout.
-// Local channels are never expired.
+// expireStale removes sessions whose last heartbeat exceeds the timeout.
+// Local sessions are never expired.
 func (m *Manager) expireStale(timeout time.Duration) {
 	m.mu.Lock()
 	now := time.Now()
 	var toClose []cobot.Channel
-	for id, ch := range m.channels {
-		if _, isLocal := m.local[id]; isLocal {
-			continue
+	for channelID, entries := range m.channels {
+		var kept []channelEntry
+		for _, e := range entries {
+			if _, isLocal := m.local[e.sessionID]; isLocal {
+				kept = append(kept, e)
+				continue
+			}
+			last, ok := m.lastHB[e.sessionID]
+			if ok && now.Sub(last) <= timeout {
+				kept = append(kept, e)
+				continue
+			}
+			// expired
+			delete(m.lastHB, e.sessionID)
+			delete(m.local, e.sessionID)
+			toClose = append(toClose, e.ch)
 		}
-		last, ok := m.lastHB[id]
-		if ok && now.Sub(last) <= timeout {
-			continue
+		if len(kept) == 0 {
+			delete(m.channels, channelID)
+		} else {
+			m.channels[channelID] = kept
 		}
-		delete(m.channels, id)
-		delete(m.lastHB, id)
-		delete(m.local, id)
-		toClose = append(toClose, ch)
 	}
 	m.mu.Unlock()
 
