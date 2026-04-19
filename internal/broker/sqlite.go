@@ -3,6 +3,7 @@ package brokersqlite
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,7 +14,7 @@ import (
 )
 
 // sqliteTimeFmt matches SQLite strftime('%%Y-%%m-%%d %%H:%%M:%%f', 'now') output so text comparisons work correctly.
-const sqliteTimeFmt = "2006-01-02 15:04:05.000"
+const sqliteTimeFmt = "2006-01-02 15:04:05.000000"
 
 // SQLiteBroker implements the broker.Broker interface using SQLite WAL mode
 // for multi-process coordination.
@@ -31,6 +32,7 @@ func NewSQLiteBroker(dbPath string) (*SQLiteBroker, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open broker db: %w", err)
 	}
+	db.SetMaxOpenConns(1)
 	// WAL mode allows one writer and multiple readers concurrently.
 	// _busy_timeout makes writers wait automatically instead of erroring.
 	b := &SQLiteBroker{db: db}
@@ -79,7 +81,10 @@ CREATE TABLE IF NOT EXISTS receipts (
 );
 `
 	_, err := b.db.Exec(schema)
-	return err
+	if err != nil {
+		return fmt.Errorf("init broker schema: %w", err)
+	}
+	return nil
 }
 
 // --- Lock implementation ---
@@ -88,23 +93,20 @@ func (b *SQLiteBroker) TryAcquire(ctx context.Context, name, holder string, ttl 
 	now := time.Now().UTC()
 	expires := now.Add(ttl)
 
-	// Attempt INSERT; if a row exists and has not expired, the UPDATE is skipped.
-	_, err := b.db.ExecContext(ctx, `
+	var actual string
+	err := b.db.QueryRowContext(ctx, `
 		INSERT INTO locks (name, holder, acquired_at, expires_at)
 		VALUES (?, ?, ?, ?)
 		ON CONFLICT(name) DO UPDATE SET
 			holder = excluded.holder,
 			acquired_at = excluded.acquired_at,
 			expires_at = excluded.expires_at
-		WHERE locks.expires_at < strftime('%Y-%m-%d %H:%M:%f', 'now');
-	`, name, holder, now.Format(sqliteTimeFmt), expires.Format(sqliteTimeFmt))
-	if err != nil {
-		return false, err
+		WHERE locks.expires_at < ?
+		RETURNING holder;
+	`, name, holder, now.Format(sqliteTimeFmt), expires.Format(sqliteTimeFmt), now.Format(sqliteTimeFmt)).Scan(&actual)
+	if err == sql.ErrNoRows {
+		return false, nil
 	}
-
-	// Verify that we are the current holder.
-	var actual string
-	err = b.db.QueryRowContext(ctx, `SELECT holder FROM locks WHERE name = ?`, name).Scan(&actual)
 	if err != nil {
 		return false, err
 	}
@@ -112,11 +114,12 @@ func (b *SQLiteBroker) TryAcquire(ctx context.Context, name, holder string, ttl 
 }
 
 func (b *SQLiteBroker) Renew(ctx context.Context, name, holder string, ttl time.Duration) error {
-	expires := time.Now().UTC().Add(ttl)
+	now := time.Now().UTC()
+	expires := now.Add(ttl)
 	res, err := b.db.ExecContext(ctx, `
 		UPDATE locks SET expires_at = ?
-		WHERE name = ? AND holder = ? AND expires_at > strftime('%Y-%m-%d %H:%M:%f', 'now');
-	`, expires.Format(sqliteTimeFmt), name, holder)
+		WHERE name = ? AND holder = ? AND expires_at > ?;
+	`, expires.Format(sqliteTimeFmt), name, holder, now.Format(sqliteTimeFmt))
 	if err != nil {
 		return err
 	}
@@ -141,7 +144,6 @@ func (b *SQLiteBroker) Register(ctx context.Context, info *broker.SessionInfo) e
 		ON CONFLICT(session_id) DO UPDATE SET
 			channel_id = excluded.channel_id,
 			pid = excluded.pid,
-			started_at = excluded.started_at,
 			last_heartbeat = excluded.last_heartbeat;
 	`, info.ID, info.ChannelID, info.PID, info.StartedAt.Format(sqliteTimeFmt), time.Now().UTC().Format(sqliteTimeFmt))
 	return err
@@ -160,13 +162,15 @@ func (b *SQLiteBroker) Heartbeat(ctx context.Context, sessionID string) error {
 }
 
 func (b *SQLiteBroker) ListByChannel(ctx context.Context, channelID string) ([]*broker.SessionInfo, error) {
+	threshold := time.Now().UTC().Add(-60 * time.Second).Format(sqliteTimeFmt)
 	return b.listSessions(ctx, `SELECT session_id, channel_id, pid, started_at FROM sessions
-		WHERE channel_id = ? AND last_heartbeat > strftime('%Y-%m-%d %H:%M:%f', 'now', '-60 seconds')`, channelID)
+		WHERE channel_id = ? AND last_heartbeat > ?`, channelID, threshold)
 }
 
 func (b *SQLiteBroker) ListAll(ctx context.Context) ([]*broker.SessionInfo, error) {
+	threshold := time.Now().UTC().Add(-60 * time.Second).Format(sqliteTimeFmt)
 	return b.listSessions(ctx, `SELECT session_id, channel_id, pid, started_at FROM sessions
-		WHERE last_heartbeat > strftime('%Y-%m-%d %H:%M:%f', 'now', '-60 seconds')`)
+		WHERE last_heartbeat > ?`, threshold)
 }
 
 func (b *SQLiteBroker) listSessions(ctx context.Context, query string, args ...any) ([]*broker.SessionInfo, error) {
@@ -206,16 +210,33 @@ func (b *SQLiteBroker) Consume(ctx context.Context, topic, channelID, sessionID 
 	if limit <= 0 {
 		limit = 50
 	}
-	rows, err := b.db.QueryContext(ctx, `
-		SELECT m.id, m.topic, m.channel_id, m.payload, m.created_at
-		FROM messages m
-		WHERE m.topic = ? AND m.channel_id = ?
-		  AND m.id NOT IN (
-			  SELECT message_id FROM receipts WHERE session_id = ?
-		  )
-		ORDER BY m.id ASC
-		LIMIT ?;
-	`, topic, channelID, sessionID, limit)
+	var rows *sql.Rows
+	var err error
+	if channelID == "" {
+		rows, err = b.db.QueryContext(ctx, `
+			SELECT m.id, m.topic, m.channel_id, m.payload, m.created_at
+			FROM messages m
+			WHERE m.topic = ?
+			  AND NOT EXISTS (
+				  SELECT 1 FROM receipts r
+				  WHERE r.message_id = m.id AND r.session_id = ?
+			  )
+			ORDER BY m.id ASC
+			LIMIT ?;
+		`, topic, sessionID, limit)
+	} else {
+		rows, err = b.db.QueryContext(ctx, `
+			SELECT m.id, m.topic, m.channel_id, m.payload, m.created_at
+			FROM messages m
+			WHERE m.topic = ? AND m.channel_id = ?
+			  AND NOT EXISTS (
+				  SELECT 1 FROM receipts r
+				  WHERE r.message_id = m.id AND r.session_id = ?
+			  )
+			ORDER BY m.id ASC
+			LIMIT ?;
+		`, topic, channelID, sessionID, limit)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -253,10 +274,13 @@ func (b *SQLiteBroker) Ack(ctx context.Context, msgID, sessionID string) error {
 // Cleanup deletes expired sessions and fully delivered messages.
 // Typically called periodically by the leader process.
 func (b *SQLiteBroker) Cleanup(ctx context.Context) error {
+	threshold := time.Now().UTC().Add(-60 * time.Second).Format(sqliteTimeFmt)
+	var errs []error
+
 	// Delete sessions without heartbeat for 60 seconds.
-	_, err := b.db.ExecContext(ctx, `DELETE FROM sessions WHERE last_heartbeat < strftime('%Y-%m-%d %H:%M:%f', 'now', '-60 seconds');`)
+	_, err := b.db.ExecContext(ctx, `DELETE FROM sessions WHERE last_heartbeat < ?;`, threshold)
 	if err != nil {
-		return fmt.Errorf("cleanup sessions: %w", err)
+		errs = append(errs, fmt.Errorf("cleanup sessions: %w", err))
 	}
 
 	// Delete messages that have been acked by all active sessions for that channel.
@@ -278,7 +302,7 @@ func (b *SQLiteBroker) Cleanup(ctx context.Context) error {
 		);
 	`)
 	if err != nil {
-		return fmt.Errorf("cleanup messages: %w", err)
+		errs = append(errs, fmt.Errorf("cleanup messages: %w", err))
 	}
 
 	// Delete orphaned receipts (messages already deleted).
@@ -287,9 +311,10 @@ func (b *SQLiteBroker) Cleanup(ctx context.Context) error {
 		WHERE message_id NOT IN (SELECT id FROM messages);
 	`)
 	if err != nil {
-		return fmt.Errorf("cleanup orphaned receipts: %w", err)
+		errs = append(errs, fmt.Errorf("cleanup orphaned receipts: %w", err))
 	}
-	return nil
+
+	return errors.Join(errs...)
 }
 
 // Close closes the SQLite connection.

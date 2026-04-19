@@ -83,28 +83,7 @@ type PubSub interface {
 	Ack(ctx context.Context, msgID, sessionID string) error
 }
 
-// --- Queue: distributed task queue (reserved for future Celery/Redis integration) ---
-
-// Task defines an asynchronous task.
-type Task struct {
-	ID       string
-	Type     string // task type (routed to different handlers)
-	Queue    string // queue name
-	Payload  []byte // task body (JSON)
-	Retries  int    // number of retries already performed
-	MaxRetry int    // maximum number of retries
-}
-
-type Queue interface {
-	// Enqueue delivers a task to the queue.
-	Enqueue(ctx context.Context, task *Task) error
-
-	// Dequeue consumes one task from the specified queue.
-	Dequeue(ctx context.Context, queue string) (*Task, error)
-
-	// Complete marks the task as completed.
-	Complete(ctx context.Context, taskID string) error
-
-	// Fail marks the task as failed, triggering retry or dead-letter queue.
-	Fail(ctx context.Context, taskID string, err error) error
+// Cleanable is implemented by brokers that support periodic cleanup.
+type Cleanable interface {
+	Cleanup(ctx context.Context) error
 }

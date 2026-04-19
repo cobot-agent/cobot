@@ -248,6 +248,7 @@ func configureCronTool(a *agent.Agent, ws *workspace.Workspace, registry cobot.M
 		slog.Warn("failed to create broker", "error", err)
 		return
 	}
+	a.SetBroker(brokerDB)
 
 	// --- Create cron executor with sub-agent factory. ---
 	cronDir := ws.CronDir()
@@ -274,10 +275,9 @@ func configureCronTool(a *agent.Agent, ws *workspace.Workspace, registry cobot.M
 		}),
 	))
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx := a.Context()
 	if err := cronScheduler.Start(ctx); err != nil {
 		slog.Warn("failed to start cron scheduler", "error", err)
-		cancel()
 		_ = brokerDB.Close()
 		return
 	}
@@ -297,21 +297,16 @@ func configureCronTool(a *agent.Agent, ws *workspace.Workspace, registry cobot.M
 			defer brokerDB.Unregister(context.Background(), schedulerSessionID)
 			for {
 				select {
+				case <-ctx.Done():
+					return
 				case <-ticker.C:
-					if err := brokerDB.Register(context.Background(), &broker.SessionInfo{
-						ID:        schedulerSessionID,
-						ChannelID: "",
-						PID:       os.Getpid(),
-						StartedAt: time.Now(),
-					}); err != nil {
+					if err := brokerDB.Heartbeat(ctx, schedulerSessionID); err != nil {
 						return
 					}
 				}
 			}
 		}()
 	}
-
-	_ = cancel // keep reference for future shutdown path
 }
 
 // --- private helpers (moved from cmd/cobot/helpers.go) ---

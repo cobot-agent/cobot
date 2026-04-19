@@ -67,7 +67,9 @@ func (m *Manager) Unregister(channelID, sessionID string) {
 // Get returns a channel by ID and whether it exists and is alive.
 func (m *Manager) Get(id string) (cobot.Channel, bool) {
 	m.mu.RLock()
-	entries := m.channels[id]
+	src := m.channels[id]
+	entries := make([]channelEntry, len(src))
+	copy(entries, src)
 	m.mu.RUnlock()
 	for _, e := range entries {
 		if e.ch.IsAlive() {

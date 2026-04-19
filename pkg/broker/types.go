@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"time"
 
+	cobot "github.com/cobot-agent/cobot/pkg"
 	"github.com/google/uuid"
 )
 
@@ -18,18 +19,15 @@ type CronResultPayload struct {
 }
 
 // NewCronResultMessage builds a cron result message.
-func NewCronResultMessage(channelID string, payload *CronResultPayload) (*Message, error) {
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return nil, err
-	}
+func NewCronResultMessage(channelID string, payload *CronResultPayload) *Message {
+	data, _ := json.Marshal(payload)
 	return &Message{
 		ID:        uuid.NewString(),
-		Topic:     "cron_result",
+		Topic:     cobot.MessageTypeCronResult,
 		ChannelID: channelID,
 		Payload:   data,
 		CreatedAt: time.Now(),
-	}, nil
+	}
 }
 
 // DecodeCronResult decodes Message.Payload into a CronResultPayload.

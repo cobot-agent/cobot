@@ -32,6 +32,7 @@ type Scheduler struct {
 	broker   broker.Broker
 	holderID string
 	isLeader bool
+	cancel   context.CancelFunc
 }
 
 const maxCronJobs = 100
@@ -42,6 +43,9 @@ const leaseTTL = 30 * time.Second
 const leaseRenewInterval = 10 * time.Second
 const consumeInterval = 5 * time.Second
 const cleanupInterval = 60 * time.Second
+
+const brokerOpTimeout = 5 * time.Second
+const schedulerLeaseKey = "cron:scheduler"
 
 // NewScheduler creates a new Scheduler with the given store, executor, run store, broker and notifier.
 func NewScheduler(store *Store, executor JobExecutor, runStore *RunStore, br broker.Broker, notifier cobot.Notifier) *Scheduler {
@@ -61,12 +65,15 @@ func NewScheduler(store *Store, executor JobExecutor, runStore *RunStore, br bro
 // lease, and starts the appropriate loops. Returns an error only if loading
 // jobs from the store fails.
 func (s *Scheduler) Start(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
+	s.cancel = cancel
+
 	jobs, err := s.store.List()
 	if err != nil {
 		return fmt.Errorf("load jobs: %w", err)
 	}
 
-	acquired, err := s.broker.TryAcquire(ctx, "cron:scheduler", s.holderID, leaseTTL)
+	acquired, err := s.broker.TryAcquire(ctx, schedulerLeaseKey, s.holderID, leaseTTL)
 	if err != nil {
 		slog.Warn("failed to acquire scheduler lease", "error", err)
 	}
@@ -97,25 +104,23 @@ func (s *Scheduler) Start(ctx context.Context) error {
 
 // Stop halts the cron scheduler, releases the leader lease, and closes the run store.
 func (s *Scheduler) Stop() {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	if s.cancel != nil {
+		s.cancel()
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), brokerOpTimeout)
 	defer cancel()
 
 	if s.isLeader {
 		cronCtx := s.cron.Stop()
 		<-cronCtx.Done() // wait for in-flight jobs to finish
-		if err := s.broker.Release(ctx, "cron:scheduler", s.holderID); err != nil {
+		if err := s.broker.Release(ctx, schedulerLeaseKey, s.holderID); err != nil {
 			slog.Warn("failed to release scheduler lease", "error", err)
 		}
 	}
 
 	if s.runStore != nil {
 		s.runStore.Close()
-	}
-
-	if s.broker != nil {
-		if err := s.broker.Close(); err != nil {
-			slog.Warn("failed to close broker", "error", err)
-		}
 	}
 }
 
@@ -309,6 +314,13 @@ func (s *Scheduler) updateAndPersistJob(job *Job, now time.Time) {
 	}
 }
 
+func formatCronResult(jobName, result, runErr string) string {
+	if runErr != "" {
+		return fmt.Sprintf("❌ Job %s failed: %s", jobName, runErr)
+	}
+	return fmt.Sprintf("✅ Job %s result:\n%s", jobName, result)
+}
+
 // publishJobResult publishes the job result via the broker so followers can consume it.
 func (s *Scheduler) publishJobResult(job *Job, result string, runErr error, duration time.Duration) {
 	if s.broker == nil {
@@ -324,12 +336,8 @@ func (s *Scheduler) publishJobResult(job *Job, result string, runErr error, dura
 	if runErr != nil {
 		payload.Error = runErr.Error()
 	}
-	msg, err := broker.NewCronResultMessage(job.ChannelID, payload)
-	if err != nil {
-		slog.Warn("failed to build cron result message", "job_id", job.ID, "error", err)
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	msg := broker.NewCronResultMessage(job.ChannelID, payload)
+	ctx, cancel := context.WithTimeout(context.Background(), brokerOpTimeout)
 	defer cancel()
 	if err := s.broker.Publish(ctx, msg); err != nil {
 		slog.Warn("failed to publish cron result", "job_id", job.ID, "error", err)
@@ -341,18 +349,18 @@ func (s *Scheduler) notifyJobResult(job *Job, result string, err error) {
 	if s.notifier == nil || job.ChannelID == "" {
 		return
 	}
-	notifyCtx, notifyCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	msg := cobot.ChannelMessage{
-		Type:  cobot.MessageTypeCronResult,
-		Title: fmt.Sprintf("Cron job %q completed", job.Name),
-	}
+	var errStr string
 	if err != nil {
-		msg.Content = fmt.Sprintf("❌ Job %s failed: %v", job.Name, err)
-	} else {
-		msg.Content = fmt.Sprintf("✅ Job %s result:\n%s", job.Name, result)
+		errStr = err.Error()
+	}
+	notifyCtx, notifyCancel := context.WithTimeout(context.Background(), brokerOpTimeout)
+	defer notifyCancel()
+	msg := cobot.ChannelMessage{
+		Type:    cobot.MessageTypeCronResult,
+		Title:   fmt.Sprintf("Cron job %q completed", job.Name),
+		Content: formatCronResult(job.Name, result, errStr),
 	}
 	s.notifier.Notify(notifyCtx, job.ChannelID, msg)
-	notifyCancel()
 }
 
 // renewLeaseLoop periodically renews the leader lease.
@@ -364,8 +372,10 @@ func (s *Scheduler) renewLeaseLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := s.broker.Renew(ctx, "cron:scheduler", s.holderID, leaseTTL); err != nil {
+			if err := s.broker.Renew(ctx, schedulerLeaseKey, s.holderID, leaseTTL); err != nil {
 				slog.Warn("failed to renew scheduler lease", "error", err)
+				s.cron.Stop()
+				s.isLeader = false
 				return
 			}
 		}
@@ -374,9 +384,7 @@ func (s *Scheduler) renewLeaseLoop(ctx context.Context) {
 
 // cleanupLoop periodically runs broker cleanup (leader only).
 func (s *Scheduler) cleanupLoop(ctx context.Context) {
-	if cleanup, ok := s.broker.(interface {
-		Cleanup(ctx context.Context) error
-	}); ok {
+	if cleanup, ok := s.broker.(broker.Cleanable); ok {
 		ticker := time.NewTicker(cleanupInterval)
 		defer ticker.Stop()
 		for {
@@ -428,13 +436,8 @@ func (s *Scheduler) consumeOnce(ctx context.Context) {
 			_ = s.broker.Ack(ctx, msg.ID, s.holderID)
 			continue
 		}
-		notifyCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		var content string
-		if payload.Error != "" {
-			content = fmt.Sprintf("❌ Job %s failed: %s", payload.JobName, payload.Error)
-		} else {
-			content = fmt.Sprintf("✅ Job %s result:\n%s", payload.JobName, payload.Result)
-		}
+		notifyCtx, cancel := context.WithTimeout(ctx, brokerOpTimeout)
+		content := formatCronResult(payload.JobName, payload.Result, payload.Error)
 		s.notifier.Notify(notifyCtx, msg.ChannelID, cobot.ChannelMessage{
 			Type:    cobot.MessageTypeCronResult,
 			Title:   fmt.Sprintf("Cron job %q completed", payload.JobName),
