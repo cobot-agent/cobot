@@ -29,10 +29,11 @@ type Scheduler struct {
 	jobs     map[string]cron.EntryID // jobID -> cron entry ID
 	runStore *RunStore
 
-	broker   broker.Broker
-	holderID string
-	isLeader bool
-	cancel   context.CancelFunc
+	broker    broker.Broker
+	holderID  string // leader lease identity
+	sessionID string // broker consume session identity
+	isLeader  bool
+	cancel    context.CancelFunc
 }
 
 const maxCronJobs = 100
@@ -50,14 +51,15 @@ const schedulerLeaseKey = "cron:scheduler"
 // NewScheduler creates a new Scheduler with the given store, executor, run store, broker and notifier.
 func NewScheduler(store *Store, executor JobExecutor, runStore *RunStore, br broker.Broker, notifier cobot.Notifier) *Scheduler {
 	return &Scheduler{
-		store:    store,
-		runStore: runStore,
-		notifier: notifier,
-		cron:     cron.New(),
-		executor: executor,
-		jobs:     make(map[string]cron.EntryID),
-		broker:   br,
-		holderID: uuid.NewString(),
+		store:     store,
+		runStore:  runStore,
+		notifier:  notifier,
+		cron:      cron.New(),
+		executor:  executor,
+		jobs:      make(map[string]cron.EntryID),
+		broker:    br,
+		holderID:  uuid.NewString(),
+		sessionID: uuid.NewString(),
 	}
 }
 
@@ -278,7 +280,6 @@ func (s *Scheduler) runJob(job *Job) {
 	s.updateAndPersistJob(job, now)
 
 	s.publishJobResult(job, result, err, duration)
-	s.notifyJobResult(job, result, err)
 }
 
 // updateAndPersistJob updates job state (LastRun, RunCount, NextRun, Status)
@@ -363,7 +364,8 @@ func (s *Scheduler) notifyJobResult(job *Job, result string, err error) {
 	s.notifier.Notify(notifyCtx, job.ChannelID, msg)
 }
 
-// renewLeaseLoop periodically renews the leader lease.
+// renewLeaseLoop periodically renews the leader lease. If renewal fails, it
+// attempts to re-acquire the lease before giving up.
 func (s *Scheduler) renewLeaseLoop(ctx context.Context) {
 	ticker := time.NewTicker(leaseRenewInterval)
 	defer ticker.Stop()
@@ -373,11 +375,44 @@ func (s *Scheduler) renewLeaseLoop(ctx context.Context) {
 			return
 		case <-ticker.C:
 			if err := s.broker.Renew(ctx, schedulerLeaseKey, s.holderID, leaseTTL); err != nil {
-				slog.Warn("failed to renew scheduler lease", "error", err)
+				slog.Warn("failed to renew scheduler lease, attempting re-acquire", "error", err)
 				s.cron.Stop()
 				s.isLeader = false
-				return
+				// Try to re-acquire
+				acquired, acqErr := s.broker.TryAcquire(ctx, schedulerLeaseKey, s.holderID, leaseTTL)
+				if acqErr != nil {
+					slog.Warn("failed to re-acquire scheduler lease", "error", acqErr)
+					return // give up, stay follower
+				}
+				if acquired {
+					slog.Info("re-acquired scheduler leader lease", "holder", s.holderID)
+					s.isLeader = true
+					s.rescheduleAllJobs()
+					s.cron.Start()
+					// Also restart cleanup loop
+					go s.cleanupLoop(ctx)
+				}
+				return // if not acquired, stay follower
 			}
+		}
+	}
+}
+
+// rescheduleAllJobs re-adds all active jobs from the store to the cron scheduler.
+// This is used after leader failover to restore the schedule.
+func (s *Scheduler) rescheduleAllJobs() {
+	// Don't hold mu here - scheduleJob handles its own locking.
+	jobs, err := s.store.List()
+	if err != nil {
+		slog.Warn("failed to list jobs for re-scheduling", "error", err)
+		return
+	}
+	for _, job := range jobs {
+		if job.Status != "active" {
+			continue
+		}
+		if err := s.scheduleJob(job); err != nil {
+			slog.Warn("failed to re-schedule job", "job_id", job.ID, "error", err)
 		}
 	}
 }
@@ -419,8 +454,8 @@ func (s *Scheduler) consumeOnce(ctx context.Context) {
 	if s.broker == nil || s.notifier == nil {
 		return
 	}
-	// holderID is used as the sessionID for consumption.
-	msgs, err := s.broker.Consume(ctx, "cron_result", "", s.holderID, 50)
+	// sessionID is used as the consume session identity (separate from leader lease holderID).
+	msgs, err := s.broker.Consume(ctx, "cron_result", "", s.sessionID, 50)
 	if err != nil {
 		slog.Warn("failed to consume cron results", "error", err)
 		return
@@ -429,11 +464,11 @@ func (s *Scheduler) consumeOnce(ctx context.Context) {
 		payload, err := broker.DecodeCronResult(msg)
 		if err != nil {
 			slog.Warn("failed to decode cron result", "msg_id", msg.ID, "error", err)
-			_ = s.broker.Ack(ctx, msg.ID, s.holderID)
+			_ = s.broker.Ack(ctx, msg.ID, s.sessionID)
 			continue
 		}
 		if msg.ChannelID == "" {
-			_ = s.broker.Ack(ctx, msg.ID, s.holderID)
+			_ = s.broker.Ack(ctx, msg.ID, s.sessionID)
 			continue
 		}
 		notifyCtx, cancel := context.WithTimeout(ctx, brokerOpTimeout)
@@ -444,7 +479,7 @@ func (s *Scheduler) consumeOnce(ctx context.Context) {
 			Content: content,
 		})
 		cancel()
-		if ackErr := s.broker.Ack(ctx, msg.ID, s.holderID); ackErr != nil {
+		if ackErr := s.broker.Ack(ctx, msg.ID, s.sessionID); ackErr != nil {
 			slog.Warn("failed to ack cron result", "msg_id", msg.ID, "error", ackErr)
 		}
 	}

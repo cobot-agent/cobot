@@ -21,6 +21,11 @@ const sqliteTimeFmt = "2006-01-02 15:04:05.000000"
 // considered dead. Used by ListByChannel, ListAll and Cleanup.
 const sessionTTL = 60 * time.Second
 
+// messageTTL is the maximum age of a message before it is cleaned up,
+// regardless of ack status. This prevents unbounded growth when consumers
+// die without acking.
+const messageTTL = 7 * 24 * time.Hour
+
 // SQLiteBroker implements the broker.Broker interface using SQLite WAL mode
 // for multi-process coordination.
 // It corresponds to a single shared coord.db file (usually placed at <workspace>/cron/coord.db).
@@ -82,6 +87,7 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 
 CREATE INDEX IF NOT EXISTS idx_messages_channel ON messages(channel_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_messages_created ON messages(created_at);
 
 CREATE TABLE IF NOT EXISTS receipts (
 	message_id INTEGER NOT NULL,
@@ -160,7 +166,11 @@ func (b *SQLiteBroker) Register(ctx context.Context, info *broker.SessionInfo) e
 }
 
 func (b *SQLiteBroker) Unregister(ctx context.Context, sessionID string) error {
-	_, err := b.db.ExecContext(ctx, `DELETE FROM sessions WHERE session_id = ?`, sessionID)
+	_, err := b.db.ExecContext(ctx, `DELETE FROM receipts WHERE session_id = ?`, sessionID)
+	if err != nil {
+		return err
+	}
+	_, err = b.db.ExecContext(ctx, `DELETE FROM sessions WHERE session_id = ?`, sessionID)
 	return err
 }
 
@@ -220,33 +230,25 @@ func (b *SQLiteBroker) Consume(ctx context.Context, topic, channelID, sessionID 
 	if limit <= 0 {
 		limit = 50
 	}
-	var rows *sql.Rows
-	var err error
-	if channelID == "" {
-		rows, err = b.db.QueryContext(ctx, `
-			SELECT m.id, m.topic, m.channel_id, m.payload, m.created_at
-			FROM messages m
-			WHERE m.topic = ?
-			  AND NOT EXISTS (
-				  SELECT 1 FROM receipts r
-				  WHERE r.message_id = m.id AND r.session_id = ?
-			  )
-			ORDER BY m.id ASC
-			LIMIT ?;
-		`, topic, sessionID, limit)
-	} else {
-		rows, err = b.db.QueryContext(ctx, `
-			SELECT m.id, m.topic, m.channel_id, m.payload, m.created_at
-			FROM messages m
-			WHERE m.topic = ? AND m.channel_id = ?
-			  AND NOT EXISTS (
-				  SELECT 1 FROM receipts r
-				  WHERE r.message_id = m.id AND r.session_id = ?
-			  )
-			ORDER BY m.id ASC
-			LIMIT ?;
-		`, topic, channelID, sessionID, limit)
+	query := `
+		SELECT m.id, m.topic, m.channel_id, m.payload, m.created_at
+		FROM messages m
+		WHERE m.topic = ?`
+	args := []any{topic}
+	if channelID != "" {
+		query += ` AND m.channel_id = ?`
+		args = append(args, channelID)
 	}
+	query += `
+		  AND NOT EXISTS (
+			  SELECT 1 FROM receipts r
+			  WHERE r.message_id = m.id AND r.session_id = ?
+		  )
+		ORDER BY m.id ASC
+		LIMIT ?;`
+	args = append(args, sessionID, limit)
+
+	rows, err := b.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -303,28 +305,43 @@ func (b *SQLiteBroker) Cleanup(ctx context.Context) error {
 		errs = append(errs, fmt.Errorf("cleanup sessions: %w", err))
 	}
 
-	// Delete messages that have been acked by all active sessions for that channel.
-	// Batched to LIMIT 1000 to avoid holding write locks too long.
-	_, err = b.db.ExecContext(ctx, `
-		DELETE FROM messages
-		WHERE id IN (
-			SELECT m.id FROM messages m
-			WHERE EXISTS (
-				SELECT 1 FROM sessions s WHERE s.channel_id = m.channel_id
-			)
-			AND NOT EXISTS (
-				SELECT 1 FROM sessions s
-				WHERE s.channel_id = m.channel_id
-				  AND NOT EXISTS (
-					  SELECT 1 FROM receipts r
-					  WHERE r.message_id = m.id AND r.session_id = s.session_id
-				  )
-			)
-			LIMIT 1000
-		);
-	`)
+	// Delete messages older than messageTTL (7 days) regardless of ack status.
+	// This prevents unbounded growth when consumers die without acking.
+	messageTTLThreshold := time.Now().UTC().Add(-messageTTL).Format(sqliteTimeFmt)
+	_, err = b.db.ExecContext(ctx, `DELETE FROM messages WHERE created_at < ?;`, messageTTLThreshold)
 	if err != nil {
-		errs = append(errs, fmt.Errorf("cleanup messages: %w", err))
+		errs = append(errs, fmt.Errorf("cleanup expired messages: %w", err))
+	}
+
+	// Delete messages that have been acked by all active sessions for that channel.
+	// Batched with loop to drain large backlogs within a single cleanup run.
+	for {
+		res, err := b.db.ExecContext(ctx, `
+			DELETE FROM messages
+			WHERE id IN (
+				SELECT m.id FROM messages m
+				WHERE EXISTS (
+					SELECT 1 FROM sessions s WHERE s.channel_id = m.channel_id
+				)
+				AND NOT EXISTS (
+					SELECT 1 FROM sessions s
+					WHERE s.channel_id = m.channel_id
+					  AND NOT EXISTS (
+						  SELECT 1 FROM receipts r
+						  WHERE r.message_id = m.id AND r.session_id = s.session_id
+					  )
+				)
+				LIMIT 1000
+			);
+		`)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("cleanup messages: %w", err))
+			break
+		}
+		n, _ := res.RowsAffected()
+		if n < 1000 {
+			break
+		}
 	}
 
 	// Delete orphaned receipts (messages already deleted).
