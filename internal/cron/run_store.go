@@ -114,10 +114,12 @@ func (rs *RunStore) ListRuns(jobID string, limit int) ([]*RunRecord, error) {
 
 // DeleteJobDB removes the entire database for a job.
 // Returns nil if the database does not exist (idempotent).
+// Also removes SQLite WAL and SHM sidecar files.
 func (rs *RunStore) DeleteJobDB(jobID string) error {
-	err := os.Remove(rs.dbPath(jobID))
-	if err != nil && !os.IsNotExist(err) {
-		return err
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		if err := os.Remove(rs.dbPath(jobID) + suffix); err != nil && !os.IsNotExist(err) {
+			return err
+		}
 	}
 	return nil
 }
