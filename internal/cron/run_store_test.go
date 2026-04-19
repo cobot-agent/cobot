@@ -8,6 +8,7 @@ import (
 func TestRunStore_StoreAndList(t *testing.T) {
 	dir := t.TempDir()
 	rs := NewRunStore(dir)
+	defer rs.Close()
 	jobID := "test_job_1"
 
 	// Store 3 runs with different timestamps.
@@ -46,6 +47,7 @@ func TestRunStore_StoreAndList(t *testing.T) {
 func TestRunStore_DeleteJobDB(t *testing.T) {
 	dir := t.TempDir()
 	rs := NewRunStore(dir)
+	defer rs.Close()
 	jobID := "test_job_del"
 
 	record := &RunRecord{
@@ -86,6 +88,7 @@ func TestRunStore_DeleteJobDB(t *testing.T) {
 func TestRunStore_RunsExist(t *testing.T) {
 	dir := t.TempDir()
 	rs := NewRunStore(dir)
+	defer rs.Close()
 	jobID := "test_job_exist"
 
 	// No runs initially.
