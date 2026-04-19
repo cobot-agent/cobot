@@ -104,7 +104,7 @@ func (w *Workspace) CronRunsDir() string {
 }
 
 func (w *Workspace) BrokerDBPath() string {
-	return filepath.Join(w.CronDir(), "coord.db")
+	return filepath.Join(w.DataDir, "coord.db")
 }
 
 func (w *Workspace) ConfigPath() string {
