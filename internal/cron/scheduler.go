@@ -122,6 +122,8 @@ func (s *Scheduler) Stop() {
 }
 
 // AddJob creates a new cron entry and persists the job.
+// Only schedules the job locally if this instance is the leader;
+// followers just persist — the leader will pick it up via syncJobs.
 func (s *Scheduler) AddJob(job *Job) error {
 	jobs, err := s.store.List()
 	if err != nil {
@@ -130,8 +132,10 @@ func (s *Scheduler) AddJob(job *Job) error {
 	if len(jobs) >= maxCronJobs {
 		return fmt.Errorf("maximum number of cron jobs (%d) reached", maxCronJobs)
 	}
-	if err := s.scheduleJob(job); err != nil {
-		return err
+	if s.isLeader {
+		if err := s.scheduleJob(job); err != nil {
+			return err
+		}
 	}
 	return s.store.Create(job)
 }
@@ -169,6 +173,7 @@ func (s *Scheduler) PauseJob(id string) error {
 }
 
 // ResumeJob re-adds a paused job to cron and sets its status to active.
+// Only schedules locally if this instance is the leader.
 func (s *Scheduler) ResumeJob(id string) error {
 	job, err := s.store.Get(id)
 	if err != nil {
@@ -178,8 +183,10 @@ func (s *Scheduler) ResumeJob(id string) error {
 		return fmt.Errorf("job %s is not paused (status: %s)", id, job.Status)
 	}
 	job.Status = "active"
-	if err := s.scheduleJob(job); err != nil {
-		return err
+	if s.isLeader {
+		if err := s.scheduleJob(job); err != nil {
+			return err
+		}
 	}
 	return s.store.Update(job)
 }
@@ -194,11 +201,15 @@ func (s *Scheduler) GetJob(id string) (*Job, error) {
 	return s.store.Get(id)
 }
 
-// scheduleJob registers a job with the cron scheduler.
+// scheduleJob registers a job with the cron scheduler (acquires lock).
 func (s *Scheduler) scheduleJob(job *Job) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.scheduleJobLocked(job)
+}
 
+// scheduleJobLocked registers a job assuming mu is already held.
+func (s *Scheduler) scheduleJobLocked(job *Job) error {
 	// Remove existing entry if re-scheduling.
 	if entryID, ok := s.jobs[job.ID]; ok {
 		s.cron.Remove(entryID)
@@ -206,13 +217,13 @@ func (s *Scheduler) scheduleJob(job *Job) error {
 	}
 
 	if job.OneShot {
-		return s.scheduleOneShot(job)
+		return s.scheduleOneShotLocked(job)
 	}
-	return s.scheduleCronExpr(job)
+	return s.scheduleCronExprLocked(job)
 }
 
-// scheduleCronExpr schedules a recurring job using a cron expression.
-func (s *Scheduler) scheduleCronExpr(job *Job) error {
+// scheduleCronExprLocked schedules a recurring job using a cron expression (caller holds mu).
+func (s *Scheduler) scheduleCronExprLocked(job *Job) error {
 	schedule, err := cron.ParseStandard(job.Schedule)
 	if err != nil {
 		return fmt.Errorf("invalid cron expression %q: %w", job.Schedule, err)
@@ -232,8 +243,8 @@ func (s *Scheduler) scheduleCronExpr(job *Job) error {
 	return nil
 }
 
-// scheduleOneShot schedules a one-time job at a specific timestamp.
-func (s *Scheduler) scheduleOneShot(job *Job) error {
+// scheduleOneShotLocked schedules a one-time job at a specific timestamp (caller holds mu).
+func (s *Scheduler) scheduleOneShotLocked(job *Job) error {
 	t, err := time.Parse(time.RFC3339, job.Schedule)
 	if err != nil {
 		return fmt.Errorf("invalid timestamp %q: %w", job.Schedule, err)
@@ -370,6 +381,8 @@ func (s *Scheduler) renewLeaseLoop(ctx context.Context) {
 				}
 				return // if not acquired, stay follower
 			}
+			// Sync jobs to pick up changes made on follower instances.
+			s.syncJobs()
 		}
 	}
 }
@@ -389,6 +402,54 @@ func (s *Scheduler) rescheduleAllJobs() {
 		}
 		if err := s.scheduleJob(job); err != nil {
 			slog.Warn("failed to re-schedule job", "job_id", job.ID, "error", err)
+		}
+	}
+}
+
+// syncJobs compares store jobs with in-memory scheduled jobs and reconciles
+// differences. Called periodically by the leader to pick up jobs created or
+// modified on follower instances.
+func (s *Scheduler) syncJobs() {
+	storeJobs, err := s.store.List()
+	if err != nil {
+		slog.Warn("failed to list jobs for sync", "error", err)
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Build set of store job IDs.
+	storeIDs := make(map[string]*Job, len(storeJobs))
+	for _, j := range storeJobs {
+		storeIDs[j.ID] = j
+	}
+
+	// Remove jobs that no longer exist in store or are paused/deleted.
+	for id := range s.jobs {
+		sj, exists := storeIDs[id]
+		if !exists || sj.Status != "active" {
+			s.cron.Remove(s.jobs[id])
+			delete(s.jobs, id)
+			if !exists {
+				slog.Info("sync: removed deleted job", "job_id", id)
+			} else {
+				slog.Info("sync: unscheduled inactive job", "job_id", id, "status", sj.Status)
+			}
+		}
+	}
+
+	// Add new active jobs not yet in memory.
+	for id, sj := range storeIDs {
+		if sj.Status != "active" {
+			continue
+		}
+		if _, exists := s.jobs[id]; !exists {
+			if err := s.scheduleJobLocked(sj); err != nil {
+				slog.Warn("sync: failed to schedule job", "job_id", id, "error", err)
+				continue
+			}
+			slog.Info("sync: scheduled new job", "job_id", id, "name", sj.Name)
 		}
 	}
 }
