@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/cobot-agent/cobot/internal/agent"
+	brokersqlite "github.com/cobot-agent/cobot/internal/broker"
 	"github.com/cobot-agent/cobot/internal/channel"
 	"github.com/cobot-agent/cobot/internal/config"
 	"github.com/cobot-agent/cobot/internal/cron"
@@ -238,6 +239,13 @@ func configureCronTool(a *agent.Agent, ws *workspace.Workspace, registry cobot.M
 		a.CronScheduler().Stop()
 	}
 
+	// --- Create broker for distributed coordination. ---
+	brokerDB, err := brokersqlite.NewSQLiteBroker(ws.BrokerDBPath())
+	if err != nil {
+		slog.Warn("failed to create broker", "error", err)
+		return
+	}
+
 	// --- Create cron executor with sub-agent factory. ---
 	cronDir := ws.CronDir()
 	cronStore := cron.NewStore(cronDir)
@@ -252,7 +260,7 @@ func configureCronTool(a *agent.Agent, ws *workspace.Workspace, registry cobot.M
 
 	// --- Wire up scheduler, channel notification, and register tool. ---
 	channelMgr := a.ChannelManager()
-	cronScheduler := cron.NewScheduler(cronStore, cronExecutor, runStore, channelMgr)
+	cronScheduler := cron.NewScheduler(cronStore, cronExecutor, runStore, brokerDB, channelMgr)
 	a.RegisterTool(tools.NewCronTool(cronScheduler,
 		tools.WithCronChannelIDFn(func() string {
 			ids := channelMgr.AllAliveIDs()
@@ -263,10 +271,15 @@ func configureCronTool(a *agent.Agent, ws *workspace.Workspace, registry cobot.M
 		}),
 	))
 
-	if err := cronScheduler.Start(); err != nil {
+	ctx, cancel := context.WithCancel(context.Background())
+	if err := cronScheduler.Start(ctx); err != nil {
 		slog.Warn("failed to start cron scheduler", "error", err)
+		cancel()
+		_ = brokerDB.Close()
+		return
 	}
 	a.SetCronScheduler(cronScheduler)
+	_ = cancel // keep reference for future shutdown path
 }
 
 // --- private helpers (moved from cmd/cobot/helpers.go) ---
