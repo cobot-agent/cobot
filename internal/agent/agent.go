@@ -137,6 +137,10 @@ func (a *Agent) SetCronScheduler(s CronScheduler) {
 	a.cronScheduler = s
 }
 
+func (a *Agent) CronScheduler() CronScheduler {
+	return a.cronScheduler
+}
+
 func (a *Agent) SetChannelManager(mgr *channel.Manager) {
 	a.channelMgr = mgr
 }

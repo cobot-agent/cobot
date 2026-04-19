@@ -10,7 +10,7 @@ import (
 
 // mockChannel implements cobot.Channel for testing.
 type mockChannel struct {
-	cobot.BaseChannel
+	*cobot.BaseChannel
 	sent   []cobot.ChannelMessage
 	closed bool
 }

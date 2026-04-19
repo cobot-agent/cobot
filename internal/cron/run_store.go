@@ -80,7 +80,6 @@ func (rs *RunStore) getDB(jobID string) (*sql.DB, error) {
 func (rs *RunStore) Close() {
 	rs.dbs.Range(func(key, value any) bool {
 		value.(*sql.DB).Close()
-		rs.dbs.Delete(key)
 		return true
 	})
 }
@@ -155,20 +154,13 @@ func (rs *RunStore) DeleteJobDB(jobID string) error {
 
 // RunsExist checks if any run records exist for a job.
 func (rs *RunStore) RunsExist(jobID string) (bool, error) {
-	if err := ValidateJobID(jobID); err != nil {
-		return false, err
-	}
-	if _, err := os.Stat(rs.dbPath(jobID)); os.IsNotExist(err) {
-		return false, nil
-	}
-	db, err := sql.Open("sqlite", rs.dbPath(jobID))
-	if err != nil {
-		return false, fmt.Errorf("open run db for job %s: %w", jobID, err)
-	}
-	defer db.Close()
 	var count int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM runs`).Scan(&count); err != nil {
-		return false, err
+	err := rs.withDB(jobID, func(db *sql.DB) error {
+		return db.QueryRow(`SELECT COUNT(*) FROM runs`).Scan(&count)
+	})
+	if err != nil {
+		// Non-existent DB or unreadable → no runs.
+		return false, nil
 	}
 	return count > 0, nil
 }

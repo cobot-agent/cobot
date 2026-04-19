@@ -27,8 +27,7 @@ type Scheduler struct {
 	store    *Store
 	cron     *cron.Cron
 	executor JobExecutor
-	notifier Notifier     // optional notification handler
-	nmu      sync.RWMutex // protects notifier
+	notifier Notifier // optional notification handler
 	mu       sync.Mutex
 	jobs     map[string]cron.EntryID // jobID -> cron entry ID
 	runStore *RunStore
@@ -38,30 +37,16 @@ const maxCronJobs = 100
 
 const jobTimeout = 10 * time.Minute
 
-// NewScheduler creates a new Scheduler with the given store, executor, and run store.
-func NewScheduler(store *Store, executor JobExecutor, runStore *RunStore) *Scheduler {
+// NewScheduler creates a new Scheduler with the given store, executor, run store, and notifier.
+func NewScheduler(store *Store, executor JobExecutor, runStore *RunStore, notifier Notifier) *Scheduler {
 	return &Scheduler{
 		store:    store,
 		runStore: runStore,
+		notifier: notifier,
 		cron:     cron.New(),
 		executor: executor,
 		jobs:     make(map[string]cron.EntryID),
 	}
-}
-
-// SetNotifier sets the optional notifier for delivering job results.
-func (s *Scheduler) SetNotifier(n Notifier) {
-	s.nmu.Lock()
-	s.notifier = n
-	s.nmu.Unlock()
-}
-
-// getNotifier returns the current notifier under read lock.
-func (s *Scheduler) getNotifier() Notifier {
-	s.nmu.RLock()
-	n := s.notifier
-	s.nmu.RUnlock()
-	return n
 }
 
 // Start loads all active jobs from the store and starts the cron scheduler.
@@ -272,7 +257,7 @@ func (s *Scheduler) runJob(job *Job) {
 	}
 
 	// Notify the originating channel if a notifier is configured.
-	if n := s.getNotifier(); n != nil && job.ChannelID != "" {
+	if n := s.notifier; n != nil && job.ChannelID != "" {
 		notifyCtx, notifyCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		msg := cobot.ChannelMessage{
 			Type:  cobot.MessageTypeCronResult,

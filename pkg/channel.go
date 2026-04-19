@@ -51,8 +51,8 @@ type BaseChannel struct {
 }
 
 // NewBaseChannel creates a BaseChannel in alive state.
-func NewBaseChannel(id string) BaseChannel {
-	return BaseChannel{id: id, alive: true}
+func NewBaseChannel(id string) *BaseChannel {
+	return &BaseChannel{id: id, alive: true}
 }
 
 func (b *BaseChannel) ID() string { return b.id }

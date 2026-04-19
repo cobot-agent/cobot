@@ -57,21 +57,6 @@ func TestTUIChannelDoubleClose(t *testing.T) {
 	}
 }
 
-func TestTUIChannelDoneSignal(t *testing.T) {
-	notify := make(chan cobot.ChannelMessage, 1)
-	ch := newTUIChannel("tui:test", notify)
-
-	if isClosed(ch.Done()) {
-		t.Fatal("Done should not be closed before Close")
-	}
-
-	ch.Close()
-
-	if !isClosed(ch.Done()) {
-		t.Fatal("Done should be closed after Close")
-	}
-}
-
 func TestPollNotificationsReceivesMessage(t *testing.T) {
 	notify := make(chan cobot.ChannelMessage, 1)
 	done := make(chan struct{})

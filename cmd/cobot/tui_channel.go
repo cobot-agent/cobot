@@ -19,7 +19,7 @@ type notificationShutdownMsg struct{}
 
 // tuiChannel implements cobot.Channel for the TUI.
 type tuiChannel struct {
-	cobot.BaseChannel
+	*cobot.BaseChannel
 	notify chan<- cobot.ChannelMessage
 	done   chan struct{} // closed in Close to unblock pollNotifications
 }

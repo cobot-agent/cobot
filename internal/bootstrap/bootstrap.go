@@ -238,6 +238,11 @@ func configureDelegateTool(a *agent.Agent, ws *workspace.Workspace, registry cob
 }
 
 func configureCronTool(a *agent.Agent, ws *workspace.Workspace, registry cobot.ModelResolver) {
+	// Stop previous scheduler if switching workspaces.
+	if a.CronScheduler() != nil {
+		a.CronScheduler().Stop()
+	}
+
 	cronDir := ws.CronDir()
 	cronStore := cron.NewStore(cronDir)
 	runStore := cron.NewRunStore(ws.CronRunsDir())
@@ -248,24 +253,19 @@ func configureCronTool(a *agent.Agent, ws *workspace.Workspace, registry cobot.M
 		return &cronAgentRunner{agent: sub}
 	})
 	cronExecutor.WithRunStore(runStore)
-	cronScheduler := cron.NewScheduler(cronStore, cronExecutor, runStore)
 
 	// Wire up channel notification
 	channelMgr := a.ChannelManager()
-	if channelMgr != nil {
-		cronScheduler.SetNotifier(channelMgr)
-		a.RegisterTool(tools.NewCronTool(cronScheduler,
-			tools.WithCronChannelIDFn(func() string {
-				ids := channelMgr.AllAliveIDs()
-				if len(ids) > 0 {
-					return ids[0]
-				}
-				return ""
-			}),
-		))
-	} else {
-		a.RegisterTool(tools.NewCronTool(cronScheduler))
-	}
+	cronScheduler := cron.NewScheduler(cronStore, cronExecutor, runStore, channelMgr)
+	a.RegisterTool(tools.NewCronTool(cronScheduler,
+		tools.WithCronChannelIDFn(func() string {
+			ids := channelMgr.AllAliveIDs()
+			if len(ids) > 0 {
+				return ids[0]
+			}
+			return ""
+		}),
+	))
 
 	if err := cronScheduler.Start(); err != nil {
 		slog.Warn("failed to start cron scheduler", "error", err)
