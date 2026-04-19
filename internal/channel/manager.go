@@ -62,14 +62,12 @@ func (m *Manager) AllAliveIDs() []string {
 
 // CronNotifier implements cron.Notifier using the ChannelManager.
 type CronNotifier struct {
-	manager        *Manager
-	sessionChecker func(sessionID string) bool
+	manager *Manager
 }
 
-func NewCronNotifier(mgr *Manager, sessionChecker func(string) bool) *CronNotifier {
+func NewCronNotifier(mgr *Manager) *CronNotifier {
 	return &CronNotifier{
-		manager:        mgr,
-		sessionChecker: sessionChecker,
+		manager: mgr,
 	}
 }
 
@@ -88,10 +86,6 @@ func (n *CronNotifier) Notify(ctx context.Context, job *cron.Job, result string,
 		msg.Content = fmt.Sprintf("❌ Job %s failed: %v", job.Name, execErr)
 	} else {
 		msg.Content = fmt.Sprintf("✅ Job %s result:\n%s", job.Name, result)
-	}
-
-	if n.sessionChecker != nil && n.sessionChecker(job.SessionID) {
-		msg.Type = "cron_result_session"
 	}
 
 	if err := ch.Send(ctx, msg); err != nil {

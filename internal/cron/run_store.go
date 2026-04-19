@@ -63,6 +63,9 @@ func (rs *RunStore) ensureSchema(db *sql.DB) error {
 }
 
 func (rs *RunStore) withDB(jobID string, fn func(*sql.DB) error) error {
+	if err := ValidateJobID(jobID); err != nil {
+		return err
+	}
 	db, err := rs.openDB(jobID)
 	if err != nil {
 		return err
@@ -116,6 +119,9 @@ func (rs *RunStore) ListRuns(jobID string, limit int) ([]*RunRecord, error) {
 // Returns nil if the database does not exist (idempotent).
 // Also removes SQLite WAL and SHM sidecar files.
 func (rs *RunStore) DeleteJobDB(jobID string) error {
+	if err := ValidateJobID(jobID); err != nil {
+		return err
+	}
 	for _, suffix := range []string{"", "-wal", "-shm"} {
 		if err := os.Remove(rs.dbPath(jobID) + suffix); err != nil && !os.IsNotExist(err) {
 			return err

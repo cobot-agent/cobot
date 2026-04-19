@@ -16,17 +16,11 @@ type AgentRunner interface {
 	Close() error
 }
 
-// STMStoreFunc stores content to a session's short-term memory.
-// Matches cobot.ShortTermMemory.StoreShortTerm signature.
-type STMStoreFunc func(ctx context.Context, sessionID, content, category string) (string, error)
-
 // AgentExecutor executes cron jobs by running a sub-agent session.
-// Results are stored in the per-job SQLite RunStore and optionally in
-// the originating session's STM for immediate context.
+// Results are stored in the per-job SQLite RunStore.
 type AgentExecutor struct {
 	NewAgent func() AgentRunner
 	RunStore *RunStore
-	STMStore STMStoreFunc
 }
 
 // NewAgentExecutor creates an executor with the given agent factory.
@@ -37,13 +31,6 @@ func NewAgentExecutor(factory func() AgentRunner) *AgentExecutor {
 // WithRunStore sets the run store for persisting execution records.
 func (e *AgentExecutor) WithRunStore(store *RunStore) *AgentExecutor {
 	e.RunStore = store
-	return e
-}
-
-// WithSTMStore sets the STM store callback for recording results in the
-// originating session's short-term memory.
-func (e *AgentExecutor) WithSTMStore(store STMStoreFunc) *AgentExecutor {
-	e.STMStore = store
 	return e
 }
 
@@ -78,21 +65,6 @@ func (e *AgentExecutor) ExecuteJob(ctx context.Context, job *Job) (string, error
 		if storeErr := e.RunStore.StoreRun(runRecord); storeErr != nil {
 			slog.Warn("failed to store cron run record",
 				"job_id", job.ID, "error", storeErr)
-		}
-	}
-
-	// Store result in the originating session's STM so the next turn
-	// in that session can see the cron result via getSTMContext.
-	if e.STMStore != nil && job.SessionID != "" {
-		stmContent := fmt.Sprintf("Cron job %q (id=%s) result: %s",
-			job.Name, job.ID, result)
-		if err != nil {
-			stmContent = fmt.Sprintf("Cron job %q (id=%s) failed: %v",
-				job.Name, job.ID, err)
-		}
-		if _, stmErr := e.STMStore(ctx, job.SessionID, stmContent, "observation"); stmErr != nil {
-			slog.Warn("failed to store cron result in STM",
-				"job_id", job.ID, "session_id", job.SessionID, "error", stmErr)
 		}
 	}
 

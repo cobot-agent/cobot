@@ -128,7 +128,7 @@ func ConfigureAgentForWorkspace(a *agent.Agent, ws *workspace.Workspace, registr
 	sandbox := configureSandboxTools(a, ws, agentCfg)
 	configureMemoryTools(a, store, sandbox)
 	configureDelegateTool(a, ws, registry, sandbox)
-	configureCronTool(a, ws, store, registry)
+	configureCronTool(a, ws, registry)
 
 	return nil
 }
@@ -224,7 +224,7 @@ func configureDelegateTool(a *agent.Agent, ws *workspace.Workspace, registry cob
 	}, tools.WithDelegateWorkdir(ws.SpaceDir()), tools.WithDelegateAgentLookup(ws), tools.WithDelegateSandbox(sandbox)))
 }
 
-func configureCronTool(a *agent.Agent, ws *workspace.Workspace, store *memory.Store, registry cobot.ModelResolver) {
+func configureCronTool(a *agent.Agent, ws *workspace.Workspace, registry cobot.ModelResolver) {
 	cronDir := ws.CronDir()
 	cronStore := cron.NewStore(cronDir)
 	runStore := cron.NewRunStore(ws.CronRunsDir())
@@ -235,20 +235,12 @@ func configureCronTool(a *agent.Agent, ws *workspace.Workspace, store *memory.St
 		return &cronAgentRunner{agent: sub}
 	})
 	cronExecutor.WithRunStore(runStore)
-	if store != nil {
-		cronExecutor.WithSTMStore(func(ctx context.Context, sessionID, content, category string) (string, error) {
-			return store.StoreShortTerm(ctx, sessionID, content, category)
-		})
-	}
 	cronScheduler := cron.NewScheduler(cronStore, cronExecutor, runStore)
 
 	// Wire up channel notification
 	channelMgr := a.ChannelManager()
 	if channelMgr != nil {
-		sessionID := a.SessionMgr().SessionID()
-		cronNotifier := channel.NewCronNotifier(channelMgr, func(sid string) bool {
-			return sid == sessionID
-		})
+		cronNotifier := channel.NewCronNotifier(channelMgr)
 		cronScheduler.SetNotifier(cronNotifier)
 		a.RegisterTool(tools.NewCronTool(cronScheduler,
 			tools.WithCronChannelIDFn(func() string {
@@ -258,7 +250,6 @@ func configureCronTool(a *agent.Agent, ws *workspace.Workspace, store *memory.St
 				}
 				return ""
 			}),
-			tools.WithCronSessionID(sessionID),
 		))
 	} else {
 		a.RegisterTool(tools.NewCronTool(cronScheduler))

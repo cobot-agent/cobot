@@ -4,10 +4,25 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"time"
 
 	"gopkg.in/yaml.v3"
 )
+
+var validJobID = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+
+// ValidateJobID returns an error if the ID contains characters that could
+// cause path traversal or is empty.
+func ValidateJobID(id string) error {
+	if id == "" {
+		return fmt.Errorf("job id is empty")
+	}
+	if !validJobID.MatchString(id) {
+		return fmt.Errorf("job id %q contains invalid characters (only alphanumeric, underscore, hyphen allowed)", id)
+	}
+	return nil
+}
 
 // Job represents a scheduled or one-shot cron job.
 type Job struct {
@@ -25,7 +40,6 @@ type Job struct {
 
 	// Notification target
 	ChannelID string `yaml:"channel_id,omitempty"`
-	SessionID string `yaml:"session_id,omitempty"`
 }
 
 // Store manages Job persistence as individual YAML files.
@@ -59,6 +73,9 @@ func (s *Store) Create(job *Job) error {
 
 // Get reads a single job by ID.
 func (s *Store) Get(id string) (*Job, error) {
+	if err := ValidateJobID(id); err != nil {
+		return nil, err
+	}
 	data, err := os.ReadFile(s.jobPath(id))
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -99,6 +116,9 @@ func (s *Store) List() ([]*Job, error) {
 
 // Update rewrites an existing job file.
 func (s *Store) Update(job *Job) error {
+	if err := ValidateJobID(job.ID); err != nil {
+		return err
+	}
 	data, err := yaml.Marshal(job)
 	if err != nil {
 		return fmt.Errorf("marshal job: %w", err)
@@ -111,6 +131,9 @@ func (s *Store) Update(job *Job) error {
 
 // Delete removes a job file from disk.
 func (s *Store) Delete(id string) error {
+	if err := ValidateJobID(id); err != nil {
+		return err
+	}
 	if err := os.Remove(s.jobPath(id)); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("delete job file: %w", err)
 	}

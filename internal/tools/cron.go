@@ -22,7 +22,6 @@ var _ cobot.Tool = (*CronTool)(nil)
 type CronTool struct {
 	scheduler   *cron.Scheduler
 	channelIDFn func() string // returns the channel ID of the current context
-	sessionID   string
 }
 
 // CronToolOption is a functional option for CronTool.
@@ -32,11 +31,6 @@ type CronToolOption func(*CronTool)
 // Cron job results are sent back to the originating channel.
 func WithCronChannelIDFn(fn func() string) CronToolOption {
 	return func(t *CronTool) { t.channelIDFn = fn }
-}
-
-// WithCronSessionID sets the session ID for cron job notifications.
-func WithCronSessionID(id string) CronToolOption {
-	return func(t *CronTool) { t.sessionID = id }
 }
 
 // NewCronTool creates a new CronTool with the given scheduler.
@@ -136,7 +130,6 @@ func (t *CronTool) handleCreate(ctx context.Context, params cronParams) (string,
 		OneShot:   oneShot,
 		CreatedAt: time.Now(),
 		ChannelID: t.currentChannelID(),
-		SessionID: t.sessionID,
 	}
 
 	if err := t.scheduler.AddJob(job); err != nil {
