@@ -103,6 +103,10 @@ func (w *Workspace) CronRunsDir() string {
 	return filepath.Join(w.CronDir(), "result")
 }
 
+func (w *Workspace) BrokerDBPath() string {
+	return filepath.Join(w.CronDir(), "coord.db")
+}
+
 func (w *Workspace) ConfigPath() string {
 	return filepath.Join(w.DataDir, "workspace.yaml")
 }
