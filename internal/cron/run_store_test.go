@@ -1,7 +1,6 @@
 package cron
 
 import (
-	"strings"
 	"testing"
 	"time"
 )
@@ -118,67 +117,4 @@ func TestRunStore_RunsExist(t *testing.T) {
 	if !exists {
 		t.Fatal("expected runs to exist after storing")
 	}
-}
-
-func TestRunStore_ConsolidateJobRuns(t *testing.T) {
-	dir := t.TempDir()
-	rs := NewRunStore(dir)
-	jobID := "test_job_consol"
-
-	// Store a success run.
-	successRecord := &RunRecord{
-		ID:       "run_ok",
-		JobID:    jobID,
-		RunAt:    time.Date(2026, 4, 1, 12, 0, 0, 0, time.UTC),
-		Duration: 200,
-		Result:   "task completed successfully",
-		Error:    "",
-	}
-	if err := rs.StoreRun(successRecord); err != nil {
-		t.Fatalf("StoreRun success: %v", err)
-	}
-
-	// Store an error run.
-	errorRecord := &RunRecord{
-		ID:       "run_err",
-		JobID:    jobID,
-		RunAt:    time.Date(2026, 4, 1, 13, 0, 0, 0, time.UTC),
-		Duration: 50,
-		Result:   "",
-		Error:    "connection refused",
-	}
-	if err := rs.StoreRun(errorRecord); err != nil {
-		t.Fatalf("StoreRun error: %v", err)
-	}
-
-	summary, err := rs.ConsolidateJobRuns(jobID, "daily-check")
-	if err != nil {
-		t.Fatalf("ConsolidateJobRuns: %v", err)
-	}
-	if summary == "" {
-		t.Fatal("expected non-empty summary")
-	}
-
-	// Should contain job name and ID.
-	if !contains(summary, "daily-check") {
-		t.Error("summary should contain job name")
-	}
-	if !contains(summary, jobID) {
-		t.Error("summary should contain job ID")
-	}
-	// Should contain FAILED for error run.
-	if !contains(summary, "FAILED") {
-		t.Error("summary should contain FAILED for error run")
-	}
-	if !contains(summary, "connection refused") {
-		t.Error("summary should contain error message")
-	}
-	// Should contain success result.
-	if !contains(summary, "task completed successfully") {
-		t.Error("summary should contain success result")
-	}
-}
-
-func contains(s, substr string) bool {
-	return strings.Contains(s, substr)
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
 	"sync"
 	"time"
 
@@ -66,6 +67,7 @@ func (m *Manager) AllAliveIDs() []string {
 			ids = append(ids, ch.ID())
 		}
 	}
+	sort.Strings(ids)
 	return ids
 }
 
@@ -153,31 +155,29 @@ func (m *Manager) StopHealthCheck() {
 // Local channels are never expired.
 func (m *Manager) expireStale(timeout time.Duration) {
 	m.mu.RLock()
-	ids := make([]string, 0, len(m.channels))
+	now := time.Now()
+	var stale []string
 	for id := range m.channels {
-		ids = append(ids, id)
+		if _, isLocal := m.local[id]; isLocal {
+			continue
+		}
+		last, ok := m.lastHB[id]
+		if !ok || now.Sub(last) > timeout {
+			stale = append(stale, id)
+		}
 	}
 	m.mu.RUnlock()
 
-	now := time.Now()
-	for _, id := range ids {
+	for _, id := range stale {
 		m.mu.RLock()
-		_, isLocal := m.local[id]
-		last, ok := m.lastHB[id]
+		ch, ok := m.channels[id]
+		last := m.lastHB[id] // capture while locked
 		m.mu.RUnlock()
-		if !ok || isLocal {
-			continue
-		}
-		if now.Sub(last) > timeout {
-			m.mu.RLock()
-			ch, ok := m.channels[id]
-			m.mu.RUnlock()
-			if ok {
-				slog.Warn("channel heartbeat timeout, removing",
-					"channel", id, "last_heartbeat", last.Format(time.RFC3339))
-				ch.Close()
-				m.Unregister(id)
-			}
+		if ok {
+			slog.Warn("channel heartbeat timeout, removing",
+				"channel", id, "last_heartbeat", last.Format(time.RFC3339))
+			ch.Close()
+			m.Unregister(id)
 		}
 	}
 }

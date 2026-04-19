@@ -24,7 +24,7 @@ func (m *mockChannel) Send(_ context.Context, msg cobot.ChannelMessage) error {
 }
 
 func (m *mockChannel) Close() {
-	if m.BaseChannel.Close() {
+	if m.BaseChannel.TryClose() {
 		m.closed = true
 	}
 }

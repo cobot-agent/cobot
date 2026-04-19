@@ -380,11 +380,17 @@ var tuiCmd = &cobra.Command{
 		// Set up TUI channel for cron notifications
 		notifyCh := make(chan cobot.ChannelMessage, 16)
 		tuiChannelID := "tui:default"
+		tuiCount := 0
 		for _, ch := range cfg.Channels {
 			if ch.Type == "tui" {
-				tuiChannelID = ch.Name
-				break
+				tuiCount++
+				if tuiCount == 1 {
+					tuiChannelID = ch.Name
+				}
 			}
+		}
+		if tuiCount > 1 {
+			slog.Warn("multiple TUI channels configured, using first", "name", tuiChannelID)
 		}
 		tuiCh := newTUIChannel(tuiChannelID, notifyCh)
 		if res.ChannelMgr != nil {

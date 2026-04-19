@@ -53,7 +53,7 @@ func (ch *tuiChannel) Send(ctx context.Context, msg cobot.ChannelMessage) error 
 }
 
 func (ch *tuiChannel) Close() {
-	if ch.BaseChannel.Close() {
+	if ch.BaseChannel.TryClose() {
 		ch.WithLock(func() {
 			close(ch.done)
 			ch.notify = nil

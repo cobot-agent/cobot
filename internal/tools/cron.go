@@ -45,6 +45,8 @@ func NewCronTool(scheduler *cron.Scheduler, opts ...CronToolOption) *CronTool {
 func (t *CronTool) Name() string { return "cron" }
 
 // currentChannelID returns the channel ID from the injected function, or empty string.
+// NOTE: Currently returns the first alive channel. Future work should pass channelID
+// through the tool execution context for proper multi-channel routing.
 func (t *CronTool) currentChannelID() string {
 	if t.channelIDFn != nil {
 		return t.channelIDFn()

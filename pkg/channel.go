@@ -63,10 +63,16 @@ func (b *BaseChannel) IsAlive() bool {
 	return b.alive
 }
 
-// Close marks the channel as dead. Returns true if this is the first close
-// (i.e. the channel was alive). Callers use this to decide whether to
-// perform one-time cleanup of their own resources.
-func (b *BaseChannel) Close() bool {
+// TryClose marks the channel as dead. Returns true if this was the first close
+// (i.e. the channel was alive). Embedding structs may call TryClose from their
+// own Close() implementation to decide whether to perform one-time cleanup:
+//
+//	func (ch *myChannel) Close() {
+//	    if ch.BaseChannel.TryClose() {
+//	        close(ch.done)
+//	    }
+//	}
+func (b *BaseChannel) TryClose() bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if !b.alive {
@@ -74,6 +80,11 @@ func (b *BaseChannel) Close() bool {
 	}
 	b.alive = false
 	return true
+}
+
+// Close satisfies the Channel interface. It marks the channel as dead.
+func (b *BaseChannel) Close() {
+	b.TryClose()
 }
 
 // CheckAlive returns context.Canceled if the channel is dead, nil otherwise.

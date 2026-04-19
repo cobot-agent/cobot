@@ -240,8 +240,9 @@ func (s *Scheduler) runJob(job *Job) {
 	job.LastRun = &now
 	job.RunCount++
 
-	// Update next-run for recurring jobs; finalize one-shot jobs.
+	// Snapshot existence under lock, update next-run or finalize one-shot.
 	s.mu.Lock()
+	_, stillScheduled := s.jobs[job.ID]
 	if !job.OneShot {
 		if entryID, ok := s.jobs[job.ID]; ok {
 			if next := s.cron.Entry(entryID).Next; !next.IsZero() {
@@ -257,15 +258,14 @@ func (s *Scheduler) runJob(job *Job) {
 	}
 	s.mu.Unlock()
 
-	// Skip update if the job was removed while running.
-	if _, getErr := s.store.Get(job.ID); getErr != nil {
+	// Persist update outside lock. Skip if job was removed mid-execution.
+	if !stillScheduled {
 		slog.Debug("skipping update for removed job", "job_id", job.ID)
-		return
-	}
-
-	if updateErr := s.store.Update(job); updateErr != nil {
-		slog.Warn("failed to update job after run",
-			"job_id", job.ID, "error", updateErr)
+	} else {
+		if updateErr := s.store.Update(job); updateErr != nil {
+			slog.Warn("failed to update job after run",
+				"job_id", job.ID, "error", updateErr)
+		}
 	}
 
 	// Notify the originating channel if a notifier is configured.
