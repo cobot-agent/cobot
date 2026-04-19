@@ -2,11 +2,9 @@ package channel
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"sync"
 
-	"github.com/cobot-agent/cobot/internal/cron"
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
@@ -60,36 +58,14 @@ func (m *Manager) AllAliveIDs() []string {
 	return ids
 }
 
-// CronNotifier implements cron.Notifier using the ChannelManager.
-type CronNotifier struct {
-	manager *Manager
-}
-
-func NewCronNotifier(mgr *Manager) *CronNotifier {
-	return &CronNotifier{
-		manager: mgr,
-	}
-}
-
-func (n *CronNotifier) Notify(ctx context.Context, job *cron.Job, result string, execErr error) {
-	ch, alive := n.manager.Get(job.ChannelID)
+// Notify delivers a message to the specified channel (implements cobot.Notifier).
+func (m *Manager) Notify(ctx context.Context, channelID string, msg cobot.ChannelMessage) {
+	ch, alive := m.Get(channelID)
 	if !alive {
 		return
 	}
-
-	msg := cobot.ChannelMessage{
-		Type:  "cron_result",
-		Title: fmt.Sprintf("Cron job %q completed", job.Name),
-	}
-
-	if execErr != nil {
-		msg.Content = fmt.Sprintf("❌ Job %s failed: %v", job.Name, execErr)
-	} else {
-		msg.Content = fmt.Sprintf("✅ Job %s result:\n%s", job.Name, result)
-	}
-
 	if err := ch.Send(ctx, msg); err != nil {
-		slog.Warn("failed to deliver cron notification",
-			"channel", job.ChannelID, "job_id", job.ID, "error", err)
+		slog.Warn("failed to deliver notification",
+			"channel", channelID, "error", err)
 	}
 }

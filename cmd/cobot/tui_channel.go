@@ -8,9 +8,9 @@ import (
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
-// notificationMsg is a BubbleTea message carrying a cron notification.
+// notificationMsg is a BubbleTea message carrying a channel notification.
 type notificationMsg struct {
-	content string
+	msg cobot.ChannelMessage
 }
 
 // notificationShutdownMsg is sent when the notification channel is closed,
@@ -78,7 +78,7 @@ func pollNotifications(notify <-chan cobot.ChannelMessage, done <-chan struct{})
 			if !ok {
 				return notificationShutdownMsg{}
 			}
-			return notificationMsg{content: msg.Content}
+			return notificationMsg{msg: msg}
 		case <-done:
 			return notificationShutdownMsg{}
 		}

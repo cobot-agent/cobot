@@ -5,11 +5,23 @@ import (
 	"sync"
 )
 
+// MessageType constants for ChannelMessage.Type.
+const (
+	MessageTypeCronResult = "cron_result"
+	MessageTypeInfo       = "info"
+	MessageTypeWarning    = "warning"
+)
+
 // ChannelMessage represents a notification to be delivered to a Channel.
 type ChannelMessage struct {
-	Type    string // "cron_result", "info", "warning"
+	Type    string // e.g. MessageTypeCronResult, MessageTypeInfo, MessageTypeWarning
 	Title   string // short summary
 	Content string // full content
+}
+
+// Notifier delivers ChannelMessages to a target channel by ID.
+type Notifier interface {
+	Notify(ctx context.Context, channelID string, msg ChannelMessage)
 }
 
 // Channel is an abstract communication endpoint that can receive notifications.

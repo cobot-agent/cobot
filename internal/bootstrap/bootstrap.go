@@ -240,8 +240,7 @@ func configureCronTool(a *agent.Agent, ws *workspace.Workspace, registry cobot.M
 	// Wire up channel notification
 	channelMgr := a.ChannelManager()
 	if channelMgr != nil {
-		cronNotifier := channel.NewCronNotifier(channelMgr)
-		cronScheduler.SetNotifier(cronNotifier)
+		cronScheduler.SetNotifier(channelMgr)
 		a.RegisterTool(tools.NewCronTool(cronScheduler,
 			tools.WithCronChannelIDFn(func() string {
 				ids := channelMgr.AllAliveIDs()

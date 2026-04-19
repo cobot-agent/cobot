@@ -85,8 +85,8 @@ func TestPollNotificationsReceivesMessage(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected notificationMsg, got %T", msg)
 	}
-	if nm.content != "test-msg" {
-		t.Fatalf("expected content 'test-msg', got %q", nm.content)
+	if nm.msg.Content != "test-msg" {
+		t.Fatalf("expected content 'test-msg', got %q", nm.msg.Content)
 	}
 }
 

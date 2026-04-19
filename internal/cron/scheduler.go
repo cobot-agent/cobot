@@ -11,6 +11,7 @@ import (
 	"github.com/robfig/cron/v3"
 
 	"github.com/cobot-agent/cobot/internal/textutil"
+	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
 // JobExecutor is the interface for executing a cron job's prompt.
@@ -18,10 +19,8 @@ type JobExecutor interface {
 	ExecuteJob(ctx context.Context, job *Job) (string, error)
 }
 
-// Notifier delivers cron job results to the originating channel.
-type Notifier interface {
-	Notify(ctx context.Context, job *Job, result string, err error)
-}
+// Notifier delivers messages to channels (generic, not cron-specific).
+type Notifier = cobot.Notifier
 
 // Scheduler manages cron job lifecycle using robfig/cron.
 type Scheduler struct {
@@ -272,7 +271,16 @@ func (s *Scheduler) runJob(job *Job) {
 	// Notify the originating channel if a notifier is configured.
 	if n := s.getNotifier(); n != nil && job.ChannelID != "" {
 		notifyCtx, notifyCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		n.Notify(notifyCtx, job, result, err)
+		msg := cobot.ChannelMessage{
+			Type:  cobot.MessageTypeCronResult,
+			Title: fmt.Sprintf("Cron job %q completed", job.Name),
+		}
+		if err != nil {
+			msg.Content = fmt.Sprintf("❌ Job %s failed: %v", job.Name, err)
+		} else {
+			msg.Content = fmt.Sprintf("✅ Job %s result:\n%s", job.Name, result)
+		}
+		n.Notify(notifyCtx, job.ChannelID, msg)
 		notifyCancel()
 	}
 }

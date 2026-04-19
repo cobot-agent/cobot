@@ -257,7 +257,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case notificationMsg:
 		m.messages = append(m.messages, chatMessage{
 			role: "system",
-			raw:  msg.content,
+			raw:  msg.msg.Content,
 		})
 		m.refreshViewport()
 		return m, pollNotifications(m.notificationCh, m.tuiChDone)
