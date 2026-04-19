@@ -2,7 +2,6 @@ package broker
 
 import (
 	"context"
-	"io"
 	"time"
 )
 
@@ -11,29 +10,27 @@ import (
 // Consumers: cron scheduler (leader lease, notifications), channel manager (session registry, cross-process notifications).
 // Future extensions: distributed task queue (Celery-style worker slices).
 type Broker interface {
-	Lock
-	SessionRegistry
-	PubSub
-	io.Closer
-}
-
-// --- Lock: distributed lock / leader lease ---
-
-type Lock interface {
-	// TryAcquire attempts to acquire a distributed lock named name.
-	// holder: unique identifier of the holder
-	// ttl: lock lifetime, automatically released after timeout
-	// Returns true if successfully acquired.
+	// --- Lock (leader election) ---
 	TryAcquire(ctx context.Context, name, holder string, ttl time.Duration) (bool, error)
-
-	// Renew extends the lease of an already held lock.
 	Renew(ctx context.Context, name, holder string, ttl time.Duration) error
-
-	// Release actively releases the lock.
 	Release(ctx context.Context, name, holder string) error
-}
 
-// --- SessionRegistry: online instance/session tracking ---
+	// --- Session Registry (process liveness) ---
+	Register(ctx context.Context, info *SessionInfo) error
+	Unregister(ctx context.Context, sessionID string) error
+	Heartbeat(ctx context.Context, sessionID string) error
+	ListByChannel(ctx context.Context, channelID string) ([]*SessionInfo, error)
+	ListAll(ctx context.Context) ([]*SessionInfo, error)
+
+	// --- PubSub (message delivery) ---
+	Publish(ctx context.Context, msg *Message) error
+	Consume(ctx context.Context, topic, channelID, sessionID string, limit int) ([]*Message, error)
+	Ack(ctx context.Context, msgID, sessionID string) error
+
+	// --- Lifecycle ---
+	Cleanup(ctx context.Context) error
+	Close() error
+}
 
 // SessionInfo describes an active cobot instance/session.
 type SessionInfo struct {
@@ -43,25 +40,6 @@ type SessionInfo struct {
 	StartedAt time.Time
 }
 
-type SessionRegistry interface {
-	// Register registers the current instance.
-	Register(ctx context.Context, info *SessionInfo) error
-
-	// Unregister removes the instance.
-	Unregister(ctx context.Context, sessionID string) error
-
-	// Heartbeat refreshes the instance heartbeat.
-	Heartbeat(ctx context.Context, sessionID string) error
-
-	// ListByChannel returns all active instances bound to the specified channelID.
-	ListByChannel(ctx context.Context, channelID string) ([]*SessionInfo, error)
-
-	// ListAll returns all active instances.
-	ListAll(ctx context.Context) ([]*SessionInfo, error)
-}
-
-// --- PubSub: cross-process message publishing/subscribing ---
-
 // Message is a message for cross-process delivery.
 type Message struct {
 	ID        string // unique message identifier
@@ -69,21 +47,4 @@ type Message struct {
 	ChannelID string // target channel (for routing)
 	Payload   []byte // message body (JSON)
 	CreatedAt time.Time
-}
-
-type PubSub interface {
-	// Publish publishes a message.
-	Publish(ctx context.Context, msg *Message) error
-
-	// Consume consumes unacknowledged messages for the specified session.
-	// Returns a list of unacknowledged messages. The caller should call Ack to confirm processing.
-	Consume(ctx context.Context, topic, channelID, sessionID string, limit int) ([]*Message, error)
-
-	// Ack confirms that the message has been processed by the specified session.
-	Ack(ctx context.Context, msgID, sessionID string) error
-}
-
-// Cleanable is implemented by brokers that support periodic cleanup.
-type Cleanable interface {
-	Cleanup(ctx context.Context) error
 }

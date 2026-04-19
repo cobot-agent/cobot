@@ -14,20 +14,15 @@ import (
 	"github.com/cobot-agent/cobot/pkg/broker"
 )
 
-// JobExecutor is the interface for executing a cron job's prompt.
-type JobExecutor interface {
-	ExecuteJob(ctx context.Context, job *Job) (string, error)
-}
-
 // Scheduler manages cron job lifecycle using robfig/cron.
 type Scheduler struct {
-	store    *Store
-	cron     *cron.Cron
-	executor JobExecutor
-	notifier cobot.Notifier // optional notification handler
-	mu       sync.Mutex
-	jobs     map[string]cron.EntryID // jobID -> cron entry ID
-	runStore *RunStore
+	store     *Store
+	cron      *cron.Cron
+	executeFn func(ctx context.Context, jobID, prompt, model string) (string, error)
+	notifier  cobot.Notifier // optional notification handler
+	mu        sync.Mutex
+	jobs      map[string]cron.EntryID // jobID -> cron entry ID
+	runStore  *RunStore
 
 	broker    broker.Broker
 	holderID  string // leader lease identity
@@ -48,14 +43,14 @@ const cleanupInterval = 60 * time.Second
 const brokerOpTimeout = 5 * time.Second
 const schedulerLeaseKey = "cron:scheduler"
 
-// NewScheduler creates a new Scheduler with the given store, executor, run store, broker and notifier.
-func NewScheduler(store *Store, executor JobExecutor, runStore *RunStore, br broker.Broker, notifier cobot.Notifier) *Scheduler {
+// NewScheduler creates a new Scheduler with the given store, execute function, run store, broker and notifier.
+func NewScheduler(store *Store, executeFn func(ctx context.Context, jobID, prompt, model string) (string, error), runStore *RunStore, br broker.Broker, notifier cobot.Notifier) *Scheduler {
 	return &Scheduler{
 		store:     store,
 		runStore:  runStore,
 		notifier:  notifier,
 		cron:      cron.New(),
-		executor:  executor,
+		executeFn: executeFn,
 		jobs:      make(map[string]cron.EntryID),
 		broker:    br,
 		holderID:  uuid.NewString(),
@@ -266,7 +261,7 @@ func (s *Scheduler) runJob(job *Job) {
 	defer cancel()
 
 	start := time.Now()
-	result, err := s.executor.ExecuteJob(ctx, job)
+	result, err := s.executeFn(ctx, job.ID, job.Prompt, job.Model)
 	duration := time.Since(start)
 	if err != nil {
 		slog.Warn("cron job execution failed",
@@ -327,7 +322,7 @@ func (s *Scheduler) publishJobResult(job *Job, result string, runErr error, dura
 	if s.broker == nil {
 		return
 	}
-	payload := &broker.CronResultPayload{
+	payload := &CronResultPayload{
 		JobID:    job.ID,
 		JobName:  job.Name,
 		Result:   result,
@@ -337,31 +332,12 @@ func (s *Scheduler) publishJobResult(job *Job, result string, runErr error, dura
 	if runErr != nil {
 		payload.Error = runErr.Error()
 	}
-	msg := broker.NewCronResultMessage(job.ChannelID, payload)
+	msg := NewCronResultMessage(job.ChannelID, payload)
 	ctx, cancel := context.WithTimeout(context.Background(), brokerOpTimeout)
 	defer cancel()
 	if err := s.broker.Publish(ctx, msg); err != nil {
 		slog.Warn("failed to publish cron result", "job_id", job.ID, "error", err)
 	}
-}
-
-// notifyJobResult sends a notification about the job execution result.
-func (s *Scheduler) notifyJobResult(job *Job, result string, err error) {
-	if s.notifier == nil || job.ChannelID == "" {
-		return
-	}
-	var errStr string
-	if err != nil {
-		errStr = err.Error()
-	}
-	notifyCtx, notifyCancel := context.WithTimeout(context.Background(), brokerOpTimeout)
-	defer notifyCancel()
-	msg := cobot.ChannelMessage{
-		Type:    cobot.MessageTypeCronResult,
-		Title:   fmt.Sprintf("Cron job %q completed", job.Name),
-		Content: formatCronResult(job.Name, result, errStr),
-	}
-	s.notifier.Notify(notifyCtx, job.ChannelID, msg)
 }
 
 // renewLeaseLoop periodically renews the leader lease. If renewal fails, it
@@ -419,17 +395,15 @@ func (s *Scheduler) rescheduleAllJobs() {
 
 // cleanupLoop periodically runs broker cleanup (leader only).
 func (s *Scheduler) cleanupLoop(ctx context.Context) {
-	if cleanup, ok := s.broker.(broker.Cleanable); ok {
-		ticker := time.NewTicker(cleanupInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				if err := cleanup.Cleanup(ctx); err != nil {
-					slog.Warn("broker cleanup failed", "error", err)
-				}
+	ticker := time.NewTicker(cleanupInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := s.broker.Cleanup(ctx); err != nil {
+				slog.Warn("broker cleanup failed", "error", err)
 			}
 		}
 	}
@@ -461,7 +435,7 @@ func (s *Scheduler) consumeOnce(ctx context.Context) {
 		return
 	}
 	for _, msg := range msgs {
-		payload, err := broker.DecodeCronResult(msg)
+		payload, err := DecodeCronResult(msg)
 		if err != nil {
 			slog.Warn("failed to decode cron result", "msg_id", msg.ID, "error", err)
 			_ = s.broker.Ack(ctx, msg.ID, s.sessionID)

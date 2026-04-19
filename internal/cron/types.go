@@ -1,10 +1,11 @@
-package broker
+package cron
 
 import (
 	"encoding/json"
 	"time"
 
 	cobot "github.com/cobot-agent/cobot/pkg"
+	"github.com/cobot-agent/cobot/pkg/broker"
 	"github.com/google/uuid"
 )
 
@@ -19,9 +20,9 @@ type CronResultPayload struct {
 }
 
 // NewCronResultMessage builds a cron result message.
-func NewCronResultMessage(channelID string, payload *CronResultPayload) *Message {
+func NewCronResultMessage(channelID string, payload *CronResultPayload) *broker.Message {
 	data, _ := json.Marshal(payload)
-	return &Message{
+	return &broker.Message{
 		ID:        uuid.NewString(),
 		Topic:     cobot.MessageTypeCronResult,
 		ChannelID: channelID,
@@ -31,7 +32,7 @@ func NewCronResultMessage(channelID string, payload *CronResultPayload) *Message
 }
 
 // DecodeCronResult decodes Message.Payload into a CronResultPayload.
-func DecodeCronResult(msg *Message) (*CronResultPayload, error) {
+func DecodeCronResult(msg *broker.Message) (*CronResultPayload, error) {
 	var p CronResultPayload
 	if err := json.Unmarshal(msg.Payload, &p); err != nil {
 		return nil, err

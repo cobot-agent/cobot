@@ -25,9 +25,6 @@ import (
 	"github.com/cobot-agent/cobot/internal/tools"
 	"github.com/cobot-agent/cobot/internal/workspace"
 	cobot "github.com/cobot-agent/cobot/pkg"
-	"github.com/cobot-agent/cobot/pkg/broker"
-
-	"github.com/google/uuid"
 )
 
 // Result bundles everything InitAgent produces so callers don't juggle
@@ -254,17 +251,16 @@ func configureCronTool(a *agent.Agent, ws *workspace.Workspace, registry cobot.M
 	cronDir := ws.CronDir()
 	cronStore := cron.NewStore(cronDir)
 	runStore := cron.NewRunStore(ws.CronRunsDir())
-	cronExecutor := cron.NewAgentExecutor(func() cron.AgentRunner {
+	executeFn := cron.NewAgentExecutor(func() *agent.Agent {
 		filtered := a.ToolRegistry().Clone().Without("cron", "delegate_task")
 		sub := newSubAgent(a, registry, filtered)
 		_ = sub.SessionMgr().SetSystemPrompt("You are a scheduled task executor. Complete the task efficiently and output results.")
-		return &cron.AgentRunnerAdapter{Agent: sub}
-	})
-	cronExecutor.WithRunStore(runStore)
+		return sub
+	}, runStore)
 
 	// --- Wire up scheduler, channel notification, and register tool. ---
 	channelMgr := a.ChannelManager()
-	cronScheduler := cron.NewScheduler(cronStore, cronExecutor, runStore, brokerDB, channelMgr)
+	cronScheduler := cron.NewScheduler(cronStore, executeFn, runStore, brokerDB, channelMgr)
 	a.RegisterTool(tools.NewCronTool(cronScheduler,
 		tools.WithCronChannelIDFn(func() string {
 			ids := channelMgr.AllAliveIDs()
@@ -282,37 +278,6 @@ func configureCronTool(a *agent.Agent, ws *workspace.Workspace, registry cobot.M
 		return
 	}
 	a.SetCronScheduler(cronScheduler)
-
-	// --- Register broker session for cross-process notification routing. ---
-	schedulerSessionID := "scheduler:" + uuid.NewString()
-	if err := brokerDB.Register(context.Background(), &broker.SessionInfo{
-		ID:        schedulerSessionID,
-		ChannelID: "_scheduler",
-		PID:       os.Getpid(),
-		StartedAt: time.Now(),
-	}); err == nil {
-		startBrokerSessionHeartbeat(ctx, brokerDB, schedulerSessionID)
-	}
-}
-
-// startBrokerSessionHeartbeat starts a background goroutine that periodically
-// sends heartbeats for a broker session and unregisters on context cancellation.
-func startBrokerSessionHeartbeat(ctx context.Context, br broker.Broker, sessionID string) {
-	go func() {
-		ticker := time.NewTicker(10 * time.Second)
-		defer ticker.Stop()
-		defer br.Unregister(context.Background(), sessionID)
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				if err := br.Heartbeat(ctx, sessionID); err != nil {
-					return
-				}
-			}
-		}
-	}()
 }
 
 // --- private helpers (moved from cmd/cobot/helpers.go) ---

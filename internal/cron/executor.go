@@ -7,69 +7,56 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/cobot-agent/cobot/internal/agent"
 )
 
-// AgentRunner is the interface for running a prompt through an agent.
-type AgentRunner interface {
-	Prompt(ctx context.Context, message string) (string, error)
-	SetModel(spec string) error
-	Close() error
-}
+// NewAgentExecutor returns a function that executes a cron job by running a
+// sub-agent session. The returned function creates a fresh agent per call,
+// optionally sets the model, runs the prompt, stores the result in runStore,
+// and returns the content string.
+func NewAgentExecutor(newAgent func() *agent.Agent, runStore *RunStore) func(ctx context.Context, jobID, prompt, model string) (string, error) {
+	return func(ctx context.Context, jobID, prompt, model string) (string, error) {
+		start := time.Now()
 
-// AgentExecutor executes cron jobs by running a sub-agent session.
-// Results are stored in the per-job SQLite RunStore.
-type AgentExecutor struct {
-	NewAgent func() AgentRunner
-	runStore *RunStore
-}
+		runner := newAgent()
+		defer runner.Close()
 
-// NewAgentExecutor creates an executor with the given agent factory.
-func NewAgentExecutor(factory func() AgentRunner) *AgentExecutor {
-	return &AgentExecutor{NewAgent: factory}
-}
-
-// WithRunStore sets the run store for persisting execution records.
-func (e *AgentExecutor) WithRunStore(store *RunStore) *AgentExecutor {
-	e.runStore = store
-	return e
-}
-
-// ExecuteJob runs the job's prompt through a new agent and stores the result.
-func (e *AgentExecutor) ExecuteJob(ctx context.Context, job *Job) (string, error) {
-	start := time.Now()
-
-	runner := e.NewAgent()
-	defer runner.Close()
-
-	if job.Model != "" {
-		if err := runner.SetModel(job.Model); err != nil {
-			return "", fmt.Errorf("set model for cron job %s: %w", job.ID, err)
+		if model != "" {
+			if err := runner.SetModel(model); err != nil {
+				return "", fmt.Errorf("set model for cron job %s: %w", jobID, err)
+			}
 		}
-	}
 
-	result, err := runner.Prompt(ctx, job.Prompt)
-	duration := time.Since(start).Milliseconds()
+		resp, err := runner.Prompt(ctx, prompt)
+		duration := time.Since(start).Milliseconds()
 
-	// Record the run (success or failure) in per-job database.
-	if e.runStore != nil {
-		runRecord := &RunRecord{
-			ID:       uuid.New().String(),
-			JobID:    job.ID,
-			RunAt:    start,
-			Duration: duration,
-			Result:   result,
+		var result string
+		if err == nil {
+			result = resp.Content
 		}
+
+		// Record the run (success or failure) in per-job database.
+		if runStore != nil {
+			runRecord := &RunRecord{
+				ID:       uuid.New().String(),
+				JobID:    jobID,
+				RunAt:    start,
+				Duration: duration,
+				Result:   result,
+			}
+			if err != nil {
+				runRecord.Error = err.Error()
+			}
+			if storeErr := runStore.StoreRun(runRecord); storeErr != nil {
+				slog.Warn("failed to store cron run record",
+					"job_id", jobID, "error", storeErr)
+			}
+		}
+
 		if err != nil {
-			runRecord.Error = err.Error()
+			return "", fmt.Errorf("execute cron job %s: %w", jobID, err)
 		}
-		if storeErr := e.runStore.StoreRun(runRecord); storeErr != nil {
-			slog.Warn("failed to store cron run record",
-				"job_id", job.ID, "error", storeErr)
-		}
+		return result, nil
 	}
-
-	if err != nil {
-		return "", fmt.Errorf("execute cron job %s: %w", job.ID, err)
-	}
-	return result, nil
 }
