@@ -19,15 +19,12 @@ type JobExecutor interface {
 	ExecuteJob(ctx context.Context, job *Job) (string, error)
 }
 
-// Notifier delivers messages to channels (generic, not cron-specific).
-type Notifier = cobot.Notifier
-
 // Scheduler manages cron job lifecycle using robfig/cron.
 type Scheduler struct {
 	store    *Store
 	cron     *cron.Cron
 	executor JobExecutor
-	notifier Notifier // optional notification handler
+	notifier cobot.Notifier // optional notification handler
 	mu       sync.Mutex
 	jobs     map[string]cron.EntryID // jobID -> cron entry ID
 	runStore *RunStore
@@ -38,7 +35,7 @@ const maxCronJobs = 100
 const jobTimeout = 10 * time.Minute
 
 // NewScheduler creates a new Scheduler with the given store, executor, run store, and notifier.
-func NewScheduler(store *Store, executor JobExecutor, runStore *RunStore, notifier Notifier) *Scheduler {
+func NewScheduler(store *Store, executor JobExecutor, runStore *RunStore, notifier cobot.Notifier) *Scheduler {
 	return &Scheduler{
 		store:    store,
 		runStore: runStore,

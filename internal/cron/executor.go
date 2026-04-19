@@ -20,7 +20,7 @@ type AgentRunner interface {
 // Results are stored in the per-job SQLite RunStore.
 type AgentExecutor struct {
 	NewAgent func() AgentRunner
-	RunStore *RunStore
+	runStore *RunStore
 }
 
 // NewAgentExecutor creates an executor with the given agent factory.
@@ -30,7 +30,7 @@ func NewAgentExecutor(factory func() AgentRunner) *AgentExecutor {
 
 // WithRunStore sets the run store for persisting execution records.
 func (e *AgentExecutor) WithRunStore(store *RunStore) *AgentExecutor {
-	e.RunStore = store
+	e.runStore = store
 	return e
 }
 
@@ -51,7 +51,7 @@ func (e *AgentExecutor) ExecuteJob(ctx context.Context, job *Job) (string, error
 	duration := time.Since(start).Milliseconds()
 
 	// Record the run (success or failure) in per-job database.
-	if e.RunStore != nil {
+	if e.runStore != nil {
 		runRecord := &RunRecord{
 			ID:       uuid.New().String()[:8],
 			JobID:    job.ID,
@@ -62,7 +62,7 @@ func (e *AgentExecutor) ExecuteJob(ctx context.Context, job *Job) (string, error
 		if err != nil {
 			runRecord.Error = err.Error()
 		}
-		if storeErr := e.RunStore.StoreRun(runRecord); storeErr != nil {
+		if storeErr := e.runStore.StoreRun(runRecord); storeErr != nil {
 			slog.Warn("failed to store cron run record",
 				"job_id", job.ID, "error", storeErr)
 		}

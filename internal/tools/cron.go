@@ -8,8 +8,6 @@ import (
 	"log/slog"
 	"time"
 
-	cronlib "github.com/robfig/cron/v3"
-
 	"github.com/cobot-agent/cobot/internal/cron"
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
@@ -105,17 +103,6 @@ func (t *CronTool) handleCreate(ctx context.Context, params cronParams) (string,
 	}
 
 	oneShot := cron.IsOneShot(params.Schedule)
-
-	// Validate the schedule.
-	if oneShot {
-		if _, err := time.Parse(time.RFC3339, params.Schedule); err != nil {
-			return "", fmt.Errorf("invalid ISO timestamp %q: %w", params.Schedule, err)
-		}
-	} else {
-		if _, err := cronlib.ParseStandard(params.Schedule); err != nil {
-			return "", fmt.Errorf("invalid cron expression %q: %w", params.Schedule, err)
-		}
-	}
 
 	name := params.Name
 	if name == "" {

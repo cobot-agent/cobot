@@ -8,8 +8,6 @@ import (
 // MessageType constants for ChannelMessage.Type.
 const (
 	MessageTypeCronResult = "cron_result"
-	MessageTypeInfo       = "info"
-	MessageTypeWarning    = "warning"
 )
 
 // ChannelMessage represents a notification to be delivered to a Channel.
