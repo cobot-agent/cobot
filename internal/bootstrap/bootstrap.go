@@ -251,7 +251,13 @@ func configureCronTool(a *agent.Agent, ws *workspace.Workspace, store *memory.St
 		})
 		cronScheduler.SetNotifier(cronNotifier)
 		a.RegisterTool(tools.NewCronTool(cronScheduler,
-			tools.WithCronChannelResolver(channelMgr),
+			tools.WithCronChannelIDFn(func() string {
+				ids := channelMgr.AllAliveIDs()
+				if len(ids) > 0 {
+					return ids[0]
+				}
+				return ""
+			}),
 			tools.WithCronSessionID(sessionID),
 		))
 	} else {

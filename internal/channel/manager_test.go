@@ -121,24 +121,28 @@ func TestManagerSendToDeadChannel(t *testing.T) {
 	}
 }
 
-func TestManagerFirstAliveID(t *testing.T) {
+func TestManagerAllAliveIDs(t *testing.T) {
 	mgr := NewManager()
 
 	// Empty manager
-	if id := mgr.FirstAliveID(); id != "" {
-		t.Fatalf("expected empty, got %q", id)
+	if ids := mgr.AllAliveIDs(); len(ids) != 0 {
+		t.Fatalf("expected empty, got %v", ids)
 	}
 
-	// With alive channel
-	ch := &mockChannel{id: "test:1", alive: true}
-	mgr.Register(ch)
-	if id := mgr.FirstAliveID(); id != "test:1" {
-		t.Fatalf("expected test:1, got %q", id)
+	// With alive channels
+	ch1 := &mockChannel{id: "test:1", alive: true}
+	ch2 := &mockChannel{id: "test:2", alive: true}
+	mgr.Register(ch1)
+	mgr.Register(ch2)
+	ids := mgr.AllAliveIDs()
+	if len(ids) != 2 {
+		t.Fatalf("expected 2 IDs, got %d", len(ids))
 	}
 
 	// Dead channel
-	ch.Close()
-	if id := mgr.FirstAliveID(); id != "" {
-		t.Fatalf("expected empty for all-dead, got %q", id)
+	ch1.Close()
+	ids = mgr.AllAliveIDs()
+	if len(ids) != 1 || ids[0] != "test:2" {
+		t.Fatalf("expected [test:2], got %v", ids)
 	}
 }

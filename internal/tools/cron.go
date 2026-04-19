@@ -20,22 +20,18 @@ var _ cobot.Tool = (*CronTool)(nil)
 
 // CronTool allows the agent to schedule and manage recurring and one-shot tasks.
 type CronTool struct {
-	scheduler  *cron.Scheduler
-	channelMgr ChannelResolver
-	sessionID  string
-}
-
-// ChannelResolver returns the current alive channel ID.
-type ChannelResolver interface {
-	FirstAliveID() string
+	scheduler   *cron.Scheduler
+	channelIDFn func() string // returns the channel ID of the current context
+	sessionID   string
 }
 
 // CronToolOption is a functional option for CronTool.
 type CronToolOption func(*CronTool)
 
-// WithCronChannelResolver sets the channel resolver for dynamic channel ID lookup.
-func WithCronChannelResolver(mgr ChannelResolver) CronToolOption {
-	return func(t *CronTool) { t.channelMgr = mgr }
+// WithCronChannelIDFunc sets a function that returns the current channel ID.
+// Cron job results are sent back to the originating channel.
+func WithCronChannelIDFn(fn func() string) CronToolOption {
+	return func(t *CronTool) { t.channelIDFn = fn }
 }
 
 // WithCronSessionID sets the session ID for cron job notifications.
@@ -53,6 +49,14 @@ func NewCronTool(scheduler *cron.Scheduler, opts ...CronToolOption) *CronTool {
 }
 
 func (t *CronTool) Name() string { return "cron" }
+
+// currentChannelID returns the channel ID from the injected function, or empty string.
+func (t *CronTool) currentChannelID() string {
+	if t.channelIDFn != nil {
+		return t.channelIDFn()
+	}
+	return ""
+}
 
 func (t *CronTool) Description() string {
 	return `Schedule and manage recurring and one-shot tasks. Actions: create (schedule a new job), list (show all jobs), delete (remove a job), pause (temporarily stop a job), resume (restart a paused job), list_runs (show execution history for a job). Use cron expressions like "0 9 * * *" for recurring tasks or ISO timestamps like "2026-04-18T09:00:00Z" for one-shot tasks. Results are stored in per-job run databases and can be viewed with list_runs.`
@@ -131,10 +135,8 @@ func (t *CronTool) handleCreate(ctx context.Context, params cronParams) (string,
 		Status:    "active",
 		OneShot:   oneShot,
 		CreatedAt: time.Now(),
+		ChannelID: t.currentChannelID(),
 		SessionID: t.sessionID,
-	}
-	if t.channelMgr != nil {
-		job.ChannelID = t.channelMgr.FirstAliveID()
 	}
 
 	if err := t.scheduler.AddJob(job); err != nil {

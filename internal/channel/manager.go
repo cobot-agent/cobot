@@ -56,23 +56,21 @@ func (m *Manager) SendTo(ctx context.Context, channelID string, msg cobot.Channe
 	return ch.Send(ctx, msg)
 }
 
-// FirstAliveID returns the ID of the first alive channel, or empty string.
-// Note: map iteration order is non-deterministic; with a single channel (current
-// design) this is fine. When multiple channels are supported, callers should
-// use Get(id) with a specific ID instead.
-func (m *Manager) FirstAliveID() string {
+// AllAliveIDs returns the IDs of all alive channels.
+func (m *Manager) AllAliveIDs() []string {
 	m.mu.RLock()
 	candidates := make([]cobot.Channel, 0, len(m.channels))
 	for _, ch := range m.channels {
 		candidates = append(candidates, ch)
 	}
 	m.mu.RUnlock()
+	var ids []string
 	for _, ch := range candidates {
 		if ch.IsAlive() {
-			return ch.ID()
+			ids = append(ids, ch.ID())
 		}
 	}
-	return ""
+	return ids
 }
 
 // CronNotifier implements cron.Notifier using the ChannelManager.
