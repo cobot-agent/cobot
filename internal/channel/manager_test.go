@@ -3,6 +3,7 @@ package channel
 import (
 	"context"
 	"testing"
+	"time"
 
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
@@ -102,4 +103,135 @@ func TestManagerAllAliveIDs(t *testing.T) {
 	if len(ids) != 1 || ids[0] != "test:2" {
 		t.Fatalf("expected [test:2], got %v", ids)
 	}
+}
+
+func TestManagerHeartbeat(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	mgr := NewManager()
+	ch := &mockChannel{BaseChannel: cobot.NewBaseChannel("test:1")}
+	mgr.Register(ch)
+
+	// Start health check: 50ms interval, 150ms timeout (3x)
+	mgr.StartHealthCheck(ctx, 50*time.Millisecond)
+
+	// Channel should be alive initially (registered sets heartbeat)
+	_, alive := mgr.Get("test:1")
+	if !alive {
+		t.Fatal("expected channel to be alive")
+	}
+
+	// Wait for 2 check cycles without heartbeat — channel should be removed
+	time.Sleep(250 * time.Millisecond)
+
+	_, alive = mgr.Get("test:1")
+	if alive {
+		t.Fatal("expected channel to be removed after heartbeat timeout")
+	}
+
+	mgr.StopHealthCheck()
+}
+
+func TestManagerHeartbeatKeepsAlive(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	mgr := NewManager()
+	ch := &mockChannel{BaseChannel: cobot.NewBaseChannel("test:1")}
+	mgr.Register(ch)
+
+	mgr.StartHealthCheck(ctx, 50*time.Millisecond)
+
+	// Continuously send heartbeats
+	go func() {
+		ticker := time.NewTicker(30 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				mgr.Heartbeat("test:1")
+			}
+		}
+	}()
+
+	// After 300ms, channel should still be alive
+	time.Sleep(300 * time.Millisecond)
+
+	_, alive := mgr.Get("test:1")
+	if !alive {
+		t.Fatal("expected channel to stay alive with active heartbeats")
+	}
+
+	mgr.StopHealthCheck()
+}
+
+func TestManagerHeartbeatUnknown(t *testing.T) {
+	mgr := NewManager()
+	err := mgr.Heartbeat("nonexistent")
+	if err == nil {
+		t.Fatal("expected error for unknown channel")
+	}
+}
+
+func TestManagerMarkLocalSkipsExpiry(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	mgr := NewManager()
+	ch := &mockChannel{BaseChannel: cobot.NewBaseChannel("local:1")}
+	mgr.Register(ch)
+	mgr.MarkLocal("local:1")
+
+	// Start health check: 50ms interval, 150ms timeout (3x)
+	mgr.StartHealthCheck(ctx, 50*time.Millisecond)
+
+	// Wait long enough that a non-local channel would expire
+	time.Sleep(250 * time.Millisecond)
+
+	_, alive := mgr.Get("local:1")
+	if !alive {
+		t.Fatal("expected local channel to stay alive despite no heartbeats")
+	}
+
+	mgr.StopHealthCheck()
+}
+
+func TestManagerStopHealthCheckIdempotent(t *testing.T) {
+	mgr := NewManager()
+
+	// StopHealthCheck on a manager that never started should not panic.
+	mgr.StopHealthCheck()
+	mgr.StopHealthCheck()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	mgr.StartHealthCheck(ctx, 50*time.Millisecond)
+	mgr.StopHealthCheck()
+	// Second stop should be safe.
+	mgr.StopHealthCheck()
+}
+
+func TestManagerHealthCheckRestart(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	mgr := NewManager()
+	ch1 := &mockChannel{BaseChannel: cobot.NewBaseChannel("test:1")}
+	mgr.Register(ch1)
+
+	// Start health check, then restart it
+	mgr.StartHealthCheck(ctx, 50*time.Millisecond)
+	mgr.StartHealthCheck(ctx, 50*time.Millisecond)
+
+	// Channel should still be alive
+	_, alive := mgr.Get("test:1")
+	if !alive {
+		t.Fatal("expected channel to be alive after restart")
+	}
+
+	mgr.StopHealthCheck()
 }

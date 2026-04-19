@@ -389,6 +389,7 @@ var tuiCmd = &cobra.Command{
 		tuiCh := newTUIChannel(tuiChannelID, notifyCh)
 		if res.ChannelMgr != nil {
 			res.ChannelMgr.Register(tuiCh)
+			res.ChannelMgr.MarkLocal(tuiCh.ID())
 			defer res.ChannelMgr.Unregister(tuiCh.ID())
 			defer tuiCh.Close()
 		}

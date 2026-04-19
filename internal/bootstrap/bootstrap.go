@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/cobot-agent/cobot/internal/agent"
 	"github.com/cobot-agent/cobot/internal/channel"
@@ -67,6 +68,10 @@ func InitAgent(cfg *cobot.Config, requireProvider bool) (*Result, error) {
 	channelMgr := channel.NewManager()
 	a.SetChannelManager(channelMgr)
 
+	// Start channel health check (30 second interval).
+	hcCtx, hcCancel := context.WithCancel(context.Background())
+	channelMgr.StartHealthCheck(hcCtx, 30*time.Second)
+
 	sm := a.SessionMgr()
 
 	if agentCfg != nil && agentCfg.Session != nil {
@@ -101,17 +106,25 @@ func InitAgent(cfg *cobot.Config, requireProvider bool) (*Result, error) {
 	// SetModel resolves the "provider:model" spec and initializes the provider.
 	if err := a.SetModel(cfg.Model); err != nil {
 		if requireProvider {
+			hcCancel()
+			channelMgr.StopHealthCheck()
 			return nil, err
 		}
 		slog.Warn("provider init failed", "err", err)
 	}
 
 	if err := ConfigureAgentForWorkspace(a, ws, registry); err != nil {
+		hcCancel()
+		channelMgr.StopHealthCheck()
 		return nil, err
 	}
 
 	// a.Close() already closes the memory store; no need for separate cleanup.
-	cleanup := func() { a.Close() }
+	cleanup := func() {
+		hcCancel()
+		channelMgr.StopHealthCheck()
+		a.Close()
+	}
 	return &Result{Agent: a, Workspace: ws, ChannelMgr: channelMgr, Cleanup: cleanup}, nil
 }
 
