@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"sync"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -20,33 +19,29 @@ type notificationShutdownMsg struct{}
 
 // tuiChannel implements cobot.Channel for the TUI.
 type tuiChannel struct {
-	id     string
-	alive  bool
-	mu     sync.RWMutex
+	cobot.BaseChannel
 	notify chan<- cobot.ChannelMessage
 	done   chan struct{} // closed in Close to unblock pollNotifications
 }
 
 func newTUIChannel(id string, notify chan<- cobot.ChannelMessage) *tuiChannel {
 	return &tuiChannel{
-		id:     id,
-		alive:  true,
-		notify: notify,
-		done:   make(chan struct{}),
+		BaseChannel: cobot.NewBaseChannel(id),
+		notify:      notify,
+		done:        make(chan struct{}),
 	}
 }
 
-func (ch *tuiChannel) ID() string { return ch.id }
-
 func (ch *tuiChannel) Send(ctx context.Context, msg cobot.ChannelMessage) error {
-	ch.mu.RLock()
-	if !ch.alive {
-		ch.mu.RUnlock()
-		return context.Canceled
+	if err := ch.CheckAlive(); err != nil {
+		return err
 	}
-	notify := ch.notify
-	done := ch.done
-	ch.mu.RUnlock()
+	var notify chan<- cobot.ChannelMessage
+	var done <-chan struct{}
+	ch.WithRLock(func() {
+		notify = ch.notify
+		done = ch.done
+	})
 	select {
 	case notify <- msg:
 		return nil
@@ -57,19 +52,12 @@ func (ch *tuiChannel) Send(ctx context.Context, msg cobot.ChannelMessage) error 
 	}
 }
 
-func (ch *tuiChannel) IsAlive() bool {
-	ch.mu.RLock()
-	defer ch.mu.RUnlock()
-	return ch.alive
-}
-
 func (ch *tuiChannel) Close() {
-	ch.mu.Lock()
-	defer ch.mu.Unlock()
-	if ch.alive {
-		ch.alive = false
-		close(ch.done)  // unblock Send and pollNotifications
-		ch.notify = nil // prevent further sends; GC will collect
+	if ch.BaseChannel.Close() {
+		ch.WithLock(func() {
+			close(ch.done)
+			ch.notify = nil
+		})
 	}
 }
 

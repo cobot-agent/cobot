@@ -2,7 +2,6 @@ package channel
 
 import (
 	"context"
-	"sync"
 	"testing"
 
 	cobot "github.com/cobot-agent/cobot/pkg"
@@ -10,41 +9,28 @@ import (
 
 // mockChannel implements cobot.Channel for testing.
 type mockChannel struct {
-	id     string
-	alive  bool
-	mu     sync.RWMutex
+	cobot.BaseChannel
 	sent   []cobot.ChannelMessage
 	closed bool
 }
 
-func (m *mockChannel) ID() string { return m.id }
-
 func (m *mockChannel) Send(_ context.Context, msg cobot.ChannelMessage) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if !m.alive {
-		return context.Canceled
+	if err := m.CheckAlive(); err != nil {
+		return err
 	}
 	m.sent = append(m.sent, msg)
 	return nil
 }
 
-func (m *mockChannel) IsAlive() bool {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.alive
-}
-
 func (m *mockChannel) Close() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.alive = false
-	m.closed = true
+	if m.BaseChannel.Close() {
+		m.closed = true
+	}
 }
 
 func TestManagerRegisterAndGet(t *testing.T) {
 	mgr := NewManager()
-	ch := &mockChannel{id: "test:1", alive: true}
+	ch := &mockChannel{BaseChannel: cobot.NewBaseChannel("test:1")}
 
 	mgr.Register(ch)
 
@@ -68,7 +54,7 @@ func TestManagerGetUnknown(t *testing.T) {
 
 func TestManagerUnregister(t *testing.T) {
 	mgr := NewManager()
-	ch := &mockChannel{id: "test:1", alive: true}
+	ch := &mockChannel{BaseChannel: cobot.NewBaseChannel("test:1")}
 
 	mgr.Register(ch)
 	mgr.Unregister("test:1")
@@ -81,7 +67,7 @@ func TestManagerUnregister(t *testing.T) {
 
 func TestManagerGetDeadChannel(t *testing.T) {
 	mgr := NewManager()
-	ch := &mockChannel{id: "test:1", alive: true}
+	ch := &mockChannel{BaseChannel: cobot.NewBaseChannel("test:1")}
 
 	mgr.Register(ch)
 	ch.Close()
@@ -101,8 +87,8 @@ func TestManagerAllAliveIDs(t *testing.T) {
 	}
 
 	// With alive channels
-	ch1 := &mockChannel{id: "test:1", alive: true}
-	ch2 := &mockChannel{id: "test:2", alive: true}
+	ch1 := &mockChannel{BaseChannel: cobot.NewBaseChannel("test:1")}
+	ch2 := &mockChannel{BaseChannel: cobot.NewBaseChannel("test:2")}
 	mgr.Register(ch1)
 	mgr.Register(ch2)
 	ids := mgr.AllAliveIDs()
