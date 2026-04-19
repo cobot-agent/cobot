@@ -111,6 +111,12 @@ func (s *Scheduler) Stop() {
 	if s.runStore != nil {
 		s.runStore.Close()
 	}
+
+	if s.broker != nil {
+		if err := s.broker.Close(); err != nil {
+			slog.Warn("failed to close broker", "error", err)
+		}
+	}
 }
 
 // AddJob creates a new cron entry and persists the job.

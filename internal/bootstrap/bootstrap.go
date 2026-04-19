@@ -25,6 +25,9 @@ import (
 	"github.com/cobot-agent/cobot/internal/tools"
 	"github.com/cobot-agent/cobot/internal/workspace"
 	cobot "github.com/cobot-agent/cobot/pkg"
+	"github.com/cobot-agent/cobot/pkg/broker"
+
+	"github.com/google/uuid"
 )
 
 // Result bundles everything InitAgent produces so callers don't juggle
@@ -279,6 +282,35 @@ func configureCronTool(a *agent.Agent, ws *workspace.Workspace, registry cobot.M
 		return
 	}
 	a.SetCronScheduler(cronScheduler)
+
+	// --- Register broker session for cross-process notification routing. ---
+	schedulerSessionID := "scheduler:" + uuid.NewString()
+	if err := brokerDB.Register(context.Background(), &broker.SessionInfo{
+		ID:        schedulerSessionID,
+		ChannelID: "",
+		PID:       os.Getpid(),
+		StartedAt: time.Now(),
+	}); err == nil {
+		go func() {
+			ticker := time.NewTicker(10 * time.Second)
+			defer ticker.Stop()
+			defer brokerDB.Unregister(context.Background(), schedulerSessionID)
+			for {
+				select {
+				case <-ticker.C:
+					if err := brokerDB.Register(context.Background(), &broker.SessionInfo{
+						ID:        schedulerSessionID,
+						ChannelID: "",
+						PID:       os.Getpid(),
+						StartedAt: time.Now(),
+					}); err != nil {
+						return
+					}
+				}
+			}
+		}()
+	}
+
 	_ = cancel // keep reference for future shutdown path
 }
 
