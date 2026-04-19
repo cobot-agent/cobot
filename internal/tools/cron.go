@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 
 	cronlib "github.com/robfig/cron/v3"
@@ -184,7 +185,10 @@ func (t *CronTool) handleDelete(params cronParams) (string, error) {
 	}
 
 	// Check if job has run records before deletion.
-	hasRuns, _ := t.scheduler.HasRunRecords(params.JobID)
+	hasRuns, hasRunsErr := t.scheduler.HasRunRecords(params.JobID)
+	if hasRunsErr != nil {
+		slog.Warn("failed to check run records", "job_id", params.JobID, "error", hasRunsErr)
+	}
 
 	if err := t.scheduler.RemoveJob(params.JobID); err != nil {
 		return "", err

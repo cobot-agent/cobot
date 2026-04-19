@@ -179,15 +179,33 @@ func (m *Manager) expireStale(timeout time.Duration) {
 	m.mu.RUnlock()
 
 	for _, id := range stale {
-		m.mu.RLock()
+		m.mu.Lock()
 		ch, ok := m.channels[id]
-		last := m.lastHB[id] // capture while locked
-		m.mu.RUnlock()
-		if ok {
-			slog.Warn("channel heartbeat timeout, removing",
-				"channel", id, "last_heartbeat", last.Format(time.RFC3339))
-			ch.Close()
-			m.Unregister(id)
+		if !ok {
+			m.mu.Unlock()
+			continue
 		}
+		if _, isLocal := m.local[id]; isLocal {
+			m.mu.Unlock()
+			continue
+		}
+		last, hasLastHB := m.lastHB[id]
+		if hasLastHB && now.Sub(last) <= timeout {
+			m.mu.Unlock()
+			continue
+		}
+
+		delete(m.channels, id)
+		delete(m.lastHB, id)
+		delete(m.local, id)
+		m.mu.Unlock()
+
+		lastStr := "<missing>"
+		if hasLastHB {
+			lastStr = last.Format(time.RFC3339)
+		}
+		slog.Warn("channel heartbeat timeout, removing",
+			"channel", id, "last_heartbeat", lastStr)
+		ch.Close()
 	}
 }
