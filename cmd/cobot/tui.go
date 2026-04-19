@@ -385,7 +385,7 @@ var tuiCmd = &cobra.Command{
 			if ch.Type == "tui" {
 				tuiCount++
 				if tuiCount == 1 {
-					tuiChannelID = ch.Name
+					tuiChannelID = fmt.Sprintf("%s:%s", ch.Type, ch.Name)
 				}
 			}
 		}

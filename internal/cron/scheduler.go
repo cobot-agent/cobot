@@ -70,7 +70,8 @@ func (s *Scheduler) Start() error {
 
 // Stop halts the cron scheduler and removes all entries.
 func (s *Scheduler) Stop() {
-	s.cron.Stop()
+	ctx := s.cron.Stop()
+	<-ctx.Done() // wait for in-flight jobs to finish
 	if s.runStore != nil {
 		s.runStore.Close()
 	}

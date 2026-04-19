@@ -109,6 +109,13 @@ func (rs *RunStore) ListRuns(jobID string, limit int) ([]*RunRecord, error) {
 	if limit <= 0 {
 		limit = 20
 	}
+	// Don't create a DB file just to list runs.
+	if _, err := os.Stat(rs.dbPath(jobID)); err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
 	var records []*RunRecord
 	err := rs.withDB(jobID, func(db *sql.DB) error {
 		rows, err := db.Query(`SELECT id, run_at, duration_ms, result, error FROM runs ORDER BY run_at DESC LIMIT ?`, limit)
@@ -154,13 +161,19 @@ func (rs *RunStore) DeleteJobDB(jobID string) error {
 
 // RunsExist checks if any run records exist for a job.
 func (rs *RunStore) RunsExist(jobID string) (bool, error) {
+	dbPath := rs.dbPath(jobID)
+	if _, err := os.Stat(dbPath); err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
 	var count int
 	err := rs.withDB(jobID, func(db *sql.DB) error {
 		return db.QueryRow(`SELECT COUNT(*) FROM runs`).Scan(&count)
 	})
 	if err != nil {
-		// Non-existent DB or unreadable → no runs.
-		return false, nil
+		return false, err
 	}
 	return count > 0, nil
 }

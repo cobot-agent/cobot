@@ -60,9 +60,14 @@ func (m *Manager) Get(id string) (cobot.Channel, bool) {
 // AllAliveIDs returns the IDs of all alive channels.
 func (m *Manager) AllAliveIDs() []string {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
-	var ids []string
+	channels := make([]cobot.Channel, 0, len(m.channels))
 	for _, ch := range m.channels {
+		channels = append(channels, ch)
+	}
+	m.mu.RUnlock()
+
+	var ids []string
+	for _, ch := range channels {
 		if ch.IsAlive() {
 			ids = append(ids, ch.ID())
 		}
@@ -110,6 +115,11 @@ func (m *Manager) MarkLocal(id string) {
 // is stopped first.
 func (m *Manager) StartHealthCheck(parent context.Context, interval time.Duration) {
 	m.StopHealthCheck()
+
+	if interval <= 0 {
+		slog.Warn("health check interval must be positive, skipping", "interval", interval)
+		return
+	}
 
 	ctx, cancel := context.WithCancel(parent)
 	done := make(chan struct{})
