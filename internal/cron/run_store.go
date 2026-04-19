@@ -109,6 +109,10 @@ func (rs *RunStore) ListRuns(jobID string, limit int) ([]*RunRecord, error) {
 	if limit <= 0 {
 		limit = 20
 	}
+	// Validate before any filesystem access to prevent path traversal.
+	if err := ValidateJobID(jobID); err != nil {
+		return nil, err
+	}
 	// Don't create a DB file just to list runs.
 	if _, err := os.Stat(rs.dbPath(jobID)); err != nil {
 		if os.IsNotExist(err) {
@@ -161,6 +165,9 @@ func (rs *RunStore) DeleteJobDB(jobID string) error {
 
 // RunsExist checks if any run records exist for a job.
 func (rs *RunStore) RunsExist(jobID string) (bool, error) {
+	if err := ValidateJobID(jobID); err != nil {
+		return false, err
+	}
 	dbPath := rs.dbPath(jobID)
 	if _, err := os.Stat(dbPath); err != nil {
 		if os.IsNotExist(err) {

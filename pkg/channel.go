@@ -12,7 +12,7 @@ const (
 
 // ChannelMessage represents a notification to be delivered to a Channel.
 type ChannelMessage struct {
-	Type    string // e.g. MessageTypeCronResult, MessageTypeInfo, MessageTypeWarning
+	Type    string // e.g. MessageTypeCronResult
 	Title   string // short summary
 	Content string // full content
 }
