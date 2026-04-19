@@ -258,6 +258,12 @@ func (s *Scheduler) runJob(job *Job) {
 	}
 	s.mu.Unlock()
 
+	// Skip update if the job was removed while running.
+	if _, getErr := s.store.Get(job.ID); getErr != nil {
+		slog.Debug("skipping update for removed job", "job_id", job.ID)
+		return
+	}
+
 	if updateErr := s.store.Update(job); updateErr != nil {
 		slog.Warn("failed to update job after run",
 			"job_id", job.ID, "error", updateErr)
