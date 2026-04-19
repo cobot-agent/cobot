@@ -47,25 +47,12 @@ func (m *Manager) Get(id string) (cobot.Channel, bool) {
 	return ch, ch.IsAlive()
 }
 
-// SendTo delivers a message to a specific channel.
-func (m *Manager) SendTo(ctx context.Context, channelID string, msg cobot.ChannelMessage) error {
-	ch, alive := m.Get(channelID)
-	if !alive {
-		return fmt.Errorf("channel %s not available", channelID)
-	}
-	return ch.Send(ctx, msg)
-}
-
 // AllAliveIDs returns the IDs of all alive channels.
 func (m *Manager) AllAliveIDs() []string {
 	m.mu.RLock()
-	candidates := make([]cobot.Channel, 0, len(m.channels))
-	for _, ch := range m.channels {
-		candidates = append(candidates, ch)
-	}
-	m.mu.RUnlock()
+	defer m.mu.RUnlock()
 	var ids []string
-	for _, ch := range candidates {
+	for _, ch := range m.channels {
 		if ch.IsAlive() {
 			ids = append(ids, ch.ID())
 		}

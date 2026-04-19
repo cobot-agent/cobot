@@ -92,35 +92,6 @@ func TestManagerGetDeadChannel(t *testing.T) {
 	}
 }
 
-func TestManagerSendTo(t *testing.T) {
-	mgr := NewManager()
-	ch := &mockChannel{id: "test:1", alive: true}
-	mgr.Register(ch)
-
-	err := mgr.SendTo(context.Background(), "test:1", cobot.ChannelMessage{
-		Type:    "cron_result",
-		Content: "done",
-	})
-	if err != nil {
-		t.Fatalf("SendTo failed: %v", err)
-	}
-	if len(ch.sent) != 1 || ch.sent[0].Content != "done" {
-		t.Fatalf("expected message delivered, got sent=%v", ch.sent)
-	}
-}
-
-func TestManagerSendToDeadChannel(t *testing.T) {
-	mgr := NewManager()
-	ch := &mockChannel{id: "test:1", alive: true}
-	mgr.Register(ch)
-	ch.Close()
-
-	err := mgr.SendTo(context.Background(), "test:1", cobot.ChannelMessage{})
-	if err == nil {
-		t.Fatal("expected error sending to dead channel")
-	}
-}
-
 func TestManagerAllAliveIDs(t *testing.T) {
 	mgr := NewManager()
 

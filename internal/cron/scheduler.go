@@ -9,6 +9,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/robfig/cron/v3"
+
+	"github.com/cobot-agent/cobot/internal/textutil"
 )
 
 // JobExecutor is the interface for executing a cron job's prompt.
@@ -277,14 +279,6 @@ func (s *Scheduler) HasRunRecords(jobID string) (bool, error) {
 	return s.runStore.RunsExist(jobID)
 }
 
-// ConsolidateJobRuns returns a summary of all runs for memory storage.
-func (s *Scheduler) ConsolidateJobRuns(jobID, jobName string) (string, error) {
-	if s.runStore == nil {
-		return "", nil
-	}
-	return s.runStore.ConsolidateJobRuns(jobID, jobName)
-}
-
 // CleanupJobDB removes the run database for a job.
 func (s *Scheduler) CleanupJobDB(jobID string) {
 	if s.runStore != nil {
@@ -299,9 +293,6 @@ func (s *Scheduler) ListJobRuns(jobID string, limit int) (string, error) {
 	if s.runStore == nil {
 		return "Run tracking not available.", nil
 	}
-	if limit <= 0 {
-		limit = 20
-	}
 	records, err := s.runStore.ListRuns(jobID, limit)
 	if err != nil {
 		return "", err
@@ -314,10 +305,7 @@ func (s *Scheduler) ListJobRuns(jobID string, limit int) (string, error) {
 		if r.Error != "" {
 			result += fmt.Sprintf("  [%s] FAILED (%dms): %s\n", r.RunAt.Format("2006-01-02 15:04:05"), r.Duration, r.Error)
 		} else {
-			output := r.Result
-			if len(output) > 100 {
-				output = output[:100] + "..."
-			}
+			output := textutil.Truncate(r.Result, 100)
 			result += fmt.Sprintf("  [%s] OK (%dms): %s\n", r.RunAt.Format("2006-01-02 15:04:05"), r.Duration, output)
 		}
 	}

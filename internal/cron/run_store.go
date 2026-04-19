@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/cobot-agent/cobot/internal/textutil"
+
 	_ "modernc.org/sqlite"
 )
 
@@ -60,9 +62,8 @@ func (rs *RunStore) ensureSchema(db *sql.DB) error {
 	return err
 }
 
-// StoreRun saves a single execution record.
-func (rs *RunStore) StoreRun(record *RunRecord) error {
-	db, err := rs.openDB(record.JobID)
+func (rs *RunStore) withDB(jobID string, fn func(*sql.DB) error) error {
+	db, err := rs.openDB(jobID)
 	if err != nil {
 		return err
 	}
@@ -70,43 +71,45 @@ func (rs *RunStore) StoreRun(record *RunRecord) error {
 	if err := rs.ensureSchema(db); err != nil {
 		return err
 	}
-	_, err = db.Exec(`INSERT INTO runs (id, run_at, duration_ms, result, error) VALUES (?, ?, ?, ?, ?)`,
-		record.ID, record.RunAt.Format(time.RFC3339), record.Duration, record.Result, record.Error)
-	return err
+	return fn(db)
+}
+
+// StoreRun saves a single execution record.
+func (rs *RunStore) StoreRun(record *RunRecord) error {
+	return rs.withDB(record.JobID, func(db *sql.DB) error {
+		_, err := db.Exec(`INSERT INTO runs (id, run_at, duration_ms, result, error) VALUES (?, ?, ?, ?, ?)`,
+			record.ID, record.RunAt.Format(time.RFC3339), record.Duration, record.Result, record.Error)
+		return err
+	})
 }
 
 // ListRuns returns the most recent runs for a job, limited by limit.
 func (rs *RunStore) ListRuns(jobID string, limit int) ([]*RunRecord, error) {
-	db, err := rs.openDB(jobID)
-	if err != nil {
-		return nil, err
-	}
-	defer db.Close()
-	if err := rs.ensureSchema(db); err != nil {
-		return nil, err
-	}
 	if limit <= 0 {
 		limit = 20
 	}
-	rows, err := db.Query(`SELECT id, run_at, duration_ms, result, error FROM runs ORDER BY run_at DESC LIMIT ?`, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
 	var records []*RunRecord
-	for rows.Next() {
-		r := &RunRecord{JobID: jobID}
-		var runAt string
-		if err := rows.Scan(&r.ID, &runAt, &r.Duration, &r.Result, &r.Error); err != nil {
-			return nil, err
-		}
-		r.RunAt, err = time.Parse(time.RFC3339, runAt)
+	err := rs.withDB(jobID, func(db *sql.DB) error {
+		rows, err := db.Query(`SELECT id, run_at, duration_ms, result, error FROM runs ORDER BY run_at DESC LIMIT ?`, limit)
 		if err != nil {
-			return nil, fmt.Errorf("parse run_at timestamp for job %s: %w", jobID, err)
+			return err
 		}
-		records = append(records, r)
-	}
-	return records, rows.Err()
+		defer rows.Close()
+		for rows.Next() {
+			r := &RunRecord{JobID: jobID}
+			var runAt string
+			if err := rows.Scan(&r.ID, &runAt, &r.Duration, &r.Result, &r.Error); err != nil {
+				return err
+			}
+			r.RunAt, err = time.Parse(time.RFC3339, runAt)
+			if err != nil {
+				return fmt.Errorf("parse run_at timestamp for job %s: %w", jobID, err)
+			}
+			records = append(records, r)
+		}
+		return rows.Err()
+	})
+	return records, err
 }
 
 // DeleteJobDB removes the entire database for a job.
@@ -125,16 +128,10 @@ func (rs *RunStore) RunsExist(jobID string) (bool, error) {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return false, nil
 	}
-	db, err := rs.openDB(jobID)
-	if err != nil {
-		return false, err
-	}
-	defer db.Close()
-	if err := rs.ensureSchema(db); err != nil {
-		return false, err
-	}
 	var count int
-	err = db.QueryRow(`SELECT COUNT(*) FROM runs`).Scan(&count)
+	err := rs.withDB(jobID, func(db *sql.DB) error {
+		return db.QueryRow(`SELECT COUNT(*) FROM runs`).Scan(&count)
+	})
 	return count > 0, err
 }
 
@@ -153,10 +150,7 @@ func (rs *RunStore) ConsolidateJobRuns(jobID, jobName string) (string, error) {
 		if r.Error != "" {
 			summary += fmt.Sprintf("- [%s] FAILED: %s\n", r.RunAt.Format("2006-01-02 15:04"), r.Error)
 		} else {
-			result := r.Result
-			if len(result) > 200 {
-				result = result[:200] + "..."
-			}
+			result := textutil.Truncate(r.Result, 200)
 			summary += fmt.Sprintf("- [%s] %s\n", r.RunAt.Format("2006-01-02 15:04"), result)
 		}
 	}
