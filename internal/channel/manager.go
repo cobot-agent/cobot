@@ -82,11 +82,8 @@ func (m *Manager) Unregister(channelID, sessionID string) {
 // Get returns a channel by ID and whether it exists and is alive.
 func (m *Manager) Get(id string) (cobot.Channel, bool) {
 	m.mu.RLock()
-	src := m.channels[id]
-	entries := make([]channelEntry, len(src))
-	copy(entries, src)
-	m.mu.RUnlock()
-	for _, e := range entries {
+	defer m.mu.RUnlock()
+	for _, e := range m.channels[id] {
 		if e.ch.IsAlive() {
 			return e.ch, true
 		}
@@ -97,16 +94,8 @@ func (m *Manager) Get(id string) (cobot.Channel, bool) {
 // AllAliveIDs returns the IDs of all alive channels.
 func (m *Manager) AllAliveIDs() []string {
 	m.mu.RLock()
-	channelsCopy := make(map[string][]channelEntry, len(m.channels))
-	for k, v := range m.channels {
-		entries := make([]channelEntry, len(v))
-		copy(entries, v)
-		channelsCopy[k] = entries
-	}
-	m.mu.RUnlock()
-
 	var ids []string
-	for id, entries := range channelsCopy {
+	for id, entries := range m.channels {
 		for _, e := range entries {
 			if e.ch.IsAlive() {
 				ids = append(ids, id)
@@ -114,6 +103,7 @@ func (m *Manager) AllAliveIDs() []string {
 			}
 		}
 	}
+	m.mu.RUnlock()
 	sort.Strings(ids)
 	return ids
 }

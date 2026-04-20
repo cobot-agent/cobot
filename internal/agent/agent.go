@@ -153,13 +153,18 @@ func (a *Agent) ChannelManager() *channel.Manager {
 }
 
 func (a *Agent) SetBroker(b broker.Broker) {
+	a.closeBroker()
+	a.broker = b
+}
+
+// closeBroker safely closes the current broker, logging any error.
+func (a *Agent) closeBroker() {
 	if a.broker != nil {
 		if err := a.broker.Close(); err != nil {
-			slog.Warn("closing previous broker", "error", err)
+			slog.Warn("close broker", "error", err)
 		}
 		a.broker = nil
 	}
-	a.broker = b
 }
 
 func (a *Agent) Context() context.Context {
@@ -249,12 +254,7 @@ func (a *Agent) Close() error {
 	}
 
 	// Close broker if set.
-	if a.broker != nil {
-		if err := a.broker.Close(); err != nil {
-			slog.Warn("close broker", "error", err)
-		}
-		a.broker = nil
-	}
+	a.closeBroker()
 
 	// Promote valuable STM items to LTM before closing the memory store.
 	sm := a.sessionMgr

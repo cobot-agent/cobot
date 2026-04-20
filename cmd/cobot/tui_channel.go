@@ -42,6 +42,9 @@ func (ch *tuiChannel) Send(ctx context.Context, msg cobot.ChannelMessage) error 
 		notify = ch.notify
 		done = ch.done
 	})
+	if notify == nil {
+		return context.Canceled
+	}
 	select {
 	case notify <- msg:
 		return nil

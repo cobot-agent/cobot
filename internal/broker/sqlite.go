@@ -148,7 +148,7 @@ func (b *SQLiteBroker) Renew(ctx context.Context, name, holder string, ttl time.
 	res, err := b.db.ExecContext(ctx, `
 		UPDATE locks SET expires_at = ?
 		WHERE name = ? AND holder = ? AND expires_at > ?;
-	`, expires.Format(sqliteTimeFmt), name, holder, now.Format(sqliteTimeFmt))
+	`, formatTime(expires), name, holder, formatTime(now))
 	if err != nil {
 		return err
 	}
@@ -379,7 +379,8 @@ func (b *SQLiteBroker) cleanStaleReceipts(ctx context.Context) error {
 // Cleanup deletes expired sessions and fully delivered messages.
 // Typically called periodically by the leader process.
 func (b *SQLiteBroker) Cleanup(ctx context.Context) error {
-	threshold := formatTime(time.Now().UTC().Add(-sessionTTL))
+	now := time.Now().UTC()
+	threshold := formatTime(now.Add(-sessionTTL))
 	var errs []error
 
 	// Delete sessions without heartbeat for the TTL duration.
@@ -390,7 +391,7 @@ func (b *SQLiteBroker) Cleanup(ctx context.Context) error {
 
 	// Delete messages older than messageTTL (7 days) regardless of ack status.
 	// This prevents unbounded growth when consumers die without acking.
-	messageTTLThreshold := formatTime(time.Now().UTC().Add(-messageTTL))
+	messageTTLThreshold := formatTime(now.Add(-messageTTL))
 	_, err = b.db.ExecContext(ctx, `DELETE FROM messages WHERE created_at < ?;`, messageTTLThreshold)
 	if err != nil {
 		errs = append(errs, fmt.Errorf("cleanup expired messages: %w", err))
@@ -422,7 +423,11 @@ func (b *SQLiteBroker) Cleanup(ctx context.Context) error {
 			errs = append(errs, fmt.Errorf("cleanup messages: %w", err))
 			break
 		}
-		n, _ := res.RowsAffected()
+		n, err := res.RowsAffected()
+		if err != nil {
+			errs = append(errs, fmt.Errorf("cleanup messages rowsaffected: %w", err))
+			break
+		}
 		if n < 1000 {
 			break
 		}
