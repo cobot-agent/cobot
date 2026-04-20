@@ -326,11 +326,11 @@ func (s *Scheduler) scheduleOneShotLocked(job *Job) error {
 	job.NextRun = &t
 
 	// Verify the schedule will actually fire; if the time has passed between
-	// the check above and scheduling (race window), log and skip.
+	// the check above and scheduling (race window), fail instead of silently
+	// succeeding without creating a cron entry.
 	sched := oneShotSchedule{at: t}
 	if next := sched.Next(time.Now()); next.IsZero() {
-		slog.Warn("one-shot job time has passed, skipping", "job_id", job.ID)
-		return nil
+		return fmt.Errorf("one-shot time %q passed before scheduling", job.Schedule)
 	}
 
 	// Schedule with a custom one-shot wrapper.

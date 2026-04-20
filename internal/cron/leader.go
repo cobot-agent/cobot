@@ -50,10 +50,6 @@ func (s *Scheduler) renewLeaseLoop(ctx context.Context) {
 				// If not acquired, stay follower — will retry next tick
 				continue
 			}
-			// Renew session registration to prevent expiry.
-			if err := s.broker.Heartbeat(ctx, s.sessionID); err != nil {
-				slog.Debug("broker session heartbeat failed", "error", err)
-			}
 			// Sync jobs to pick up changes made on follower instances.
 			s.syncJobs()
 		}
@@ -113,6 +109,7 @@ func (s *Scheduler) syncJobs() {
 		if !exists || sj.Status != StatusActive {
 			s.cron.Remove(s.jobs[id])
 			delete(s.jobs, id)
+			delete(s.jobSchedules, id)
 			if !exists {
 				slog.Info("sync: removed deleted job", "job_id", id)
 			} else {
@@ -142,6 +139,8 @@ func (s *Scheduler) syncJobs() {
 }
 
 // cleanupLoop periodically runs broker cleanup (leader only).
+// Guards each iteration with isLeader check so it stops working
+// promptly after step-down, even though the loop itself exits on ctx.Done.
 func (s *Scheduler) cleanupLoop(ctx context.Context) {
 	defer s.wg.Done()
 
@@ -152,6 +151,9 @@ func (s *Scheduler) cleanupLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			if !s.isLeader.Load() {
+				continue
+			}
 			if err := s.broker.Cleanup(ctx); err != nil {
 				slog.Warn("broker cleanup failed", "error", err)
 			}

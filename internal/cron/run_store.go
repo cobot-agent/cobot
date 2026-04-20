@@ -174,8 +174,15 @@ func (rs *RunStore) DeleteJobDB(jobID string) error {
 }
 
 // RunsExist checks if any run records exist for a job.
+// Short-circuits with os.Stat to avoid creating an empty DB file.
 func (rs *RunStore) RunsExist(jobID string) (bool, error) {
 	if err := ValidateJobID(jobID); err != nil {
+		return false, err
+	}
+	// Don't create the DB file just to check existence.
+	if _, err := os.Stat(rs.dbPath(jobID)); os.IsNotExist(err) {
+		return false, nil
+	} else if err != nil {
 		return false, err
 	}
 	var exists bool
