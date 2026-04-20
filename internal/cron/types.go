@@ -20,15 +20,18 @@ type CronResultPayload struct {
 }
 
 // NewCronResultMessage builds a cron result message.
-func NewCronResultMessage(channelID string, payload *CronResultPayload) *broker.Message {
-	data, _ := json.Marshal(payload)
+func NewCronResultMessage(channelID string, payload *CronResultPayload) (*broker.Message, error) {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
 	return &broker.Message{
 		ID:        uuid.NewString(),
 		Topic:     cobot.MessageTypeCronResult,
 		ChannelID: channelID,
 		Payload:   data,
 		CreatedAt: time.Now(),
-	}
+	}, nil
 }
 
 // DecodeCronResult decodes Message.Payload into a CronResultPayload.

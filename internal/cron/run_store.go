@@ -125,6 +125,10 @@ func (rs *RunStore) ListRuns(jobID string, limit int) ([]*RunRecord, error) {
 	if err := ValidateJobID(jobID); err != nil {
 		return nil, err
 	}
+	// Don't create the DB file just to list runs.
+	if _, err := os.Stat(rs.dbPath(jobID)); os.IsNotExist(err) {
+		return nil, nil
+	}
 	db, err := rs.getDB(jobID)
 	if err != nil {
 		return nil, err

@@ -84,7 +84,7 @@ func (s *Scheduler) Start(ctx context.Context) error {
 		s.isLeader.Store(true)
 		slog.Info("acquired cron scheduler leader lease", "holder", s.holderID)
 		for _, job := range jobs {
-			if job.Status != "active" {
+			if job.Status != StatusActive {
 				continue
 			}
 			if err := s.scheduleJob(job); err != nil {
@@ -95,6 +95,7 @@ func (s *Scheduler) Start(ctx context.Context) error {
 		s.cron.Start()
 		s.wg.Add(1)
 		go s.renewLeaseLoop(ctx)
+		s.cleanupRunning.Store(true)
 		s.wg.Add(1)
 		go s.cleanupLoop(ctx)
 	} else {
@@ -113,6 +114,11 @@ func (s *Scheduler) Start(ctx context.Context) error {
 
 // Stop halts the cron scheduler, releases the leader lease, and closes the run store.
 func (s *Scheduler) Stop() {
+	// Stop cron first to prevent new job executions.
+	if s.isLeader.Load() {
+		cronCtx := s.cron.Stop()
+		<-cronCtx.Done() // wait for in-flight jobs to finish
+	}
 	if s.cancel != nil {
 		s.cancel()
 	}
@@ -122,8 +128,6 @@ func (s *Scheduler) Stop() {
 	defer cancel()
 
 	if s.isLeader.Load() {
-		cronCtx := s.cron.Stop()
-		<-cronCtx.Done() // wait for in-flight jobs to finish
 		if err := s.broker.Release(ctx, schedulerLeaseKey, s.holderID); err != nil {
 			slog.Warn("failed to release scheduler lease", "error", err)
 		}
@@ -158,40 +162,39 @@ func validateSchedule(job *Job) error {
 // are rejected early. Only schedules in-memory if this instance is the leader;
 // followers just persist — the leader will pick it up via syncJobs.
 func (s *Scheduler) AddJob(job *Job) error {
-	jobs, err := s.store.ListReadOnly()
+	ids, err := s.store.ListJobIDs()
 	if err != nil {
 		return fmt.Errorf("check job count: %w", err)
 	}
-	if len(jobs) >= maxCronJobs {
+	if len(ids) >= maxCronJobs {
 		return fmt.Errorf("maximum number of cron jobs (%d) reached", maxCronJobs)
 	}
 	// Validate schedule upfront regardless of leadership.
 	if err := validateSchedule(job); err != nil {
 		return err
 	}
+	// Persist first so we never have an in-memory-only job.
+	if err := s.store.Create(job); err != nil {
+		return err
+	}
 	if s.isLeader.Load() {
 		if err := s.scheduleJob(job); err != nil {
-			return err
+			slog.Warn("failed to schedule persisted job", "job_id", job.ID, "error", err)
+			// Job is persisted; leader will pick it up via syncJobs.
 		}
 	}
-	return s.store.Create(job)
+	return nil
 }
 
 // RemoveJob removes a job from cron and deletes it from the store.
-// readID is an opaque token obtained from a prior list/get operation that
-// proves the caller has seen the current state. Pass empty to skip the check.
+// readID is required — it's an opaque token from a prior list/get that proves
+// the caller has seen the current state.
 func (s *Scheduler) RemoveJob(readID string) error {
 	id, token, err := ParseReadID(readID)
 	if err != nil {
 		return fmt.Errorf("invalid read_id: %w", err)
 	}
-	s.mu.Lock()
-	if entryID, ok := s.jobs[id]; ok {
-		s.cron.Remove(entryID)
-		delete(s.jobs, id)
-		delete(s.jobSchedules, id)
-	}
-	s.mu.Unlock()
+	s.unscheduleJob(id)
 	if err := s.store.Delete(id, token); err != nil {
 		return err
 	}
@@ -212,15 +215,9 @@ func (s *Scheduler) PauseJob(readID string) error {
 		return err
 	}
 
-	s.mu.Lock()
-	if entryID, ok := s.jobs[id]; ok {
-		s.cron.Remove(entryID)
-		delete(s.jobs, id)
-		delete(s.jobSchedules, id)
-	}
-	s.mu.Unlock()
+	s.unscheduleJob(id)
 
-	job.Status = "paused"
+	job.Status = StatusPaused
 	return s.store.Update(job) // Update regenerates token
 }
 
@@ -237,10 +234,10 @@ func (s *Scheduler) ResumeJob(readID string) error {
 	if err != nil {
 		return err
 	}
-	if job.Status != "paused" {
+	if job.Status != StatusPaused {
 		return fmt.Errorf("job %s is not paused (status: %s)", id, job.Status)
 	}
-	job.Status = "active"
+	job.Status = StatusActive
 	if s.isLeader.Load() {
 		if err := s.scheduleJob(job); err != nil {
 			return err
@@ -264,6 +261,17 @@ func (s *Scheduler) scheduleJob(job *Job) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.scheduleJobLocked(job)
+}
+
+// unscheduleJob removes a job from the in-memory cron scheduler (acquires lock).
+func (s *Scheduler) unscheduleJob(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if entryID, ok := s.jobs[id]; ok {
+		s.cron.Remove(entryID)
+		delete(s.jobs, id)
+		delete(s.jobSchedules, id)
+	}
 }
 
 // scheduleJobLocked registers a job assuming mu is already held.
@@ -379,7 +387,7 @@ func (s *Scheduler) updateAndPersistJob(job *Job, now time.Time) {
 			}
 		}
 	} else {
-		job.Status = "completed"
+		job.Status = StatusCompleted
 		if entryID, ok := s.jobs[job.ID]; ok {
 			s.cron.Remove(entryID)
 			delete(s.jobs, job.ID)

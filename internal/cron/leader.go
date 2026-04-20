@@ -32,7 +32,9 @@ func (s *Scheduler) renewLeaseLoop(ctx context.Context) {
 					// continue loop — will retry next tick
 				} else if acquired {
 					slog.Info("re-acquired scheduler leader lease", "holder", s.holderID)
+					s.mu.Lock()
 					s.cron = cron.New()
+					s.mu.Unlock()
 					s.isLeader.Store(true)
 					s.rescheduleAllJobs()
 					s.cron.Start()
@@ -63,6 +65,7 @@ func (s *Scheduler) renewLeaseLoop(ctx context.Context) {
 func (s *Scheduler) rescheduleAllJobs() {
 	// Clear stale entries from deleted jobs before re-scheduling.
 	s.mu.Lock()
+	s.jobs = make(map[string]cron.EntryID)
 	s.jobSchedules = make(map[string]string)
 	s.mu.Unlock()
 
@@ -73,7 +76,7 @@ func (s *Scheduler) rescheduleAllJobs() {
 		return
 	}
 	for _, job := range jobs {
-		if job.Status != "active" {
+		if job.Status != StatusActive {
 			continue
 		}
 		if err := s.scheduleJob(job); err != nil {
@@ -86,13 +89,13 @@ func (s *Scheduler) rescheduleAllJobs() {
 // differences. Called periodically by the leader to pick up jobs created or
 // modified on follower instances.
 func (s *Scheduler) syncJobs() {
-	if !s.store.HasChanged() {
-		return
-	}
-	storeJobs, err := s.store.ListReadOnly()
+	storeJobs, err := s.store.ListReadOnlyIfChanged()
 	if err != nil {
 		slog.Warn("failed to list jobs for sync", "error", err)
 		return
+	}
+	if storeJobs == nil {
+		return // unchanged
 	}
 
 	s.mu.Lock()
@@ -107,7 +110,7 @@ func (s *Scheduler) syncJobs() {
 	// Remove jobs that no longer exist in store or are paused/deleted.
 	for id := range s.jobs {
 		sj, exists := storeIDs[id]
-		if !exists || sj.Status != "active" {
+		if !exists || sj.Status != StatusActive {
 			s.cron.Remove(s.jobs[id])
 			delete(s.jobs, id)
 			if !exists {
@@ -120,7 +123,7 @@ func (s *Scheduler) syncJobs() {
 
 	// Add new active jobs not yet in memory, and reschedule jobs with changed schedules.
 	for id, sj := range storeIDs {
-		if sj.Status != "active" {
+		if sj.Status != StatusActive {
 			continue
 		}
 		if _, exists := s.jobs[id]; !exists {

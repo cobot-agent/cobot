@@ -13,6 +13,12 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const (
+	StatusActive    = "active"
+	StatusPaused    = "paused"
+	StatusCompleted = "completed"
+)
+
 var validJobID = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
 // ValidateJobID returns an error if the ID contains characters that could
@@ -111,6 +117,9 @@ func (s *Store) writeJob(job *Job) error {
 func (s *Store) HasChanged() bool {
 	entries, err := os.ReadDir(s.dir)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return false
+		}
 		return true // assume changed if we can't read
 	}
 	var (
@@ -157,7 +166,7 @@ func (s *Store) loadJob(id string) (*Job, error) {
 }
 
 // listJobIDs scans the store directory and returns job IDs (derived from .yaml filenames).
-func (s *Store) listJobIDs() ([]string, error) {
+func (s *Store) ListJobIDs() ([]string, error) {
 	entries, err := os.ReadDir(s.dir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -231,16 +240,17 @@ func (s *Store) Read(id string, expectedToken ...string) (*Job, error) {
 // Each job gets a fresh ReadToken (via Get), so every list call invalidates
 // all previously issued read_ids.
 func (s *Store) List() ([]*Job, error) {
-	ids, err := s.listJobIDs()
+	ids, err := s.ListJobIDs()
 	if err != nil {
 		return nil, err
 	}
 	var jobs []*Job
 	for _, id := range ids {
-		job, err := s.Get(id) // Get refreshes the token
+		job, err := s.loadJob(id)
 		if err != nil {
-			continue // skip malformed files
+			continue
 		}
+		job.ReadToken = generateToken()
 		jobs = append(jobs, job)
 	}
 	return jobs, nil
@@ -250,7 +260,7 @@ func (s *Store) List() ([]*Job, error) {
 // Use this for internal sync/reconcile operations that don't need
 // optimistic-concurrency tokens, avoiding O(n) file writes.
 func (s *Store) ListReadOnly() ([]*Job, error) {
-	ids, err := s.listJobIDs()
+	ids, err := s.ListJobIDs()
 	if err != nil {
 		return nil, err
 	}
@@ -263,6 +273,15 @@ func (s *Store) ListReadOnly() ([]*Job, error) {
 		jobs = append(jobs, job)
 	}
 	return jobs, nil
+}
+
+// ListReadOnlyIfChanged returns jobs only if the store has changed since
+// the last call. Returns (nil, nil) if unchanged.
+func (s *Store) ListReadOnlyIfChanged() ([]*Job, error) {
+	if !s.HasChanged() {
+		return nil, nil
+	}
+	return s.ListReadOnly()
 }
 
 // Update rewrites a job file. Regenerates ReadToken on each update.

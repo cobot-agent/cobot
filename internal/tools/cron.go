@@ -117,7 +117,7 @@ func (t *CronTool) handleCreate(ctx context.Context, params cronParams) (string,
 		Schedule:  params.Schedule,
 		Prompt:    params.Prompt,
 		Model:     params.Model,
-		Status:    "active",
+		Status:    cron.StatusActive,
 		OneShot:   oneShot,
 		CreatedAt: time.Now(),
 		ChannelID: t.currentChannelID(),
@@ -168,46 +168,28 @@ func (t *CronTool) handleList() (string, error) {
 	return result, nil
 }
 
-func (t *CronTool) handleDelete(params cronParams) (string, error) {
-	if params.ReadID == "" {
-		return "", fmt.Errorf("read_id is required for delete action. Use the list action first to get the current read_id")
+// withReadID validates and extracts a job ID from readID, calls fn, and formats the result.
+func (t *CronTool) withReadID(readID string, action string, fn func(string) error, verb string) (string, error) {
+	if readID == "" {
+		return "", fmt.Errorf("read_id is required for %s action. Use the list action first to get the current read_id", action)
 	}
-
-	if err := t.scheduler.RemoveJob(params.ReadID); err != nil {
+	if err := fn(readID); err != nil {
 		return "", err
 	}
+	jobID, _, _ := cron.ParseReadID(readID)
+	return fmt.Sprintf("Job %s %s.", jobID, verb), nil
+}
 
-	// Best-effort extraction for display; RemoveJob already validated the readID.
-	jobID, _, _ := cron.ParseReadID(params.ReadID)
-	return fmt.Sprintf("Job %s deleted.", jobID), nil
+func (t *CronTool) handleDelete(params cronParams) (string, error) {
+	return t.withReadID(params.ReadID, "delete", t.scheduler.RemoveJob, "deleted")
 }
 
 func (t *CronTool) handlePause(params cronParams) (string, error) {
-	if params.ReadID == "" {
-		return "", fmt.Errorf("read_id is required for pause action. Use the list action first to get the current read_id")
-	}
-
-	if err := t.scheduler.PauseJob(params.ReadID); err != nil {
-		return "", err
-	}
-
-	// Best-effort extraction for display; PauseJob already validated the readID.
-	jobID, _, _ := cron.ParseReadID(params.ReadID)
-	return fmt.Sprintf("Job %s paused.", jobID), nil
+	return t.withReadID(params.ReadID, "pause", t.scheduler.PauseJob, "paused")
 }
 
 func (t *CronTool) handleResume(params cronParams) (string, error) {
-	if params.ReadID == "" {
-		return "", fmt.Errorf("read_id is required for resume action. Use the list action first to get the current read_id")
-	}
-
-	if err := t.scheduler.ResumeJob(params.ReadID); err != nil {
-		return "", err
-	}
-
-	// Best-effort extraction for display; ResumeJob already validated the readID.
-	jobID, _, _ := cron.ParseReadID(params.ReadID)
-	return fmt.Sprintf("Job %s resumed.", jobID), nil
+	return t.withReadID(params.ReadID, "resume", t.scheduler.ResumeJob, "resumed")
 }
 
 func (t *CronTool) handleListRuns(params cronParams) (string, error) {

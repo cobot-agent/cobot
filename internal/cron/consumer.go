@@ -41,7 +41,7 @@ func (s *Scheduler) ackAllExisting(ctx context.Context) {
 		return
 	}
 	for {
-		msgs, err := s.broker.Consume(ctx, "cron_result", "", s.sessionID, 100)
+		msgs, err := s.broker.Consume(ctx, cobot.MessageTypeCronResult, "", s.sessionID, 100)
 		if err != nil || len(msgs) == 0 {
 			return
 		}
@@ -67,7 +67,7 @@ func (s *Scheduler) consumeOnce(ctx context.Context) {
 		}
 	}()
 	// sessionID is used as the consume session identity (separate from leader lease holderID).
-	msgs, err := s.broker.Consume(ctx, "cron_result", "", s.sessionID, 50)
+	msgs, err := s.broker.Consume(ctx, cobot.MessageTypeCronResult, "", s.sessionID, 50)
 	if err != nil {
 		slog.Warn("failed to consume cron results", "error", err)
 		return
@@ -120,7 +120,11 @@ func (s *Scheduler) publishJobResult(job *Job, result string, runErr error, dura
 	if runErr != nil {
 		payload.Error = runErr.Error()
 	}
-	msg := NewCronResultMessage(job.ChannelID, payload)
+	msg, err := NewCronResultMessage(job.ChannelID, payload)
+	if err != nil {
+		slog.Warn("failed to marshal cron result", "job_id", job.ID, "error", err)
+		return
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), brokerOpTimeout)
 	defer cancel()
 	if err := s.broker.Publish(ctx, msg); err != nil {
