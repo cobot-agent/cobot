@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -153,7 +154,9 @@ func (a *Agent) ChannelManager() *channel.Manager {
 
 func (a *Agent) SetBroker(b broker.Broker) {
 	if a.broker != nil {
-		a.broker.Close()
+		if err := a.broker.Close(); err != nil {
+			slog.Warn("closing previous broker", "error", err)
+		}
 		a.broker = nil
 	}
 	a.broker = b

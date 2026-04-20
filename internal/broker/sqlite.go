@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/cobot-agent/cobot/pkg/broker"
@@ -18,11 +19,10 @@ import (
 const sqliteTimeFmt = "2006-01-02 15:04:05.000000"
 
 // sessionTTL is the duration after which a session without heartbeat is
-// considered dead. Used by ListByChannel, ListAll and Cleanup.
-// NOTE: This value (60s) is coupled to the channel manager's health check
-// interval. If that interval changes, sessionTTL should be updated accordingly
-// to avoid prematurely expiring sessions or keeping stale ones too long.
-const sessionTTL = 60 * time.Second
+// considered dead. Aligned with the channel manager's expiry policy
+// (3 × healthCheckInterval of 30s = 90s) to avoid prematurely expiring
+// sessions that are still alive from the manager's perspective.
+const sessionTTL = 90 * time.Second
 
 // messageTTL is the maximum age of a message before it is cleaned up,
 // regardless of ack status. This prevents unbounded growth when consumers
@@ -31,7 +31,7 @@ const messageTTL = 7 * 24 * time.Hour
 
 // SQLiteBroker implements the broker.Broker interface using SQLite WAL mode
 // for multi-process coordination.
-// It corresponds to a single shared coord.db file (usually placed at <workspace>/cron/coord.db).
+// It corresponds to a single shared coord.db file (placed at <workspace>/coord.db).
 type SQLiteBroker struct {
 	db *sql.DB
 }
@@ -142,7 +142,10 @@ func (b *SQLiteBroker) Renew(ctx context.Context, name, holder string, ttl time.
 	if err != nil {
 		return err
 	}
-	rows, _ := res.RowsAffected()
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("renew lock %q: %w", name, err)
+	}
 	if rows == 0 {
 		return fmt.Errorf("lock %q not held by %q or expired", name, holder)
 	}
@@ -222,10 +225,14 @@ func (b *SQLiteBroker) listSessions(ctx context.Context, query string, args ...a
 // --- PubSub implementation ---
 
 func (b *SQLiteBroker) Publish(ctx context.Context, msg *broker.Message) error {
+	createdAt := msg.CreatedAt
+	if createdAt.IsZero() {
+		createdAt = time.Now().UTC()
+	}
 	_, err := b.db.ExecContext(ctx, `
 		INSERT INTO messages (topic, channel_id, payload, created_at)
 		VALUES (?, ?, ?, ?);
-	`, msg.Topic, msg.ChannelID, msg.Payload, msg.CreatedAt.Format(sqliteTimeFmt))
+	`, msg.Topic, msg.ChannelID, msg.Payload, createdAt.Format(sqliteTimeFmt))
 	return err
 }
 
@@ -280,12 +287,27 @@ func (b *SQLiteBroker) Consume(ctx context.Context, topic, channelID, sessionID 
 	return results, rows.Err()
 }
 
+// parseMsgID validates that msgID is a valid int64 to match the INTEGER
+// primary key in the messages table. Returns an error for non-numeric strings
+// that SQLite would otherwise silently coerce to 0.
+func parseMsgID(msgID string) (int64, error) {
+	n, err := strconv.ParseInt(msgID, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid message ID %q: expected numeric", msgID)
+	}
+	return n, nil
+}
+
 func (b *SQLiteBroker) Ack(ctx context.Context, msgID, sessionID string) error {
-	_, err := b.db.ExecContext(ctx, `
+	id, err := parseMsgID(msgID)
+	if err != nil {
+		return err
+	}
+	_, err = b.db.ExecContext(ctx, `
 		INSERT INTO receipts (message_id, session_id, acked_at)
 		VALUES (?, ?, ?)
 		ON CONFLICT DO NOTHING;
-	`, msgID, sessionID, time.Now().UTC().Format(sqliteTimeFmt))
+	`, id, sessionID, time.Now().UTC().Format(sqliteTimeFmt))
 	return err
 }
 
@@ -304,7 +326,11 @@ func (b *SQLiteBroker) AckAll(ctx context.Context, msgIDs []string, sessionID st
 		return err
 	}
 	defer stmt.Close()
-	for _, id := range msgIDs {
+	for _, rawID := range msgIDs {
+		id, err := parseMsgID(rawID)
+		if err != nil {
+			return err
+		}
 		if _, err := stmt.ExecContext(ctx, id, sessionID, now); err != nil {
 			return err
 		}

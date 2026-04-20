@@ -101,14 +101,14 @@ func (b *BaseChannel) CheckAlive() error {
 // your channel's own fields that are protected by BaseChannel's mutex.
 func (b *BaseChannel) WithRLock(fn func()) {
 	b.mu.RLock()
+	defer b.mu.RUnlock()
 	fn()
-	b.mu.RUnlock()
 }
 
 // WithLock runs fn while holding the write lock. Use this to safely modify
 // your channel's own fields that are protected by BaseChannel's mutex.
 func (b *BaseChannel) WithLock(fn func()) {
 	b.mu.Lock()
+	defer b.mu.Unlock()
 	fn()
-	b.mu.Unlock()
 }
