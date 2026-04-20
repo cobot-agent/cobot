@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/cobot-agent/cobot/internal/agent"
-	brokersqlite "github.com/cobot-agent/cobot/internal/broker"
 	"github.com/cobot-agent/cobot/internal/channel"
 	"github.com/cobot-agent/cobot/internal/config"
 	"github.com/cobot-agent/cobot/internal/cron"
@@ -234,34 +233,32 @@ func configureDelegateTool(a *agent.Agent, ws *workspace.Workspace, registry cob
 }
 
 func configureCronTool(a *agent.Agent, ws *workspace.Workspace, registry cobot.ModelResolver) {
-	// --- Stop previous scheduler if switching workspaces. ---
+	// Stop previous scheduler if switching workspaces.
 	if a.CronScheduler() != nil {
 		a.CronScheduler().Stop()
 	}
 
-	// --- Create broker for distributed coordination. ---
-	brokerDB, err := brokersqlite.NewSQLiteBroker(ws.BrokerDBPath())
+	channelMgr := a.ChannelManager()
+	scheduler, brokerDB, err := cron.Setup(a.Context(), cron.SetupConfig{
+		BrokerDBPath: ws.BrokerDBPath(),
+		CronDir:      ws.CronDir(),
+		RunsDir:      ws.CronRunsDir(),
+		Notifier:     channelMgr,
+		NewAgent: func() *agent.Agent {
+			filtered := a.ToolRegistry().Clone().Without("cron", "delegate_task")
+			sub := newSubAgent(a, registry, filtered)
+			_ = sub.SessionMgr().SetSystemPrompt("You are a scheduled task executor. Complete the task efficiently and output results.")
+			return sub
+		},
+	})
 	if err != nil {
-		slog.Warn("failed to create broker", "error", err)
+		slog.Warn("failed to setup cron", "error", err)
 		return
 	}
+
 	a.SetBroker(brokerDB)
-
-	// --- Create cron executor with sub-agent factory. ---
-	cronDir := ws.CronDir()
-	cronStore := cron.NewStore(cronDir)
-	runStore := cron.NewRunStore(ws.CronRunsDir())
-	executeFn := cron.NewAgentExecutor(func() *agent.Agent {
-		filtered := a.ToolRegistry().Clone().Without("cron", "delegate_task")
-		sub := newSubAgent(a, registry, filtered)
-		_ = sub.SessionMgr().SetSystemPrompt("You are a scheduled task executor. Complete the task efficiently and output results.")
-		return sub
-	}, runStore)
-
-	// --- Wire up scheduler, channel notification, and register tool. ---
-	channelMgr := a.ChannelManager()
-	cronScheduler := cron.NewScheduler(cronStore, executeFn, runStore, brokerDB, channelMgr)
-	a.RegisterTool(tools.NewCronTool(cronScheduler,
+	a.SetCronScheduler(scheduler)
+	a.RegisterTool(tools.NewCronTool(scheduler,
 		tools.WithCronChannelIDFn(func() string {
 			ids := channelMgr.AllAliveIDs()
 			if len(ids) > 0 {
@@ -270,14 +267,6 @@ func configureCronTool(a *agent.Agent, ws *workspace.Workspace, registry cobot.M
 			return ""
 		}),
 	))
-
-	ctx := a.Context()
-	if err := cronScheduler.Start(ctx); err != nil {
-		slog.Warn("failed to start cron scheduler", "error", err)
-		_ = brokerDB.Close()
-		return
-	}
-	a.SetCronScheduler(cronScheduler)
 }
 
 // --- private helpers (moved from cmd/cobot/helpers.go) ---
