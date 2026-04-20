@@ -11,8 +11,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/cobot-agent/cobot/internal/agent"
+	"github.com/cobot-agent/cobot/internal/channel"
 	"github.com/cobot-agent/cobot/internal/config"
 	"github.com/cobot-agent/cobot/internal/cron"
 	"github.com/cobot-agent/cobot/internal/llm"
@@ -27,9 +29,10 @@ import (
 // Result bundles everything InitAgent produces so callers don't juggle
 // multiple return values.
 type Result struct {
-	Agent     *agent.Agent
-	Workspace *workspace.Workspace
-	Cleanup   func()
+	Agent      *agent.Agent
+	Workspace  *workspace.Workspace
+	ChannelMgr *channel.Manager
+	Cleanup    func()
 }
 
 // InitAgent creates a fully-wired Agent for the given Config. When
@@ -62,6 +65,13 @@ func InitAgent(cfg *cobot.Config, requireProvider bool) (*Result, error) {
 	toolReg := tools.NewRegistry()
 	a := agent.New(cfg, toolReg)
 
+	channelMgr := channel.NewManager()
+	a.SetChannelManager(channelMgr)
+
+	// Start channel health check (30 second interval).
+	hcCtx, hcCancel := context.WithCancel(context.Background())
+	channelMgr.StartHealthCheck(hcCtx, 30*time.Second)
+
 	sm := a.SessionMgr()
 
 	if agentCfg != nil && agentCfg.Session != nil {
@@ -84,11 +94,6 @@ func InitAgent(cfg *cobot.Config, requireProvider bool) (*Result, error) {
 	sessionStore := agent.NewSessionStore(ws.SessionsDir())
 	sm.SetSessionStore(sessionStore)
 
-	if agentCfg != nil && agentCfg.SystemPrompt != "" {
-		prompt := resolveSystemPrompt(agentCfg.SystemPrompt, ws)
-		_ = sm.SetSystemPrompt(prompt)
-	}
-
 	// Create LLM registry for multi-provider model switching.
 	registry := llm.NewRegistry(cfg)
 	a.SetRegistry(registry)
@@ -96,18 +101,26 @@ func InitAgent(cfg *cobot.Config, requireProvider bool) (*Result, error) {
 	// SetModel resolves the "provider:model" spec and initializes the provider.
 	if err := a.SetModel(cfg.Model); err != nil {
 		if requireProvider {
+			hcCancel()
+			channelMgr.StopHealthCheck()
 			return nil, err
 		}
 		slog.Warn("provider init failed", "err", err)
 	}
 
 	if err := ConfigureAgentForWorkspace(a, ws, registry); err != nil {
+		hcCancel()
+		channelMgr.StopHealthCheck()
 		return nil, err
 	}
 
 	// a.Close() already closes the memory store; no need for separate cleanup.
-	cleanup := func() { a.Close() }
-	return &Result{Agent: a, Workspace: ws, Cleanup: cleanup}, nil
+	cleanup := func() {
+		hcCancel()
+		channelMgr.StopHealthCheck()
+		a.Close()
+	}
+	return &Result{Agent: a, Workspace: ws, ChannelMgr: channelMgr, Cleanup: cleanup}, nil
 }
 
 // ConfigureAgentForWorkspace (re)configures an existing agent for a workspace:

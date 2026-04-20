@@ -17,6 +17,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/glamour/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 
 	"github.com/cobot-agent/cobot/internal/agent"
@@ -58,13 +59,15 @@ type tuiModel struct {
 	// used to debounce Enter after IME composition commits.
 	lastTextInput time.Time
 
-	userStyle   lipgloss.Style
-	errorStyle  lipgloss.Style
-	toolStyle   lipgloss.Style
-	statusStyle lipgloss.Style
-	queuedStyle lipgloss.Style
-	hubStyle    lipgloss.Style
-	wsMgr       *workspace.Manager
+	userStyle      lipgloss.Style
+	errorStyle     lipgloss.Style
+	toolStyle      lipgloss.Style
+	statusStyle    lipgloss.Style
+	queuedStyle    lipgloss.Style
+	hubStyle       lipgloss.Style
+	wsMgr          *workspace.Manager
+	notificationCh chan cobot.ChannelMessage
+	tuiChDone      <-chan struct{}
 }
 
 type streamMsg struct {
@@ -132,7 +135,11 @@ func newTUIModel(a *agent.Agent, workspaceName string, wsMgr *workspace.Manager)
 }
 
 func (m tuiModel) Init() tea.Cmd {
-	return tea.Batch(textarea.Blink, m.spinner.Tick, tea.RequestBackgroundColor)
+	cmds := []tea.Cmd{textarea.Blink, m.spinner.Tick, tea.RequestBackgroundColor}
+	if m.notificationCh != nil {
+		cmds = append(cmds, pollNotifications(m.notificationCh, m.tuiChDone))
+	}
+	return tea.Batch(cmds...)
 }
 
 func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -247,6 +254,18 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, scheduleRefresh()
 		}
 		return m, nil
+
+	case notificationMsg:
+		m.messages = append(m.messages, chatMessage{
+			role: "system",
+			raw:  msg.msg.Content,
+		})
+		m.refreshViewport()
+		return m, pollNotifications(m.notificationCh, m.tuiChDone)
+
+	case notificationShutdownMsg:
+		// Notification channel closed (TUI exiting), stop polling.
+		return m, nil
 	}
 
 	var inputCmd tea.Cmd
@@ -359,8 +378,24 @@ var tuiCmd = &cobra.Command{
 			return err
 		}
 
+		// Set up TUI channel for cron notifications
+		notifyCh := make(chan cobot.ChannelMessage, 16)
+		tuiChannelID := resolveTUIChannelID(cfg)
+		tuiCh := newTUIChannel(tuiChannelID, notifyCh)
+		tuiSessionID := "tui:" + uuid.NewString()
+		if res.ChannelMgr != nil {
+			res.ChannelMgr.Register(tuiCh, tuiSessionID)
+			res.ChannelMgr.MarkLocal(tuiSessionID)
+			defer res.ChannelMgr.Unregister(tuiCh.ID(), tuiSessionID)
+			defer tuiCh.Close()
+		}
+
+		mdl := newTUIModel(a, wsName, wsMgr)
+		mdl.notificationCh = notifyCh
+		mdl.tuiChDone = tuiCh.Done()
+
 		p := tea.NewProgram(
-			newTUIModel(a, wsName, wsMgr),
+			mdl,
 			tea.WithContext(context.Background()),
 		)
 		_, err = p.Run()
@@ -370,4 +405,24 @@ var tuiCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(tuiCmd)
+}
+
+// resolveTUIChannelID determines the channel ID for TUI notifications.
+// It scans configured channels for the first TUI-type channel, falling back
+// to "tui:default" if none is found.
+func resolveTUIChannelID(cfg *cobot.Config) string {
+	tuiChannelID := "tui:default"
+	tuiCount := 0
+	for _, ch := range cfg.Channels {
+		if ch.Type == "tui" {
+			tuiCount++
+			if tuiCount == 1 {
+				tuiChannelID = fmt.Sprintf("%s:%s", ch.Type, ch.Name)
+			}
+		}
+	}
+	if tuiCount > 1 {
+		slog.Warn("multiple TUI channels configured, using first", "name", tuiChannelID)
+	}
+	return tuiChannelID
 }

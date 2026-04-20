@@ -44,3 +44,13 @@ func IsSubpath(path, base string) bool {
 	}
 	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
+
+// PathJoinVirtual joins path elements using filepath.Join.
+func PathJoinVirtual(elem ...string) string {
+	return filepath.Join(elem...)
+}
+
+// PathCleanVirtual cleans a path using filepath.Clean.
+func PathCleanVirtual(path string) string {
+	return filepath.Clean(path)
+}
