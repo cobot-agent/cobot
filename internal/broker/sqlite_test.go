@@ -123,7 +123,10 @@ func TestSQLiteBroker_PubSub(t *testing.T) {
 	}
 
 	// Should be empty after ack.
-	msgs2, _ := b.Consume(ctx, "cron_result", "tui:default", "session_X", 10)
+	msgs2, err2 := b.Consume(ctx, "cron_result", "tui:default", "session_X", 10)
+	if err2 != nil {
+		t.Fatalf("consume after ack: %v", err2)
+	}
 	if len(msgs2) != 0 {
 		t.Fatalf("expected 0 after ack, got %d", len(msgs2))
 	}
@@ -164,7 +167,10 @@ func TestSQLiteBroker_SessionRegistry(t *testing.T) {
 		t.Fatalf("unregister: %v", err)
 	}
 
-	sessions2, _ := b.ListByChannel(ctx, "tui:default")
+	sessions2, err2 := b.ListByChannel(ctx, "tui:default")
+	if err2 != nil {
+		t.Fatalf("list after unregister: %v", err2)
+	}
 	if len(sessions2) != 0 {
 		t.Fatalf("expected 0 after unregister, got %d", len(sessions2))
 	}

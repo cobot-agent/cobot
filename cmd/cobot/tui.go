@@ -415,6 +415,10 @@ func resolveTUIChannelID(cfg *cobot.Config) string {
 	tuiCount := 0
 	for _, ch := range cfg.Channels {
 		if ch.Type == "tui" {
+			if ch.Name == "" {
+				slog.Warn("TUI channel has empty name, skipping")
+				continue
+			}
 			tuiCount++
 			if tuiCount == 1 {
 				tuiChannelID = fmt.Sprintf("%s:%s", ch.Type, ch.Name)
