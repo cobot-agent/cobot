@@ -18,6 +18,16 @@ import (
 // sqliteTimeFmt matches SQLite strftime('%%Y-%%m-%%d %%H:%%M:%%f', 'now') output so text comparisons work correctly.
 const sqliteTimeFmt = "2006-01-02 15:04:05.000000"
 
+// nowUTC returns the current UTC time formatted for SQLite text columns.
+func nowUTC() string {
+	return time.Now().UTC().Format(sqliteTimeFmt)
+}
+
+// formatTime formats a time.Time for SQLite text columns.
+func formatTime(t time.Time) string {
+	return t.UTC().Format(sqliteTimeFmt)
+}
+
 // sessionTTL is the duration after which a session without heartbeat is
 // considered dead. Aligned with the channel manager's expiry policy
 // (3 × healthCheckInterval of 30s = 90s) to avoid prematurely expiring
@@ -122,7 +132,7 @@ func (b *SQLiteBroker) TryAcquire(ctx context.Context, name, holder string, ttl 
 			expires_at = excluded.expires_at
 		WHERE locks.expires_at < ?
 		RETURNING holder;
-	`, name, holder, now.Format(sqliteTimeFmt), expires.Format(sqliteTimeFmt), now.Format(sqliteTimeFmt)).Scan(&actual)
+	`, name, holder, formatTime(now), formatTime(expires), formatTime(now)).Scan(&actual)
 	if err == sql.ErrNoRows {
 		return false, nil
 	}
@@ -167,34 +177,50 @@ func (b *SQLiteBroker) Register(ctx context.Context, info *broker.SessionInfo) e
 			channel_id = excluded.channel_id,
 			pid = excluded.pid,
 			last_heartbeat = excluded.last_heartbeat;
-	`, info.ID, info.ChannelID, info.PID, info.StartedAt.Format(sqliteTimeFmt), time.Now().UTC().Format(sqliteTimeFmt))
+	`, info.ID, info.ChannelID, info.PID, formatTime(info.StartedAt), nowUTC())
 	return err
 }
 
 func (b *SQLiteBroker) Unregister(ctx context.Context, sessionID string) error {
-	_, err := b.db.ExecContext(ctx, `DELETE FROM receipts WHERE session_id = ?`, sessionID)
+	tx, err := b.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	_, err = b.db.ExecContext(ctx, `DELETE FROM sessions WHERE session_id = ?`, sessionID)
-	return err
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM receipts WHERE session_id = ?`, sessionID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE session_id = ?`, sessionID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (b *SQLiteBroker) Heartbeat(ctx context.Context, sessionID string) error {
-	_, err := b.db.ExecContext(ctx, `
+	res, err := b.db.ExecContext(ctx, `
 		UPDATE sessions SET last_heartbeat = ? WHERE session_id = ?;
-	`, time.Now().UTC().Format(sqliteTimeFmt), sessionID)
-	return err
+	`, nowUTC(), sessionID)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return fmt.Errorf("session %q not found", sessionID)
+	}
+	return nil
 }
 
 func (b *SQLiteBroker) ListByChannel(ctx context.Context, channelID string) ([]*broker.SessionInfo, error) {
-	threshold := time.Now().UTC().Add(-sessionTTL).Format(sqliteTimeFmt)
+	threshold := formatTime(time.Now().UTC().Add(-sessionTTL))
 	return b.listSessions(ctx, `SELECT session_id, channel_id, pid, started_at FROM sessions
 		WHERE channel_id = ? AND last_heartbeat > ?`, channelID, threshold)
 }
 
 func (b *SQLiteBroker) ListAll(ctx context.Context) ([]*broker.SessionInfo, error) {
-	threshold := time.Now().UTC().Add(-sessionTTL).Format(sqliteTimeFmt)
+	threshold := formatTime(time.Now().UTC().Add(-sessionTTL))
 	return b.listSessions(ctx, `SELECT session_id, channel_id, pid, started_at FROM sessions
 		WHERE last_heartbeat > ?`, threshold)
 }
@@ -232,7 +258,7 @@ func (b *SQLiteBroker) Publish(ctx context.Context, msg *broker.Message) error {
 	_, err := b.db.ExecContext(ctx, `
 		INSERT INTO messages (topic, channel_id, payload, created_at)
 		VALUES (?, ?, ?, ?);
-	`, msg.Topic, msg.ChannelID, msg.Payload, createdAt.Format(sqliteTimeFmt))
+	`, msg.Topic, msg.ChannelID, msg.Payload, formatTime(createdAt))
 	return err
 }
 
@@ -251,7 +277,7 @@ func (b *SQLiteBroker) Consume(ctx context.Context, topic, channelID, sessionID 
 	}
 	// Filter out messages older than messageTTL so expired messages are never
 	// delivered even if cleanup hasn't run yet.
-	threshold := time.Now().UTC().Add(-messageTTL).Format(sqliteTimeFmt)
+	threshold := formatTime(time.Now().UTC().Add(-messageTTL))
 	query += ` AND m.created_at > ?`
 	args = append(args, threshold)
 	query += `
@@ -307,7 +333,7 @@ func (b *SQLiteBroker) Ack(ctx context.Context, msgID, sessionID string) error {
 		INSERT INTO receipts (message_id, session_id, acked_at)
 		VALUES (?, ?, ?)
 		ON CONFLICT DO NOTHING;
-	`, id, sessionID, time.Now().UTC().Format(sqliteTimeFmt))
+	`, id, sessionID, nowUTC())
 	return err
 }
 
@@ -315,7 +341,7 @@ func (b *SQLiteBroker) AckAll(ctx context.Context, msgIDs []string, sessionID st
 	if len(msgIDs) == 0 {
 		return nil
 	}
-	now := time.Now().UTC().Format(sqliteTimeFmt)
+	now := nowUTC()
 	tx, err := b.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -353,7 +379,7 @@ func (b *SQLiteBroker) cleanStaleReceipts(ctx context.Context) error {
 // Cleanup deletes expired sessions and fully delivered messages.
 // Typically called periodically by the leader process.
 func (b *SQLiteBroker) Cleanup(ctx context.Context) error {
-	threshold := time.Now().UTC().Add(-sessionTTL).Format(sqliteTimeFmt)
+	threshold := formatTime(time.Now().UTC().Add(-sessionTTL))
 	var errs []error
 
 	// Delete sessions without heartbeat for the TTL duration.
@@ -364,13 +390,14 @@ func (b *SQLiteBroker) Cleanup(ctx context.Context) error {
 
 	// Delete messages older than messageTTL (7 days) regardless of ack status.
 	// This prevents unbounded growth when consumers die without acking.
-	messageTTLThreshold := time.Now().UTC().Add(-messageTTL).Format(sqliteTimeFmt)
+	messageTTLThreshold := formatTime(time.Now().UTC().Add(-messageTTL))
 	_, err = b.db.ExecContext(ctx, `DELETE FROM messages WHERE created_at < ?;`, messageTTLThreshold)
 	if err != nil {
 		errs = append(errs, fmt.Errorf("cleanup expired messages: %w", err))
 	}
 
-	// Delete messages that have been acked by all active sessions for that channel.
+	// Delete messages that have been acked by all active sessions for that channel,
+	// OR messages whose channel has no active sessions (orphaned).
 	// Batched with loop to drain large backlogs within a single cleanup run.
 	for i := 0; i < 100; i++ {
 		if ctx.Err() != nil {
@@ -380,16 +407,13 @@ func (b *SQLiteBroker) Cleanup(ctx context.Context) error {
 			DELETE FROM messages
 			WHERE id IN (
 				SELECT m.id FROM messages m
-				WHERE EXISTS (
-					SELECT 1 FROM sessions s WHERE s.channel_id = m.channel_id
-				)
-				AND NOT EXISTS (
+				WHERE NOT EXISTS (
 					SELECT 1 FROM sessions s
 					WHERE s.channel_id = m.channel_id
-					  AND NOT EXISTS (
-						  SELECT 1 FROM receipts r
-						  WHERE r.message_id = m.id AND r.session_id = s.session_id
-					  )
+					AND NOT EXISTS (
+						SELECT 1 FROM receipts r
+						WHERE r.message_id = m.id AND r.session_id = s.session_id
+					)
 				)
 				LIMIT 1000
 			);

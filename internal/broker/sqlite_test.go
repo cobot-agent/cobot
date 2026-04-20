@@ -69,14 +69,20 @@ func TestSQLiteBroker_LockExpire(t *testing.T) {
 	defer cleanup()
 	ctx := context.Background()
 
-	ok, _ := b.TryAcquire(ctx, "test", "A", 50*time.Millisecond)
+	ok, err := b.TryAcquire(ctx, "test", "A", 200*time.Millisecond)
+	if err != nil {
+		t.Fatalf("A acquire: %v", err)
+	}
 	if !ok {
 		t.Fatal("A should acquire")
 	}
 
-	time.Sleep(100 * time.Millisecond) // wait for lock to expire
+	time.Sleep(400 * time.Millisecond) // wait for lock to expire
 
-	ok2, _ := b.TryAcquire(ctx, "test", "B", 1*time.Second)
+	ok2, err := b.TryAcquire(ctx, "test", "B", 1*time.Second)
+	if err != nil {
+		t.Fatalf("B acquire: %v", err)
+	}
 	if !ok2 {
 		t.Fatal("B should steal expired lock")
 	}
@@ -92,7 +98,7 @@ func TestSQLiteBroker_PubSub(t *testing.T) {
 		Topic:     "cron_result",
 		ChannelID: "tui:default",
 		Payload:   []byte(`{"job_id":"j1","result":"ok"}`),
-		CreatedAt: time.Now(),
+		CreatedAt: time.Now().UTC(),
 	}
 
 	if err := b.Publish(ctx, msg); err != nil {

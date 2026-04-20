@@ -113,8 +113,8 @@ func TestManagerHeartbeat(t *testing.T) {
 	ch := &mockChannel{BaseChannel: cobot.NewBaseChannel("test:1")}
 	mgr.Register(ch, "test-session")
 
-	// Start health check: 50ms interval, 150ms timeout (3x)
-	mgr.StartHealthCheck(ctx, 50*time.Millisecond)
+	// Start health check: 200ms interval, 600ms timeout (3x)
+	mgr.StartHealthCheck(ctx, 200*time.Millisecond)
 
 	// Channel should be alive initially (registered sets heartbeat)
 	_, alive := mgr.Get("test:1")
@@ -123,7 +123,7 @@ func TestManagerHeartbeat(t *testing.T) {
 	}
 
 	// Wait for 2 check cycles without heartbeat — channel should be removed
-	time.Sleep(250 * time.Millisecond)
+	time.Sleep(800 * time.Millisecond)
 
 	_, alive = mgr.Get("test:1")
 	if alive {

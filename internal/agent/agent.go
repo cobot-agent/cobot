@@ -251,7 +251,7 @@ func (a *Agent) Close() error {
 	// Close broker if set.
 	if a.broker != nil {
 		if err := a.broker.Close(); err != nil {
-			return fmt.Errorf("close broker: %w", err)
+			slog.Warn("close broker", "error", err)
 		}
 		a.broker = nil
 	}
