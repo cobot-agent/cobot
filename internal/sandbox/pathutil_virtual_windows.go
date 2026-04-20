@@ -15,14 +15,6 @@ func VirtualSeparator() string {
 	return `\`
 }
 
-func PathJoinVirtual(elem ...string) string {
-	return filepath.Join(elem...)
-}
-
-func PathCleanVirtual(path string) string {
-	return filepath.Clean(path)
-}
-
 func VirtualToNative(path string) string {
 	return strings.ReplaceAll(path, "/", `\`)
 }

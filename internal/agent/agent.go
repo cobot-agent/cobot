@@ -3,10 +3,13 @@ package agent
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
+	"github.com/cobot-agent/cobot/internal/channel"
 	cobot "github.com/cobot-agent/cobot/pkg"
+	"github.com/cobot-agent/cobot/pkg/broker"
 )
 
 // --- Session ---
@@ -77,6 +80,8 @@ type Agent struct {
 	agentCtx      context.Context
 	agentCancel   context.CancelFunc
 	cronScheduler CronScheduler
+	channelMgr    *channel.Manager
+	broker        broker.Broker
 }
 
 // CronScheduler is a minimal interface for stopping the cron scheduler.
@@ -133,6 +138,37 @@ func (a *Agent) RegisterTool(tool cobot.Tool) {
 
 func (a *Agent) SetCronScheduler(s CronScheduler) {
 	a.cronScheduler = s
+}
+
+func (a *Agent) CronScheduler() CronScheduler {
+	return a.cronScheduler
+}
+
+func (a *Agent) SetChannelManager(mgr *channel.Manager) {
+	a.channelMgr = mgr
+}
+
+func (a *Agent) ChannelManager() *channel.Manager {
+	return a.channelMgr
+}
+
+func (a *Agent) SetBroker(b broker.Broker) {
+	a.closeBroker()
+	a.broker = b
+}
+
+// closeBroker safely closes the current broker, logging any error.
+func (a *Agent) closeBroker() {
+	if a.broker != nil {
+		if err := a.broker.Close(); err != nil {
+			slog.Warn("close broker", "error", err)
+		}
+		a.broker = nil
+	}
+}
+
+func (a *Agent) Context() context.Context {
+	return a.agentCtx
 }
 
 func (a *Agent) Config() *cobot.Config {
@@ -216,6 +252,9 @@ func (a *Agent) Close() error {
 	if a.cronScheduler != nil {
 		a.cronScheduler.Stop()
 	}
+
+	// Close broker if set.
+	a.closeBroker()
 
 	// Promote valuable STM items to LTM before closing the memory store.
 	sm := a.sessionMgr

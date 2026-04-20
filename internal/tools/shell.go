@@ -41,30 +41,6 @@ func WithShellSandboxConfig(config *sandbox.SandboxConfig) ShellExecToolOption {
 	return func(t *ShellExecTool) { t.config = config }
 }
 
-// WithShellBlockedCommands is kept for backward compatibility.
-// Prefer using WithShellSandboxConfig instead.
-func WithShellBlockedCommands(blocked []string) ShellExecToolOption {
-	return func(t *ShellExecTool) {
-		if t.config == nil {
-			t.config = &sandbox.SandboxConfig{}
-		}
-		t.config.BlockedCommands = blocked
-	}
-}
-
-func WithShellAllowNetwork(allow bool) ShellExecToolOption {
-	return func(t *ShellExecTool) {
-		if t.config == nil {
-			t.config = &sandbox.SandboxConfig{}
-		}
-		t.config.AllowNetwork = allow
-	}
-}
-
-func WithShellTimeout(d time.Duration) ShellExecToolOption {
-	return func(t *ShellExecTool) { t.timeout = d }
-}
-
 var networkCommands = []string{
 	"curl", "wget", "ssh", "scp", "sftp", "nc", "ncat", "netcat",
 	"telnet", "ftp", "rsync", "ping", "nslookup", "dig", "host",

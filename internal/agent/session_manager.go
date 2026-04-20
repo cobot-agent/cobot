@@ -33,7 +33,7 @@ type SessionManager struct {
 func NewSessionManager() *SessionManager {
 	return &SessionManager{
 		session:            NewSession(),
-		sessionID:          uuid.New().String(),
+		sessionID:          uuid.NewString(),
 		usageTracker:       NewUsageTracker(),
 		stmPromoteInterval: 10,
 	}
@@ -64,16 +64,6 @@ func (sm *SessionManager) SetSessionConfig(sc cobot.SessionConfig) {
 
 func (sm *SessionManager) SessionConfig() cobot.SessionConfig {
 	return sm.sessionConfig
-}
-
-// persistSession writes the full session to the session store.
-func (sm *SessionManager) persistSession(model string) {
-	if sm.sessionStore == nil {
-		return
-	}
-	if err := sm.sessionStore.Save(sm.sessionID, sm.session, sm.usageTracker.Get(), model); err != nil {
-		slog.Warn("failed to persist session", "err", err)
-	}
 }
 
 // persistMessage appends a single message to the session JSONL file.

@@ -99,11 +99,6 @@ func NewTransport(timeout *time.Duration) *http.Transport {
 	return t
 }
 
-// NewHTTPClient returns a client with no response-header timeout.
-func NewHTTPClient() *http.Client {
-	return &http.Client{Transport: NewTransport(nil)}
-}
-
 // NewHTTPClientWithTimeout returns a client with the given response-header timeout.
 func NewHTTPClientWithTimeout(timeout *time.Duration) *http.Client {
 	return &http.Client{Transport: NewTransport(timeout)}

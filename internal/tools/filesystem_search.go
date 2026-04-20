@@ -101,6 +101,14 @@ func (t *SearchFilesTool) searchWithFd(ctx context.Context, a *searchFilesArgs, 
 	return result, nil
 }
 
+func shouldSkipDir(name string) bool {
+	switch name {
+	case ".git", "node_modules", ".svn", ".hg", "__pycache__", ".idea", ".vscode":
+		return true
+	}
+	return strings.HasPrefix(name, ".") && name != "."
+}
+
 // searchWithGo is the Go builtin fallback for filename search.
 func (t *SearchFilesTool) searchWithGo(a *searchFilesArgs, maxResults int) (string, error) {
 	var matches []string
@@ -112,11 +120,7 @@ func (t *SearchFilesTool) searchWithGo(a *searchFilesArgs, maxResults int) (stri
 			return fs.SkipAll
 		}
 		if d.IsDir() {
-			name := d.Name()
-			if name == ".git" || name == "node_modules" || name == ".svn" || name == ".hg" || name == "__pycache__" || name == ".idea" || name == ".vscode" {
-				return fs.SkipDir
-			}
-			if strings.HasPrefix(name, ".") && name != "." {
+			if shouldSkipDir(d.Name()) {
 				return fs.SkipDir
 			}
 			return nil
@@ -269,11 +273,7 @@ func (t *GrepFilesTool) grepWithGo(a *grepFilesArgs, maxResults int) (string, er
 		}
 		// Skip hidden and common ignored directories
 		if d.IsDir() {
-			name := d.Name()
-			if name == ".git" || name == "node_modules" || name == ".svn" || name == ".hg" || name == "__pycache__" || name == ".idea" || name == ".vscode" {
-				return fs.SkipDir
-			}
-			if strings.HasPrefix(name, ".") && name != "." {
+			if shouldSkipDir(d.Name()) {
 				return fs.SkipDir
 			}
 			return nil
