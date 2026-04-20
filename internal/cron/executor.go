@@ -39,7 +39,7 @@ func NewAgentExecutor(newAgent func() *agent.Agent, runStore *RunStore) func(ctx
 		// Record the run (success or failure) in per-job database.
 		if runStore != nil {
 			runRecord := &RunRecord{
-				ID:       uuid.New().String(),
+				ID:       uuid.NewString(),
 				JobID:    jobID,
 				RunAt:    start,
 				Duration: duration,

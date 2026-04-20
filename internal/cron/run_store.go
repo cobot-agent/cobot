@@ -12,6 +12,10 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// sqliteTimeFmt matches the format used in internal/broker/sqlite.go for
+// consistent microsecond-precision timestamps across all SQLite storage.
+const sqliteTimeFmt = "2006-01-02 15:04:05.000000"
+
 // RunRecord represents a single cron job execution result.
 type RunRecord struct {
 	ID       string    `json:"id"`
@@ -108,7 +112,7 @@ func (rs *RunStore) withDB(jobID string, fn func(*sql.DB) error) error {
 func (rs *RunStore) StoreRun(record *RunRecord) error {
 	return rs.withDB(record.JobID, func(db *sql.DB) error {
 		_, err := db.Exec(`INSERT INTO runs (id, run_at, duration_ms, result, error) VALUES (?, ?, ?, ?, ?)`,
-			record.ID, record.RunAt.Format(time.RFC3339), record.Duration, record.Result, record.Error)
+			record.ID, record.RunAt.Format(sqliteTimeFmt), record.Duration, record.Result, record.Error)
 		return err
 	})
 }
@@ -119,13 +123,6 @@ func (rs *RunStore) ListRuns(jobID string, limit int) ([]*RunRecord, error) {
 		limit = 20
 	}
 	if err := ValidateJobID(jobID); err != nil {
-		return nil, err
-	}
-	// Don't create a DB file just to list runs.
-	if _, err := os.Stat(rs.dbPath(jobID)); err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
 		return nil, err
 	}
 	db, err := rs.getDB(jobID)
@@ -144,7 +141,7 @@ func (rs *RunStore) ListRuns(jobID string, limit int) ([]*RunRecord, error) {
 		if err := rows.Scan(&r.ID, &runAt, &r.Duration, &r.Result, &r.Error); err != nil {
 			return nil, err
 		}
-		r.RunAt, err = time.Parse(time.RFC3339, runAt)
+		r.RunAt, err = time.Parse(sqliteTimeFmt, runAt)
 		if err != nil {
 			return nil, fmt.Errorf("parse run_at timestamp for job %s: %w", jobID, err)
 		}
@@ -177,19 +174,12 @@ func (rs *RunStore) RunsExist(jobID string) (bool, error) {
 	if err := ValidateJobID(jobID); err != nil {
 		return false, err
 	}
-	dbPath := rs.dbPath(jobID)
-	if _, err := os.Stat(dbPath); err != nil {
-		if os.IsNotExist(err) {
-			return false, nil
-		}
-		return false, err
-	}
-	var count int
+	var exists bool
 	err := rs.withDB(jobID, func(db *sql.DB) error {
-		return db.QueryRow(`SELECT COUNT(*) FROM runs`).Scan(&count)
+		return db.QueryRow(`SELECT EXISTS(SELECT 1 FROM runs LIMIT 1)`).Scan(&exists)
 	})
 	if err != nil {
 		return false, err
 	}
-	return count > 0, nil
+	return exists, nil
 }

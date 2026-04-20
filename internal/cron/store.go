@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -78,7 +79,8 @@ func ParseReadID(readID string) (jobID string, token string, err error) {
 
 // Store manages Job persistence as individual YAML files.
 type Store struct {
-	dir string
+	dir     string
+	lastMod atomic.Int64 // UnixNano of directory's last known mtime
 }
 
 // NewStore creates a new Store backed by the given directory.
@@ -100,6 +102,64 @@ func (s *Store) writeJob(job *Job) error {
 		return fmt.Errorf("write job file: %w", err)
 	}
 	return nil
+}
+
+// HasChanged returns true if any job file has been modified since last check.
+// It uses a lightweight fingerprint of file mtimes to detect additions,
+// deletions, and content changes without reading file contents.
+func (s *Store) HasChanged() bool {
+	entries, err := os.ReadDir(s.dir)
+	if err != nil {
+		return true // assume changed if we can't read
+	}
+	var fingerprint int64
+	for _, e := range entries {
+		if e.IsDir() || filepath.Ext(e.Name()) != ".yaml" {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		fingerprint ^= info.ModTime().UnixNano()
+	}
+	prev := s.lastMod.Swap(fingerprint)
+	return fingerprint != prev
+}
+
+// loadJob reads and unmarshals a single job file by ID.
+func (s *Store) loadJob(id string) (*Job, error) {
+	data, err := os.ReadFile(s.jobPath(id))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("job not found: %s", id)
+		}
+		return nil, fmt.Errorf("read job file: %w", err)
+	}
+	var job Job
+	if err := yaml.Unmarshal(data, &job); err != nil {
+		return nil, fmt.Errorf("unmarshal job: %w", err)
+	}
+	return &job, nil
+}
+
+// listJobIDs scans the store directory and returns job IDs (derived from .yaml filenames).
+func (s *Store) listJobIDs() ([]string, error) {
+	entries, err := os.ReadDir(s.dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read jobs directory: %w", err)
+	}
+	var ids []string
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".yaml" {
+			continue
+		}
+		ids = append(ids, entry.Name()[:len(entry.Name())-len(".yaml")])
+	}
+	return ids, nil
 }
 
 // Create writes a new job to disk. Generates an initial ReadToken.
@@ -124,23 +184,16 @@ func (s *Store) Get(id string) (*Job, error) {
 	if err := ValidateJobID(id); err != nil {
 		return nil, err
 	}
-	data, err := os.ReadFile(s.jobPath(id))
+	job, err := s.loadJob(id)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("job not found: %s", id)
-		}
-		return nil, fmt.Errorf("read job file: %w", err)
-	}
-	var job Job
-	if err := yaml.Unmarshal(data, &job); err != nil {
-		return nil, fmt.Errorf("unmarshal job: %w", err)
+		return nil, err
 	}
 	// Regenerate token on every read.
 	job.ReadToken = generateToken()
-	if writeErr := s.writeJob(&job); writeErr != nil {
+	if writeErr := s.writeJob(job); writeErr != nil {
 		return nil, fmt.Errorf("refresh read token: %w", writeErr)
 	}
-	return &job, nil
+	return job, nil
 }
 
 // Read reads a single job by ID without refreshing the ReadToken.
@@ -151,40 +204,26 @@ func (s *Store) Read(id string, expectedToken ...string) (*Job, error) {
 	if err := ValidateJobID(id); err != nil {
 		return nil, err
 	}
-	data, err := os.ReadFile(s.jobPath(id))
+	job, err := s.loadJob(id)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("job not found: %s", id)
-		}
-		return nil, fmt.Errorf("read job file: %w", err)
-	}
-	var job Job
-	if err := yaml.Unmarshal(data, &job); err != nil {
-		return nil, fmt.Errorf("unmarshal job: %w", err)
+		return nil, err
 	}
 	if len(expectedToken) > 0 && expectedToken[0] != "" && job.ReadToken != expectedToken[0] {
 		return nil, fmt.Errorf("job %s has been modified since last read. Re-read the job and retry", id)
 	}
-	return &job, nil
+	return job, nil
 }
 
 // List reads all jobs from the store directory.
 // Each job gets a fresh ReadToken (via Get), so every list call invalidates
 // all previously issued read_ids.
 func (s *Store) List() ([]*Job, error) {
-	entries, err := os.ReadDir(s.dir)
+	ids, err := s.listJobIDs()
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("read cron dir: %w", err)
+		return nil, err
 	}
 	var jobs []*Job
-	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".yaml" {
-			continue
-		}
-		id := entry.Name()[:len(entry.Name())-len(".yaml")]
+	for _, id := range ids {
 		job, err := s.Get(id) // Get refreshes the token
 		if err != nil {
 			continue // skip malformed files
@@ -198,40 +237,26 @@ func (s *Store) List() ([]*Job, error) {
 // Use this for internal sync/reconcile operations that don't need
 // optimistic-concurrency tokens, avoiding O(n) file writes.
 func (s *Store) ListReadOnly() ([]*Job, error) {
-	entries, err := os.ReadDir(s.dir)
+	ids, err := s.listJobIDs()
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("read cron dir: %w", err)
+		return nil, err
 	}
 	var jobs []*Job
-	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".yaml" {
-			continue
-		}
-		id := entry.Name()[:len(entry.Name())-len(".yaml")]
-		data, err := os.ReadFile(s.jobPath(id))
+	for _, id := range ids {
+		job, err := s.loadJob(id)
 		if err != nil {
 			continue
 		}
-		var job Job
-		if err := yaml.Unmarshal(data, &job); err != nil {
-			continue
-		}
-		jobs = append(jobs, &job)
+		jobs = append(jobs, job)
 	}
 	return jobs, nil
 }
 
-// Update rewrites an existing job file. Regenerates ReadToken on each update.
+// Update rewrites a job file. Regenerates ReadToken on each update.
+// If the file does not exist it will be created (equivalent to Create).
 func (s *Store) Update(job *Job) error {
 	if err := ValidateJobID(job.ID); err != nil {
 		return err
-	}
-	path := s.jobPath(job.ID)
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return fmt.Errorf("job not found: %s", job.ID)
 	}
 	job.ReadToken = generateToken()
 	return s.writeJob(job)
@@ -248,16 +273,9 @@ func (s *Store) Delete(id string, expectedToken string) error {
 		return err
 	}
 	if expectedToken != "" {
-		data, err := os.ReadFile(s.jobPath(id))
+		job, err := s.loadJob(id)
 		if err != nil {
-			if os.IsNotExist(err) {
-				return fmt.Errorf("job not found: %s", id)
-			}
-			return fmt.Errorf("read job file: %w", err)
-		}
-		var job Job
-		if err := yaml.Unmarshal(data, &job); err != nil {
-			return fmt.Errorf("unmarshal job: %w", err)
+			return err
 		}
 		if job.ReadToken != expectedToken {
 			return fmt.Errorf("job %s has been modified since last read. Re-read the job and retry", id)

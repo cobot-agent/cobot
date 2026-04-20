@@ -70,7 +70,7 @@ func (s *Scheduler) Start(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	s.cancel = cancel
 
-	jobs, err := s.store.List()
+	jobs, err := s.store.ListReadOnly()
 	if err != nil {
 		return fmt.Errorf("load jobs: %w", err)
 	}
@@ -138,7 +138,7 @@ func (s *Scheduler) Stop() {
 // Only schedules the job locally if this instance is the leader;
 // followers just persist — the leader will pick it up via syncJobs.
 func (s *Scheduler) AddJob(job *Job) error {
-	jobs, err := s.store.List()
+	jobs, err := s.store.ListReadOnly()
 	if err != nil {
 		return fmt.Errorf("check job count: %w", err)
 	}
@@ -336,8 +336,8 @@ func (s *Scheduler) runJob(job *Job) {
 // updateAndPersistJob updates job state (LastRun, RunCount, NextRun, Status)
 // and persists the change, all under s.mu to avoid races with PauseJob/ResumeJob.
 func (s *Scheduler) updateAndPersistJob(job *Job, now time.Time) {
+	var toUpdate *Job
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	job.LastRun = &now
 	job.RunCount++
@@ -362,12 +362,18 @@ func (s *Scheduler) updateAndPersistJob(job *Job, now time.Time) {
 		}
 	}
 
-	// Persist under lock to prevent races with PauseJob/ResumeJob.
-	if !stillScheduled {
-		slog.Debug("skipping update for removed job", "job_id", job.ID)
-	} else if updateErr := s.store.Update(job); updateErr != nil {
-		slog.Warn("failed to update job after run",
-			"job_id", job.ID, "error", updateErr)
+	// IMPORTANT: stillScheduled must be captured BEFORE one-shot cleanup
+	// (one-shot cleanup deletes from s.jobs map, so check first).
+	if stillScheduled {
+		clone := *job // shallow copy of the job with updated fields
+		toUpdate = &clone
+	}
+	s.mu.Unlock()
+
+	if toUpdate != nil {
+		if err := s.store.Update(toUpdate); err != nil {
+			slog.Warn("failed to persist job update", "job_id", job.ID, "error", err)
+		}
 	}
 }
 
@@ -479,6 +485,9 @@ func (s *Scheduler) rescheduleAllJobs() {
 // differences. Called periodically by the leader to pick up jobs created or
 // modified on follower instances.
 func (s *Scheduler) syncJobs() {
+	if !s.store.HasChanged() {
+		return
+	}
 	storeJobs, err := s.store.ListReadOnly()
 	if err != nil {
 		slog.Warn("failed to list jobs for sync", "error", err)
@@ -579,17 +588,17 @@ func (s *Scheduler) ackAllExisting(ctx context.Context) {
 	}
 	for {
 		msgs, err := s.broker.Consume(ctx, "cron_result", "", s.sessionID, 100)
-		if err != nil {
-			slog.Warn("ack-all: consume failed", "error", err)
+		if err != nil || len(msgs) == 0 {
 			return
 		}
-		if len(msgs) == 0 {
-			return
-		}
+		// Batch ack all messages in the fetched batch.
+		ids := make([]string, 0, len(msgs))
 		for _, msg := range msgs {
-			_ = s.broker.Ack(ctx, msg.ID, s.sessionID)
+			ids = append(ids, msg.ID)
 		}
-		slog.Debug("ack-all: acked stale cron results", "count", len(msgs))
+		if err := s.broker.AckAll(ctx, ids, s.sessionID); err != nil {
+			slog.Warn("batch ack failed", "error", err, "count", len(ids))
+		}
 	}
 }
 
@@ -661,7 +670,7 @@ func (s *Scheduler) ListJobRuns(jobID string, limit int) ([]*RunRecord, error) {
 
 // NewJobID generates a friendly cron job ID.
 func NewJobID() string {
-	return "cron_" + uuid.New().String()[:8]
+	return "cron_" + uuid.NewString()[:8]
 }
 
 // IsOneShot detects if a schedule string is an ISO timestamp (one-shot).
