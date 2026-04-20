@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/cobot-agent/cobot/internal/agent"
+	brokersqlite "github.com/cobot-agent/cobot/internal/broker"
 	"github.com/cobot-agent/cobot/internal/channel"
 	"github.com/cobot-agent/cobot/internal/config"
 	"github.com/cobot-agent/cobot/internal/cron"
@@ -136,7 +137,7 @@ func ConfigureAgentForWorkspace(a *agent.Agent, ws *workspace.Workspace, registr
 	sandbox := configureSandboxTools(a, ws, agentCfg)
 	configureMemoryTools(a, store, sandbox)
 	configureDelegateTool(a, ws, registry, sandbox)
-	configureCronTool(a, ws, store, registry)
+	configureCronTool(a, ws, registry)
 
 	return nil
 }
@@ -232,24 +233,49 @@ func configureDelegateTool(a *agent.Agent, ws *workspace.Workspace, registry cob
 	}, tools.WithDelegateWorkdir(ws.SpaceDir()), tools.WithDelegateAgentLookup(ws), tools.WithDelegateSandbox(sandbox)))
 }
 
-func configureCronTool(a *agent.Agent, ws *workspace.Workspace, store *memory.Store, registry cobot.ModelResolver) {
+func configureCronTool(a *agent.Agent, ws *workspace.Workspace, registry cobot.ModelResolver) {
+	// --- Stop previous scheduler if switching workspaces. ---
+	if a.CronScheduler() != nil {
+		a.CronScheduler().Stop()
+	}
+
+	// --- Create broker for distributed coordination. ---
+	brokerDB, err := brokersqlite.NewSQLiteBroker(ws.BrokerDBPath())
+	if err != nil {
+		slog.Warn("failed to create broker", "error", err)
+		return
+	}
+	a.SetBroker(brokerDB)
+
+	// --- Create cron executor with sub-agent factory. ---
 	cronDir := ws.CronDir()
 	cronStore := cron.NewStore(cronDir)
-	cronExecutor := cron.NewAgentExecutor(func() cron.AgentRunner {
+	runStore := cron.NewRunStore(ws.CronRunsDir())
+	executeFn := cron.NewAgentExecutor(func() *agent.Agent {
 		filtered := a.ToolRegistry().Clone().Without("cron", "delegate_task")
 		sub := newSubAgent(a, registry, filtered)
 		_ = sub.SessionMgr().SetSystemPrompt("You are a scheduled task executor. Complete the task efficiently and output results.")
-		return &cronAgentRunner{agent: sub}
-	})
-	if store != nil {
-		cronExecutor.WithMemoryStore(func(ctx context.Context, content, wingName, roomName, hallType string) (string, error) {
-			return store.StoreByName(ctx, content, wingName, roomName, hallType)
-		})
-	}
-	cronScheduler := cron.NewScheduler(cronStore, cronExecutor)
-	a.RegisterTool(tools.NewCronTool(cronScheduler))
-	if err := cronScheduler.Start(); err != nil {
+		return sub
+	}, runStore)
+
+	// --- Wire up scheduler, channel notification, and register tool. ---
+	channelMgr := a.ChannelManager()
+	cronScheduler := cron.NewScheduler(cronStore, executeFn, runStore, brokerDB, channelMgr)
+	a.RegisterTool(tools.NewCronTool(cronScheduler,
+		tools.WithCronChannelIDFn(func() string {
+			ids := channelMgr.AllAliveIDs()
+			if len(ids) > 0 {
+				return ids[0]
+			}
+			return ""
+		}),
+	))
+
+	ctx := a.Context()
+	if err := cronScheduler.Start(ctx); err != nil {
 		slog.Warn("failed to start cron scheduler", "error", err)
+		_ = brokerDB.Close()
+		return
 	}
 	a.SetCronScheduler(cronScheduler)
 }
@@ -302,26 +328,4 @@ func newSubAgent(a *agent.Agent, registry cobot.ModelResolver, filteredTools cob
 		sub.SetProvider(a.Provider())
 	}
 	return sub
-}
-
-// cronAgentRunner adapts an *agent.Agent (which implements cobot.SubAgent)
-// to the cron.AgentRunner interface by calling Prompt and returning the content.
-type cronAgentRunner struct {
-	agent *agent.Agent
-}
-
-func (r *cronAgentRunner) Prompt(ctx context.Context, message string) (string, error) {
-	resp, err := r.agent.Prompt(ctx, message)
-	if err != nil {
-		return "", err
-	}
-	return resp.Content, nil
-}
-
-func (r *cronAgentRunner) SetModel(spec string) error {
-	return r.agent.SetModel(spec)
-}
-
-func (r *cronAgentRunner) Close() error {
-	return r.agent.Close()
 }

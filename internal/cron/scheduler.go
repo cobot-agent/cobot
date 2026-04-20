@@ -5,65 +5,138 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/robfig/cron/v3"
-)
 
-// JobExecutor is the interface for executing a cron job's prompt.
-type JobExecutor interface {
-	ExecuteJob(ctx context.Context, job *Job) (string, error)
-}
+	cobot "github.com/cobot-agent/cobot/pkg"
+	"github.com/cobot-agent/cobot/pkg/broker"
+)
 
 // Scheduler manages cron job lifecycle using robfig/cron.
 type Scheduler struct {
-	store    *Store
-	cron     *cron.Cron
-	executor JobExecutor
-	mu       sync.Mutex
-	jobs     map[string]cron.EntryID // jobID -> cron entry ID
+	store        *Store
+	cron         *cron.Cron
+	executeFn    func(ctx context.Context, jobID, prompt, model string) (string, error)
+	notifier     cobot.Notifier // optional notification handler
+	mu           sync.Mutex
+	jobs         map[string]cron.EntryID // jobID -> cron entry ID
+	jobSchedules map[string]string       // jobID -> schedule string (for change detection)
+	runStore     *RunStore
+
+	broker         broker.Broker
+	holderID       string // leader lease identity
+	sessionID      string // broker consume session identity
+	isLeader       atomic.Bool
+	cleanupRunning atomic.Bool
+	wg             sync.WaitGroup
+	cancel         context.CancelFunc
 }
 
 const maxCronJobs = 100
 
 const jobTimeout = 10 * time.Minute
 
-// NewScheduler creates a new Scheduler with the given store and executor.
-func NewScheduler(store *Store, executor JobExecutor) *Scheduler {
+const leaseTTL = 30 * time.Second
+const leaseRenewInterval = 10 * time.Second
+const consumeInterval = 5 * time.Second
+const cleanupInterval = 60 * time.Second
+
+const brokerOpTimeout = 5 * time.Second
+const schedulerLeaseKey = "cron:scheduler"
+
+// NewScheduler creates a new Scheduler with the given store, execute function, run store, broker and notifier.
+func NewScheduler(store *Store, executeFn func(ctx context.Context, jobID, prompt, model string) (string, error), runStore *RunStore, br broker.Broker, notifier cobot.Notifier) *Scheduler {
 	return &Scheduler{
-		store:    store,
-		cron:     cron.New(),
-		executor: executor,
-		jobs:     make(map[string]cron.EntryID),
+		store:        store,
+		runStore:     runStore,
+		notifier:     notifier,
+		cron:         cron.New(),
+		executeFn:    executeFn,
+		jobs:         make(map[string]cron.EntryID),
+		jobSchedules: make(map[string]string),
+		broker:       br,
+		holderID:     uuid.NewString(),
+		sessionID:    uuid.NewString(),
 	}
 }
 
-// Start loads all active jobs from the store and starts the cron scheduler.
-func (s *Scheduler) Start() error {
+// Start loads all active jobs from the store, attempts to acquire the leader
+// lease, and starts the appropriate loops. Returns an error only if loading
+// jobs from the store fails.
+func (s *Scheduler) Start(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
+	s.cancel = cancel
+
 	jobs, err := s.store.List()
 	if err != nil {
 		return fmt.Errorf("load jobs: %w", err)
 	}
-	for _, job := range jobs {
-		if job.Status != "active" {
-			continue
-		}
-		if err := s.scheduleJob(job); err != nil {
-			slog.Warn("failed to schedule job on start",
-				"job_id", job.ID, "error", err)
-		}
+
+	acquired, err := s.broker.TryAcquire(ctx, schedulerLeaseKey, s.holderID, leaseTTL)
+	if err != nil {
+		slog.Warn("failed to acquire scheduler lease", "error", err)
 	}
-	s.cron.Start()
+
+	if acquired {
+		s.isLeader.Store(true)
+		slog.Info("acquired cron scheduler leader lease", "holder", s.holderID)
+		for _, job := range jobs {
+			if job.Status != "active" {
+				continue
+			}
+			if err := s.scheduleJob(job); err != nil {
+				slog.Warn("failed to schedule job on start",
+					"job_id", job.ID, "error", err)
+			}
+		}
+		s.cron.Start()
+		s.wg.Add(1)
+		go s.renewLeaseLoop(ctx)
+		s.wg.Add(1)
+		go s.cleanupLoop(ctx)
+	} else {
+		s.isLeader.Store(false)
+		slog.Info("running as cron scheduler follower", "holder", s.holderID)
+	}
+
+	s.wg.Add(1)
+	go s.consumeLoop(ctx)
+	// All wg.Add(1) calls above happen synchronously before their respective
+	// goroutines start, ensuring Stop()'s wg.Wait() always observes all
+	// counters. The renewLeaseLoop may add wg.Add(1) for the cleanupLoop on
+	// re-acquisition, but that Add also precedes the go call.
 	return nil
 }
 
-// Stop halts the cron scheduler and removes all entries.
+// Stop halts the cron scheduler, releases the leader lease, and closes the run store.
 func (s *Scheduler) Stop() {
-	s.cron.Stop()
+	if s.cancel != nil {
+		s.cancel()
+	}
+	s.wg.Wait()
+
+	ctx, cancel := context.WithTimeout(context.Background(), brokerOpTimeout)
+	defer cancel()
+
+	if s.isLeader.Load() {
+		cronCtx := s.cron.Stop()
+		<-cronCtx.Done() // wait for in-flight jobs to finish
+		if err := s.broker.Release(ctx, schedulerLeaseKey, s.holderID); err != nil {
+			slog.Warn("failed to release scheduler lease", "error", err)
+		}
+	}
+
+	if s.runStore != nil {
+		s.runStore.Close()
+	}
 }
 
 // AddJob creates a new cron entry and persists the job.
+// Only schedules the job locally if this instance is the leader;
+// followers just persist — the leader will pick it up via syncJobs.
 func (s *Scheduler) AddJob(job *Job) error {
 	jobs, err := s.store.List()
 	if err != nil {
@@ -72,43 +145,71 @@ func (s *Scheduler) AddJob(job *Job) error {
 	if len(jobs) >= maxCronJobs {
 		return fmt.Errorf("maximum number of cron jobs (%d) reached", maxCronJobs)
 	}
-	if err := s.scheduleJob(job); err != nil {
-		return err
+	if s.isLeader.Load() {
+		if err := s.scheduleJob(job); err != nil {
+			return err
+		}
 	}
 	return s.store.Create(job)
 }
 
 // RemoveJob removes a job from cron and deletes it from the store.
-func (s *Scheduler) RemoveJob(id string) error {
+// readID is an opaque token obtained from a prior list/get operation that
+// proves the caller has seen the current state. Pass empty to skip the check.
+func (s *Scheduler) RemoveJob(readID string) error {
+	id, token, err := ParseReadID(readID)
+	if err != nil {
+		return fmt.Errorf("invalid read_id: %w", err)
+	}
 	s.mu.Lock()
 	if entryID, ok := s.jobs[id]; ok {
 		s.cron.Remove(entryID)
 		delete(s.jobs, id)
+		delete(s.jobSchedules, id)
 	}
 	s.mu.Unlock()
-	return s.store.Delete(id)
+	if err := s.store.Delete(id, token); err != nil {
+		return err
+	}
+	s.CleanupJobDB(id)
+	return nil
 }
 
 // PauseJob removes a job from cron but keeps it in the store as paused.
-func (s *Scheduler) PauseJob(id string) error {
+// readID is required to verify the caller has seen the current state.
+func (s *Scheduler) PauseJob(readID string) error {
+	id, token, err := ParseReadID(readID)
+	if err != nil {
+		return fmt.Errorf("invalid read_id: %w", err)
+	}
+
+	job, err := s.store.Read(id, token)
+	if err != nil {
+		return err
+	}
+
 	s.mu.Lock()
 	if entryID, ok := s.jobs[id]; ok {
 		s.cron.Remove(entryID)
 		delete(s.jobs, id)
+		delete(s.jobSchedules, id)
 	}
 	s.mu.Unlock()
 
-	job, err := s.store.Get(id)
-	if err != nil {
-		return err
-	}
 	job.Status = "paused"
-	return s.store.Update(job)
+	return s.store.Update(job) // Update regenerates token
 }
 
 // ResumeJob re-adds a paused job to cron and sets its status to active.
-func (s *Scheduler) ResumeJob(id string) error {
-	job, err := s.store.Get(id)
+// Only schedules locally if this instance is the leader.
+// readID is required to verify the caller has seen the current state.
+func (s *Scheduler) ResumeJob(readID string) error {
+	id, token, err := ParseReadID(readID)
+	if err != nil {
+		return fmt.Errorf("invalid read_id: %w", err)
+	}
+
+	job, err := s.store.Read(id, token)
 	if err != nil {
 		return err
 	}
@@ -116,10 +217,12 @@ func (s *Scheduler) ResumeJob(id string) error {
 		return fmt.Errorf("job %s is not paused (status: %s)", id, job.Status)
 	}
 	job.Status = "active"
-	if err := s.scheduleJob(job); err != nil {
-		return err
+	if s.isLeader.Load() {
+		if err := s.scheduleJob(job); err != nil {
+			return err
+		}
 	}
-	return s.store.Update(job)
+	return s.store.Update(job) // Update regenerates token
 }
 
 // ListJobs returns all jobs from the store.
@@ -132,25 +235,30 @@ func (s *Scheduler) GetJob(id string) (*Job, error) {
 	return s.store.Get(id)
 }
 
-// scheduleJob registers a job with the cron scheduler.
+// scheduleJob registers a job with the cron scheduler (acquires lock).
 func (s *Scheduler) scheduleJob(job *Job) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.scheduleJobLocked(job)
+}
 
+// scheduleJobLocked registers a job assuming mu is already held.
+func (s *Scheduler) scheduleJobLocked(job *Job) error {
 	// Remove existing entry if re-scheduling.
 	if entryID, ok := s.jobs[job.ID]; ok {
 		s.cron.Remove(entryID)
 		delete(s.jobs, job.ID)
+		delete(s.jobSchedules, job.ID)
 	}
 
 	if job.OneShot {
-		return s.scheduleOneShot(job)
+		return s.scheduleOneShotLocked(job)
 	}
-	return s.scheduleCronExpr(job)
+	return s.scheduleCronExprLocked(job)
 }
 
-// scheduleCronExpr schedules a recurring job using a cron expression.
-func (s *Scheduler) scheduleCronExpr(job *Job) error {
+// scheduleCronExprLocked schedules a recurring job using a cron expression (caller holds mu).
+func (s *Scheduler) scheduleCronExprLocked(job *Job) error {
 	schedule, err := cron.ParseStandard(job.Schedule)
 	if err != nil {
 		return fmt.Errorf("invalid cron expression %q: %w", job.Schedule, err)
@@ -160,6 +268,7 @@ func (s *Scheduler) scheduleCronExpr(job *Job) error {
 		s.runJob(job)
 	}))
 	s.jobs[job.ID] = entryID
+	s.jobSchedules[job.ID] = job.Schedule
 
 	// Calculate and store next run time.
 	next := s.cron.Entry(entryID).Next
@@ -170,8 +279,8 @@ func (s *Scheduler) scheduleCronExpr(job *Job) error {
 	return nil
 }
 
-// scheduleOneShot schedules a one-time job at a specific timestamp.
-func (s *Scheduler) scheduleOneShot(job *Job) error {
+// scheduleOneShotLocked schedules a one-time job at a specific timestamp (caller holds mu).
+func (s *Scheduler) scheduleOneShotLocked(job *Job) error {
 	t, err := time.Parse(time.RFC3339, job.Schedule)
 	if err != nil {
 		return fmt.Errorf("invalid timestamp %q: %w", job.Schedule, err)
@@ -184,11 +293,20 @@ func (s *Scheduler) scheduleOneShot(job *Job) error {
 
 	job.NextRun = &t
 
+	// Verify the schedule will actually fire; if the time has passed between
+	// the check above and scheduling (race window), log and skip.
+	sched := oneShotSchedule{at: t}
+	if next := sched.Next(time.Now()); next.IsZero() {
+		slog.Warn("one-shot job time has passed, skipping", "job_id", job.ID)
+		return nil
+	}
+
 	// Schedule with a custom one-shot wrapper.
-	entryID := s.cron.Schedule(oneShotSchedule{at: t}, cron.FuncJob(func() {
+	entryID := s.cron.Schedule(sched, cron.FuncJob(func() {
 		s.runJob(job)
 	}))
 	s.jobs[job.ID] = entryID
+	s.jobSchedules[job.ID] = job.Schedule
 
 	return nil
 }
@@ -198,7 +316,9 @@ func (s *Scheduler) runJob(job *Job) {
 	ctx, cancel := context.WithTimeout(context.Background(), jobTimeout)
 	defer cancel()
 
-	result, err := s.executor.ExecuteJob(ctx, job)
+	start := time.Now()
+	result, err := s.executeFn(ctx, job.ID, job.Prompt, job.Model)
+	duration := time.Since(start)
 	if err != nil {
 		slog.Warn("cron job execution failed",
 			"job_id", job.ID, "error", err)
@@ -208,11 +328,26 @@ func (s *Scheduler) runJob(job *Job) {
 	}
 
 	now := time.Now()
+	s.updateAndPersistJob(job, now)
+
+	s.publishJobResult(job, result, err, duration)
+}
+
+// updateAndPersistJob updates job state (LastRun, RunCount, NextRun, Status)
+// and persists the change, all under s.mu to avoid races with PauseJob/ResumeJob.
+func (s *Scheduler) updateAndPersistJob(job *Job, now time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	job.LastRun = &now
 	job.RunCount++
 
-	// Update next-run for recurring jobs; finalize one-shot jobs.
-	s.mu.Lock()
+	// stillScheduled guards against a stale *Job pointer captured by the cron
+	// closure. If syncJobs (or RemoveJob) removed the entry from s.jobs after
+	// the closure fired but before we acquired s.mu, the pointer is stale and
+	// we must not persist its mutated fields. Without this check, we could
+	// overwrite a job that was deleted or re-created with a different schedule.
+	_, stillScheduled := s.jobs[job.ID]
 	if !job.OneShot {
 		if entryID, ok := s.jobs[job.ID]; ok {
 			if next := s.cron.Entry(entryID).Next; !next.IsZero() {
@@ -226,12 +361,302 @@ func (s *Scheduler) runJob(job *Job) {
 			delete(s.jobs, job.ID)
 		}
 	}
-	s.mu.Unlock()
 
-	if updateErr := s.store.Update(job); updateErr != nil {
+	// Persist under lock to prevent races with PauseJob/ResumeJob.
+	if !stillScheduled {
+		slog.Debug("skipping update for removed job", "job_id", job.ID)
+	} else if updateErr := s.store.Update(job); updateErr != nil {
 		slog.Warn("failed to update job after run",
 			"job_id", job.ID, "error", updateErr)
 	}
+}
+
+func formatCronResult(jobName, result, runErr string) string {
+	if runErr != "" {
+		return fmt.Sprintf("❌ Job %s failed: %s", jobName, runErr)
+	}
+	return fmt.Sprintf("✅ Job %s result:\n%s", jobName, result)
+}
+
+// publishJobResult publishes the job result via the broker so followers can consume it.
+func (s *Scheduler) publishJobResult(job *Job, result string, runErr error, duration time.Duration) {
+	if s.broker == nil {
+		return
+	}
+	payload := &CronResultPayload{
+		JobID:    job.ID,
+		JobName:  job.Name,
+		Result:   result,
+		RunAt:    time.Now(),
+		Duration: duration.Milliseconds(),
+	}
+	if runErr != nil {
+		payload.Error = runErr.Error()
+	}
+	msg := NewCronResultMessage(job.ChannelID, payload)
+	ctx, cancel := context.WithTimeout(context.Background(), brokerOpTimeout)
+	defer cancel()
+	if err := s.broker.Publish(ctx, msg); err != nil {
+		slog.Warn("failed to publish cron result", "job_id", job.ID, "error", err)
+	}
+}
+
+// renewLeaseLoop periodically renews the leader lease. If renewal fails, it
+// attempts to re-acquire the lease before giving up.
+func (s *Scheduler) renewLeaseLoop(ctx context.Context) {
+	defer s.wg.Done()
+
+	ticker := time.NewTicker(leaseRenewInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := s.broker.Renew(ctx, schedulerLeaseKey, s.holderID, leaseTTL); err != nil {
+				slog.Warn("failed to renew scheduler lease, stepping down", "error", err)
+				cronCtx := s.cron.Stop()
+				<-cronCtx.Done() // wait for in-flight jobs to finish
+				s.isLeader.Store(false)
+				// Try to re-acquire immediately
+				acquired, acqErr := s.broker.TryAcquire(ctx, schedulerLeaseKey, s.holderID, leaseTTL)
+				if acqErr != nil {
+					slog.Warn("failed to re-acquire scheduler lease", "error", acqErr)
+					// continue loop — will retry next tick
+				} else if acquired {
+					slog.Info("re-acquired scheduler leader lease", "holder", s.holderID)
+					s.cron = cron.New()
+					s.isLeader.Store(true)
+					s.rescheduleAllJobs()
+					s.cron.Start()
+					if s.cleanupRunning.CompareAndSwap(false, true) {
+						s.wg.Add(1)
+						go func() {
+							defer s.wg.Done()
+							defer s.cleanupRunning.Store(false)
+							s.cleanupLoop(ctx)
+						}()
+					}
+				}
+				// If not acquired, stay follower — will retry next tick
+				continue
+			}
+			// Renew session registration to prevent expiry.
+			if err := s.broker.Heartbeat(ctx, s.sessionID); err != nil {
+				slog.Debug("broker session heartbeat failed", "error", err)
+			}
+			// Sync jobs to pick up changes made on follower instances.
+			s.syncJobs()
+		}
+	}
+}
+
+// rescheduleAllJobs re-adds all active jobs from the store to the cron scheduler.
+// This is used after leader failover to restore the schedule.
+func (s *Scheduler) rescheduleAllJobs() {
+	// Clear stale entries from deleted jobs before re-scheduling.
+	s.mu.Lock()
+	s.jobSchedules = make(map[string]string)
+	s.mu.Unlock()
+
+	// Don't hold mu here - scheduleJob handles its own locking.
+	jobs, err := s.store.ListReadOnly()
+	if err != nil {
+		slog.Warn("failed to list jobs for re-scheduling", "error", err)
+		return
+	}
+	for _, job := range jobs {
+		if job.Status != "active" {
+			continue
+		}
+		if err := s.scheduleJob(job); err != nil {
+			slog.Warn("failed to re-schedule job", "job_id", job.ID, "error", err)
+		}
+	}
+}
+
+// syncJobs compares store jobs with in-memory scheduled jobs and reconciles
+// differences. Called periodically by the leader to pick up jobs created or
+// modified on follower instances.
+func (s *Scheduler) syncJobs() {
+	storeJobs, err := s.store.ListReadOnly()
+	if err != nil {
+		slog.Warn("failed to list jobs for sync", "error", err)
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Build set of store job IDs.
+	storeIDs := make(map[string]*Job, len(storeJobs))
+	for _, j := range storeJobs {
+		storeIDs[j.ID] = j
+	}
+
+	// Remove jobs that no longer exist in store or are paused/deleted.
+	for id := range s.jobs {
+		sj, exists := storeIDs[id]
+		if !exists || sj.Status != "active" {
+			s.cron.Remove(s.jobs[id])
+			delete(s.jobs, id)
+			if !exists {
+				slog.Info("sync: removed deleted job", "job_id", id)
+			} else {
+				slog.Info("sync: unscheduled inactive job", "job_id", id, "status", sj.Status)
+			}
+		}
+	}
+
+	// Add new active jobs not yet in memory, and reschedule jobs with changed schedules.
+	for id, sj := range storeIDs {
+		if sj.Status != "active" {
+			continue
+		}
+		if _, exists := s.jobs[id]; !exists {
+			if err := s.scheduleJobLocked(sj); err != nil {
+				slog.Warn("sync: failed to schedule job", "job_id", id, "error", err)
+				continue
+			}
+			slog.Info("sync: scheduled new job", "job_id", id, "name", sj.Name)
+		} else if curSchedule := s.jobSchedules[id]; curSchedule != sj.Schedule {
+			slog.Info("sync: rescheduling job with changed schedule", "job_id", id)
+			if err := s.scheduleJobLocked(sj); err != nil {
+				slog.Warn("sync: failed to reschedule job", "job_id", id, "error", err)
+			}
+		}
+	}
+}
+
+// cleanupLoop periodically runs broker cleanup (leader only).
+func (s *Scheduler) cleanupLoop(ctx context.Context) {
+	defer s.wg.Done()
+
+	ticker := time.NewTicker(cleanupInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := s.broker.Cleanup(ctx); err != nil {
+				slog.Warn("broker cleanup failed", "error", err)
+			}
+		}
+	}
+}
+
+// consumeLoop periodically consumes cron result messages from the broker.
+// On first call it acks all pre-existing messages to avoid re-delivering
+// results from before this process started.
+func (s *Scheduler) consumeLoop(ctx context.Context) {
+	defer s.wg.Done()
+
+	s.ackAllExisting(ctx)
+
+	ticker := time.NewTicker(consumeInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.consumeOnce(ctx)
+		}
+	}
+}
+
+// ackAllExisting consumes and acks all pending messages without notifying.
+// This prevents re-delivery of cron results from previous process lifetimes.
+// It consumes messages for ALL channels (channelID="") because on restart the
+// new sessionID has no prior consume state — any unacked messages from the old
+// session would otherwise be re-delivered. In single-instance deployments this
+// is always safe; in multi-instance deployments, each instance acks on behalf
+// of its own previous session.
+func (s *Scheduler) ackAllExisting(ctx context.Context) {
+	if s.broker == nil {
+		return
+	}
+	for {
+		msgs, err := s.broker.Consume(ctx, "cron_result", "", s.sessionID, 100)
+		if err != nil {
+			slog.Warn("ack-all: consume failed", "error", err)
+			return
+		}
+		if len(msgs) == 0 {
+			return
+		}
+		for _, msg := range msgs {
+			_ = s.broker.Ack(ctx, msg.ID, s.sessionID)
+		}
+		slog.Debug("ack-all: acked stale cron results", "count", len(msgs))
+	}
+}
+
+// consumeOnce consumes unacknowledged cron result messages and delivers them locally.
+func (s *Scheduler) consumeOnce(ctx context.Context) {
+	if s.broker == nil || s.notifier == nil {
+		return
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Warn("consumeOnce recovered from panic", "error", r)
+		}
+	}()
+	// sessionID is used as the consume session identity (separate from leader lease holderID).
+	msgs, err := s.broker.Consume(ctx, "cron_result", "", s.sessionID, 50)
+	if err != nil {
+		slog.Warn("failed to consume cron results", "error", err)
+		return
+	}
+	for _, msg := range msgs {
+		payload, err := DecodeCronResult(msg)
+		if err != nil {
+			slog.Warn("failed to decode cron result", "msg_id", msg.ID, "error", err)
+			_ = s.broker.Ack(ctx, msg.ID, s.sessionID)
+			continue
+		}
+		if msg.ChannelID == "" {
+			_ = s.broker.Ack(ctx, msg.ID, s.sessionID)
+			continue
+		}
+		notifyCtx, cancel := context.WithTimeout(ctx, brokerOpTimeout)
+		content := formatCronResult(payload.JobName, payload.Result, payload.Error)
+		s.notifier.Notify(notifyCtx, msg.ChannelID, cobot.ChannelMessage{
+			Type:    cobot.MessageTypeCronResult,
+			Title:   fmt.Sprintf("Cron job %q completed", payload.JobName),
+			Content: content,
+		})
+		cancel()
+		if ackErr := s.broker.Ack(ctx, msg.ID, s.sessionID); ackErr != nil {
+			slog.Warn("failed to ack cron result", "msg_id", msg.ID, "error", ackErr)
+		}
+	}
+}
+
+// HasRunRecords checks if a job has execution history.
+func (s *Scheduler) HasRunRecords(jobID string) (bool, error) {
+	if s.runStore == nil {
+		return false, nil
+	}
+	return s.runStore.RunsExist(jobID)
+}
+
+// CleanupJobDB removes the run database for a job.
+func (s *Scheduler) CleanupJobDB(jobID string) {
+	if s.runStore != nil {
+		if err := s.runStore.DeleteJobDB(jobID); err != nil {
+			slog.Warn("failed to delete run db", "job_id", jobID, "error", err)
+		}
+	}
+}
+
+// ListJobRuns returns execution records for a job.
+func (s *Scheduler) ListJobRuns(jobID string, limit int) ([]*RunRecord, error) {
+	if s.runStore == nil {
+		return nil, nil
+	}
+	return s.runStore.ListRuns(jobID, limit)
 }
 
 // NewJobID generates a friendly cron job ID.
