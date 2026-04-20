@@ -173,12 +173,12 @@ func (t *CronTool) handleDelete(params cronParams) (string, error) {
 		return "", fmt.Errorf("read_id is required for delete action. Use the list action first to get the current read_id")
 	}
 
-	jobID, _, _ := cron.ParseReadID(params.ReadID)
-
 	if err := t.scheduler.RemoveJob(params.ReadID); err != nil {
 		return "", err
 	}
 
+	// Best-effort extraction for display; RemoveJob already validated the readID.
+	jobID, _, _ := cron.ParseReadID(params.ReadID)
 	return fmt.Sprintf("Job %s deleted.", jobID), nil
 }
 
@@ -187,11 +187,12 @@ func (t *CronTool) handlePause(params cronParams) (string, error) {
 		return "", fmt.Errorf("read_id is required for pause action. Use the list action first to get the current read_id")
 	}
 
-	jobID, _, _ := cron.ParseReadID(params.ReadID)
-
 	if err := t.scheduler.PauseJob(params.ReadID); err != nil {
 		return "", err
 	}
+
+	// Best-effort extraction for display; PauseJob already validated the readID.
+	jobID, _, _ := cron.ParseReadID(params.ReadID)
 	return fmt.Sprintf("Job %s paused.", jobID), nil
 }
 
@@ -200,11 +201,12 @@ func (t *CronTool) handleResume(params cronParams) (string, error) {
 		return "", fmt.Errorf("read_id is required for resume action. Use the list action first to get the current read_id")
 	}
 
-	jobID, _, _ := cron.ParseReadID(params.ReadID)
-
 	if err := t.scheduler.ResumeJob(params.ReadID); err != nil {
 		return "", err
 	}
+
+	// Best-effort extraction for display; ResumeJob already validated the readID.
+	jobID, _, _ := cron.ParseReadID(params.ReadID)
 	return fmt.Sprintf("Job %s resumed.", jobID), nil
 }
 

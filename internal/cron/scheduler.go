@@ -134,8 +134,28 @@ func (s *Scheduler) Stop() {
 	}
 }
 
+// validateSchedule parses the schedule without mutating in-memory cron state.
+// Returns an error if the cron expression or one-shot timestamp is invalid.
+func validateSchedule(job *Job) error {
+	if job.OneShot {
+		t, err := time.Parse(time.RFC3339, job.Schedule)
+		if err != nil {
+			return fmt.Errorf("invalid timestamp %q: %w", job.Schedule, err)
+		}
+		if t.Before(time.Now()) {
+			return fmt.Errorf("one-shot time %q is in the past", job.Schedule)
+		}
+	} else {
+		if _, err := cron.ParseStandard(job.Schedule); err != nil {
+			return fmt.Errorf("invalid cron expression %q: %w", job.Schedule, err)
+		}
+	}
+	return nil
+}
+
 // AddJob creates a new cron entry and persists the job.
-// Only schedules the job locally if this instance is the leader;
+// Validates the schedule regardless of leadership so that invalid expressions
+// are rejected early. Only schedules in-memory if this instance is the leader;
 // followers just persist — the leader will pick it up via syncJobs.
 func (s *Scheduler) AddJob(job *Job) error {
 	jobs, err := s.store.ListReadOnly()
@@ -144,6 +164,10 @@ func (s *Scheduler) AddJob(job *Job) error {
 	}
 	if len(jobs) >= maxCronJobs {
 		return fmt.Errorf("maximum number of cron jobs (%d) reached", maxCronJobs)
+	}
+	// Validate schedule upfront regardless of leadership.
+	if err := validateSchedule(job); err != nil {
+		return err
 	}
 	if s.isLeader.Load() {
 		if err := s.scheduleJob(job); err != nil {

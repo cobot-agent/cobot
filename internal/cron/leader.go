@@ -39,7 +39,7 @@ func (s *Scheduler) renewLeaseLoop(ctx context.Context) {
 					if s.cleanupRunning.CompareAndSwap(false, true) {
 						s.wg.Add(1)
 						go func() {
-							defer s.wg.Done()
+							// cleanupLoop defers wg.Done() — no extra wg.Done here.
 							defer s.cleanupRunning.Store(false)
 							s.cleanupLoop(ctx)
 						}()

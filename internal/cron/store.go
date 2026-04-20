@@ -105,14 +105,19 @@ func (s *Store) writeJob(job *Job) error {
 }
 
 // HasChanged returns true if any job file has been modified since last check.
-// It uses a lightweight fingerprint of file mtimes to detect additions,
-// deletions, and content changes without reading file contents.
+// It uses a lightweight fingerprint combining file count, total mtime nanos,
+// and max mtime to detect additions, deletions, and content changes without
+// reading file contents.
 func (s *Store) HasChanged() bool {
 	entries, err := os.ReadDir(s.dir)
 	if err != nil {
 		return true // assume changed if we can't read
 	}
-	var fingerprint int64
+	var (
+		count   int64
+		sum     int64
+		maxTime int64
+	)
 	for _, e := range entries {
 		if e.IsDir() || filepath.Ext(e.Name()) != ".yaml" {
 			continue
@@ -121,8 +126,16 @@ func (s *Store) HasChanged() bool {
 		if err != nil {
 			continue
 		}
-		fingerprint ^= info.ModTime().UnixNano()
+		mt := info.ModTime().UnixNano()
+		count++
+		sum += mt
+		if mt > maxTime {
+			maxTime = mt
+		}
 	}
+	// Combine count + sum + max into a single fingerprint that is sensitive
+	// to file additions, deletions, and modifications.
+	fingerprint := count*31 ^ sum ^ (maxTime * 17)
 	prev := s.lastMod.Swap(fingerprint)
 	return fingerprint != prev
 }

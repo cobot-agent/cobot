@@ -112,7 +112,7 @@ func (rs *RunStore) withDB(jobID string, fn func(*sql.DB) error) error {
 func (rs *RunStore) StoreRun(record *RunRecord) error {
 	return rs.withDB(record.JobID, func(db *sql.DB) error {
 		_, err := db.Exec(`INSERT INTO runs (id, run_at, duration_ms, result, error) VALUES (?, ?, ?, ?, ?)`,
-			record.ID, record.RunAt.Format(sqliteTimeFmt), record.Duration, record.Result, record.Error)
+			record.ID, record.RunAt.UTC().Format(sqliteTimeFmt), record.Duration, record.Result, record.Error)
 		return err
 	})
 }
