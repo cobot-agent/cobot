@@ -33,7 +33,7 @@ type SessionManager struct {
 func NewSessionManager() *SessionManager {
 	return &SessionManager{
 		session:            NewSession(),
-		sessionID:          uuid.New().String(),
+		sessionID:          uuid.NewString(),
 		usageTracker:       NewUsageTracker(),
 		stmPromoteInterval: 10,
 	}

@@ -35,9 +35,19 @@ func NewManager() *Manager {
 }
 
 // Register adds a channel to the manager and records an initial heartbeat.
+// If the sessionID is already registered, the heartbeat is updated without
+// adding a duplicate entry.
 func (m *Manager) Register(ch cobot.Channel, sessionID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	// Check for duplicate sessionID — update heartbeat if already registered.
+	entries := m.channels[ch.ID()]
+	for _, e := range entries {
+		if e.sessionID == sessionID {
+			m.lastHB[sessionID] = time.Now()
+			return
+		}
+	}
 	m.channels[ch.ID()] = append(m.channels[ch.ID()], channelEntry{ch: ch, sessionID: sessionID})
 	m.lastHB[sessionID] = time.Now()
 }

@@ -244,7 +244,9 @@ func (b *SQLiteBroker) Consume(ctx context.Context, topic, channelID, sessionID 
 	}
 	// Filter out messages older than messageTTL so expired messages are never
 	// delivered even if cleanup hasn't run yet.
-	query += ` AND m.created_at > datetime('now', '-` + fmt.Sprintf("%d", int(messageTTL.Hours())) + ` hours')`
+	threshold := time.Now().UTC().Add(-messageTTL).Format(sqliteTimeFmt)
+	query += ` AND m.created_at > ?`
+	args = append(args, threshold)
 	query += `
 		  AND NOT EXISTS (
 			  SELECT 1 FROM receipts r
@@ -285,6 +287,29 @@ func (b *SQLiteBroker) Ack(ctx context.Context, msgID, sessionID string) error {
 		ON CONFLICT DO NOTHING;
 	`, msgID, sessionID, time.Now().UTC().Format(sqliteTimeFmt))
 	return err
+}
+
+func (b *SQLiteBroker) AckAll(ctx context.Context, msgIDs []string, sessionID string) error {
+	if len(msgIDs) == 0 {
+		return nil
+	}
+	now := time.Now().UTC().Format(sqliteTimeFmt)
+	tx, err := b.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	stmt, err := tx.PrepareContext(ctx, "INSERT OR IGNORE INTO receipts (message_id, session_id, acked_at) VALUES (?, ?, ?)")
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	for _, id := range msgIDs {
+		if _, err := stmt.ExecContext(ctx, id, sessionID, now); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // --- Cleanup and Close ---

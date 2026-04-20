@@ -290,7 +290,7 @@ func loadWorkspaceConfig(path string) (*WorkspaceConfig, error) {
 func newWorkspaceConfig(name string, wsType WorkspaceType, root string) *WorkspaceConfig {
 	now := time.Now()
 	return &WorkspaceConfig{
-		ID:        uuid.New().String(),
+		ID:        uuid.NewString(),
 		Name:      name,
 		Type:      wsType,
 		Root:      root,

@@ -26,6 +26,7 @@ type Broker interface {
 	Publish(ctx context.Context, msg *Message) error
 	Consume(ctx context.Context, topic, channelID, sessionID string, limit int) ([]*Message, error)
 	Ack(ctx context.Context, msgID, sessionID string) error
+	AckAll(ctx context.Context, msgIDs []string, sessionID string) error
 
 	// --- Lifecycle ---
 	Cleanup(ctx context.Context) error
