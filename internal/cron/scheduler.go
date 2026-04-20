@@ -391,6 +391,7 @@ func (s *Scheduler) updateAndPersistJob(job *Job, now time.Time) {
 		if entryID, ok := s.jobs[job.ID]; ok {
 			s.cron.Remove(entryID)
 			delete(s.jobs, job.ID)
+			delete(s.jobSchedules, job.ID)
 		}
 	}
 

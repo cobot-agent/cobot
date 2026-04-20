@@ -251,6 +251,9 @@ func (s *Store) List() ([]*Job, error) {
 			continue
 		}
 		job.ReadToken = generateToken()
+		if err := s.writeJob(job); err != nil {
+			continue
+		}
 		jobs = append(jobs, job)
 	}
 	return jobs, nil
@@ -286,6 +289,7 @@ func (s *Store) ListReadOnlyIfChanged() ([]*Job, error) {
 
 // Update rewrites a job file. Regenerates ReadToken on each update.
 // If the file does not exist it will be created (equivalent to Create).
+// Precondition: the store directory exists (established by Create's MkdirAll).
 func (s *Store) Update(job *Job) error {
 	if err := ValidateJobID(job.ID); err != nil {
 		return err
