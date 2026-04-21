@@ -96,11 +96,13 @@ func (s *Scheduler) consumeOnce(ctx context.Context) {
 			continue
 		}
 		content := formatCronResult(payload.JobName, payload.Result, payload.Error)
-		s.notifier.Notify(notifyCtx, msg.ChannelID, cobot.ChannelMessage{
-			Type:    cobot.MessageTypeCronResult,
-			Title:   fmt.Sprintf("Cron job %q completed", payload.JobName),
-			Content: content,
-		})
+		if s.notifier != nil {
+			s.notifier.Notify(notifyCtx, msg.ChannelID, cobot.ChannelMessage{
+				Type:    cobot.MessageTypeCronResult,
+				Title:   fmt.Sprintf("Cron job %q completed", payload.JobName),
+				Content: content,
+			})
+		}
 		ackIDs = append(ackIDs, msg.ID)
 	}
 	if len(ackIDs) > 0 {

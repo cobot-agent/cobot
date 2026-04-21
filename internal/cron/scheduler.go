@@ -172,7 +172,8 @@ func validateSchedule(job *Job) error {
 		if err != nil {
 			return fmt.Errorf("invalid timestamp %q: %w", job.Schedule, err)
 		}
-		if t.Before(time.Now()) {
+		now := time.Now()
+		if !t.After(now) {
 			return fmt.Errorf("one-shot time %q is in the past", job.Schedule)
 		}
 	} else {
@@ -210,7 +211,12 @@ func (s *Scheduler) AddJob(job *Job) error {
 		}
 		// Persist the NextRun that was set by scheduleJob
 		if job.NextRun != nil {
-			_ = s.store.Update(job) // best-effort; non-critical if this fails
+			updatedJob := *job
+			if err := s.store.Update(&updatedJob); err != nil {
+				slog.Warn("failed to persist next run for job", "job_id", job.ID, "error", err)
+			} else {
+				*job = updatedJob
+			}
 		}
 	}
 	return nil
