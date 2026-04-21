@@ -8,37 +8,107 @@ import (
 	"testing"
 )
 
-func TestLoadSkills_EmptyDir(t *testing.T) {
+func TestLoadCatalog_EmptyDir(t *testing.T) {
 	dir := t.TempDir()
-	skills, err := LoadSkills(context.Background(), []string{dir}, nil)
+	skills, err := LoadCatalog(context.Background(), []string{dir}, nil)
 	if err != nil {
-		t.Fatalf("LoadSkills: %v", err)
+		t.Fatalf("LoadCatalog: %v", err)
 	}
 	if len(skills) != 0 {
 		t.Fatalf("expected 0 skills, got %d", len(skills))
 	}
 }
 
-func TestLoadSkills_NonexistentDir(t *testing.T) {
+func TestLoadCatalog_NonexistentDir(t *testing.T) {
 	dir := t.TempDir()
 	missing := filepath.Join(dir, "nope")
-	skills, err := LoadSkills(context.Background(), []string{missing}, nil)
+	skills, err := LoadCatalog(context.Background(), []string{missing}, nil)
 	if err != nil {
-		t.Fatalf("LoadSkills: %v", err)
+		t.Fatalf("LoadCatalog: %v", err)
 	}
 	if len(skills) != 0 {
 		t.Fatalf("expected 0 skills, got %d", len(skills))
 	}
 }
 
-func TestLoadSkills_MarkdownFiles(t *testing.T) {
+func TestLoadCatalog_NewFormatSkill(t *testing.T) {
+	dir := t.TempDir()
+	skillDir := filepath.Join(dir, "code-review")
+	os.MkdirAll(skillDir, 0755)
+	os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(`---
+name: code-review
+description: Review code for quality and security.
+metadata:
+  author: cobot
+  version: "1.0"
+---
+
+# Code Review
+
+## Steps
+1. Read the diff
+`), 0644)
+
+	skills, err := LoadCatalog(context.Background(), []string{dir}, nil)
+	if err != nil {
+		t.Fatalf("LoadCatalog: %v", err)
+	}
+	if len(skills) != 1 {
+		t.Fatalf("expected 1 skill, got %d", len(skills))
+	}
+	s := skills[0]
+	if s.Name != "code-review" {
+		t.Errorf("name = %q, want code-review", s.Name)
+	}
+	if s.Description != "Review code for quality and security." {
+		t.Errorf("description = %q", s.Description)
+	}
+	if s.Source != "global" {
+		t.Errorf("source = %q, want global", s.Source)
+	}
+	if s.Category != "" {
+		t.Errorf("category = %q, want empty", s.Category)
+	}
+	if s.Metadata == nil || s.Metadata["author"] != "cobot" {
+		t.Errorf("metadata = %v", s.Metadata)
+	}
+	if !strings.Contains(s.Content, "# Code Review") {
+		t.Errorf("content missing body: %q", s.Content)
+	}
+}
+
+func TestLoadCatalog_NewFormatWithCategory(t *testing.T) {
+	dir := t.TempDir()
+	skillDir := filepath.Join(dir, "coding", "code-review")
+	os.MkdirAll(skillDir, 0755)
+	os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(`---
+name: code-review
+description: Review code.
+---
+
+# Code Review
+`), 0644)
+
+	skills, err := LoadCatalog(context.Background(), []string{dir}, nil)
+	if err != nil {
+		t.Fatalf("LoadCatalog: %v", err)
+	}
+	if len(skills) != 1 {
+		t.Fatalf("expected 1 skill, got %d", len(skills))
+	}
+	if skills[0].Category != "coding" {
+		t.Errorf("category = %q, want coding", skills[0].Category)
+	}
+}
+
+func TestLoadCatalog_MarkdownFiles(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "coding.md"), []byte("# Coding Expert\nYou are an expert coder."), 0644)
 	os.WriteFile(filepath.Join(dir, "review.md"), []byte("## Code Review\nReview code carefully."), 0644)
 
-	skills, err := LoadSkills(context.Background(), []string{dir}, nil)
+	skills, err := LoadCatalog(context.Background(), []string{dir}, nil)
 	if err != nil {
-		t.Fatalf("LoadSkills: %v", err)
+		t.Fatalf("LoadCatalog: %v", err)
 	}
 	if len(skills) != 2 {
 		t.Fatalf("expected 2 skills, got %d", len(skills))
@@ -68,7 +138,7 @@ func TestLoadSkills_MarkdownFiles(t *testing.T) {
 	}
 }
 
-func TestLoadSkills_YAMLFiles(t *testing.T) {
+func TestLoadCatalog_YAMLFiles(t *testing.T) {
 	dir := t.TempDir()
 	content := `
 name: planner
@@ -79,9 +149,9 @@ content: |
 `
 	os.WriteFile(filepath.Join(dir, "planner.yaml"), []byte(content), 0644)
 
-	skills, err := LoadSkills(context.Background(), []string{dir}, nil)
+	skills, err := LoadCatalog(context.Background(), []string{dir}, nil)
 	if err != nil {
-		t.Fatalf("LoadSkills: %v", err)
+		t.Fatalf("LoadCatalog: %v", err)
 	}
 	if len(skills) != 1 {
 		t.Fatalf("expected 1 skill, got %d", len(skills))
@@ -98,7 +168,7 @@ content: |
 	}
 }
 
-func TestLoadSkills_YAMLWithYmlExt(t *testing.T) {
+func TestLoadCatalog_YAMLWithYmlExt(t *testing.T) {
 	dir := t.TempDir()
 	content := `
 name: tester
@@ -107,9 +177,9 @@ content: Test content
 `
 	os.WriteFile(filepath.Join(dir, "tester.yml"), []byte(content), 0644)
 
-	skills, err := LoadSkills(context.Background(), []string{dir}, nil)
+	skills, err := LoadCatalog(context.Background(), []string{dir}, nil)
 	if err != nil {
-		t.Fatalf("LoadSkills: %v", err)
+		t.Fatalf("LoadCatalog: %v", err)
 	}
 	if len(skills) != 1 {
 		t.Fatalf("expected 1 skill, got %d", len(skills))
@@ -119,7 +189,7 @@ content: Test content
 	}
 }
 
-func TestLoadSkills_MergeOverride(t *testing.T) {
+func TestLoadCatalog_MergeOverride(t *testing.T) {
 	globalDir := t.TempDir()
 	workspaceDir := t.TempDir()
 
@@ -127,9 +197,9 @@ func TestLoadSkills_MergeOverride(t *testing.T) {
 	os.WriteFile(filepath.Join(globalDir, "global-only.md"), []byte("# Only Global\nOnly in global"), 0644)
 	os.WriteFile(filepath.Join(workspaceDir, "shared.md"), []byte("# Workspace Shared\nWorkspace content"), 0644)
 
-	skills, err := LoadSkills(context.Background(), []string{globalDir, workspaceDir}, nil)
+	skills, err := LoadCatalog(context.Background(), []string{globalDir, workspaceDir}, nil)
 	if err != nil {
-		t.Fatalf("LoadSkills: %v", err)
+		t.Fatalf("LoadCatalog: %v", err)
 	}
 	if len(skills) != 2 {
 		t.Fatalf("expected 2 skills, got %d: %+v", len(skills), skills)
@@ -156,15 +226,15 @@ func TestLoadSkills_MergeOverride(t *testing.T) {
 	}
 }
 
-func TestLoadSkills_Filter(t *testing.T) {
+func TestLoadCatalog_Filter(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "a.md"), []byte("# A\nSkill A"), 0644)
 	os.WriteFile(filepath.Join(dir, "b.md"), []byte("# B\nSkill B"), 0644)
 	os.WriteFile(filepath.Join(dir, "c.md"), []byte("# C\nSkill C"), 0644)
 
-	skills, err := LoadSkills(context.Background(), []string{dir}, []string{"a", "c"})
+	skills, err := LoadCatalog(context.Background(), []string{dir}, []string{"a", "c"})
 	if err != nil {
-		t.Fatalf("LoadSkills: %v", err)
+		t.Fatalf("LoadCatalog: %v", err)
 	}
 	if len(skills) != 2 {
 		t.Fatalf("expected 2 skills, got %d", len(skills))
@@ -185,30 +255,30 @@ func TestLoadSkills_Filter(t *testing.T) {
 	}
 }
 
-func TestLoadSkills_FilterEmpty(t *testing.T) {
+func TestLoadCatalog_FilterEmpty(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "a.md"), []byte("# A\nSkill A"), 0644)
 	os.WriteFile(filepath.Join(dir, "b.md"), []byte("# B\nSkill B"), 0644)
 
 	// Empty filter means include all.
-	skills, err := LoadSkills(context.Background(), []string{dir}, []string{})
+	skills, err := LoadCatalog(context.Background(), []string{dir}, []string{})
 	if err != nil {
-		t.Fatalf("LoadSkills: %v", err)
+		t.Fatalf("LoadCatalog: %v", err)
 	}
 	if len(skills) != 2 {
 		t.Fatalf("expected 2 skills with empty filter, got %d", len(skills))
 	}
 }
 
-func TestLoadSkills_IgnoresOtherExtensions(t *testing.T) {
+func TestLoadCatalog_IgnoresOtherExtensions(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "good.md"), []byte("# Good\nGood skill"), 0644)
 	os.WriteFile(filepath.Join(dir, "bad.txt"), []byte("not a skill"), 0644)
 	os.WriteFile(filepath.Join(dir, "also_bad.json"), []byte("{}"), 0644)
 
-	skills, err := LoadSkills(context.Background(), []string{dir}, nil)
+	skills, err := LoadCatalog(context.Background(), []string{dir}, nil)
 	if err != nil {
-		t.Fatalf("LoadSkills: %v", err)
+		t.Fatalf("LoadCatalog: %v", err)
 	}
 	if len(skills) != 1 {
 		t.Fatalf("expected 1 skill, got %d", len(skills))
@@ -218,18 +288,107 @@ func TestLoadSkills_IgnoresOtherExtensions(t *testing.T) {
 	}
 }
 
-func TestSkillsToPrompt(t *testing.T) {
+func TestLoadFull_Found(t *testing.T) {
+	dir := t.TempDir()
+	skillDir := filepath.Join(dir, "my-skill")
+	os.MkdirAll(skillDir, 0755)
+	os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(`---
+name: my-skill
+description: A test skill
+---
+
+Body content here.
+`), 0644)
+
+	sk, err := LoadFull(context.Background(), []string{dir}, "my-skill")
+	if err != nil {
+		t.Fatalf("LoadFull: %v", err)
+	}
+	if sk.Name != "my-skill" {
+		t.Errorf("name = %q", sk.Name)
+	}
+	if !strings.Contains(sk.Content, "Body content here.") {
+		t.Errorf("content = %q", sk.Content)
+	}
+}
+
+func TestLoadFull_NotFound(t *testing.T) {
+	dir := t.TempDir()
+	_, err := LoadFull(context.Background(), []string{dir}, "nonexistent")
+	if err == nil {
+		t.Error("expected error for nonexistent skill")
+	}
+}
+
+func TestListLinkedFiles(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "references"), 0755)
+	os.MkdirAll(filepath.Join(dir, "templates"), 0755)
+	os.WriteFile(filepath.Join(dir, "references", "api.md"), []byte("api docs"), 0644)
+	os.WriteFile(filepath.Join(dir, "references", "guide.md"), []byte("guide"), 0644)
+	os.WriteFile(filepath.Join(dir, "templates", "output.md"), []byte("template"), 0644)
+
+	files := ListLinkedFiles(dir)
+	if len(files["references"]) != 2 {
+		t.Errorf("references = %v, want 2 files", files["references"])
+	}
+	if len(files["templates"]) != 1 {
+		t.Errorf("templates = %v, want 1 file", files["templates"])
+	}
+	if _, ok := files["scripts"]; ok {
+		t.Error("scripts should not be present")
+	}
+}
+
+func TestReadLinkedFile_Valid(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "references"), 0755)
+	os.WriteFile(filepath.Join(dir, "references", "api.md"), []byte("api docs content"), 0644)
+
+	content, err := ReadLinkedFile(dir, "references/api.md")
+	if err != nil {
+		t.Fatalf("ReadLinkedFile: %v", err)
+	}
+	if content != "api docs content" {
+		t.Errorf("content = %q", content)
+	}
+}
+
+func TestReadLinkedFile_PathTraversal(t *testing.T) {
+	dir := t.TempDir()
+	_, err := ReadLinkedFile(dir, "../etc/passwd")
+	if err == nil {
+		t.Error("expected error for path traversal")
+	}
+}
+
+func TestReadLinkedFile_AbsolutePath(t *testing.T) {
+	dir := t.TempDir()
+	_, err := ReadLinkedFile(dir, "/etc/passwd")
+	if err == nil {
+		t.Error("expected error for absolute path")
+	}
+}
+
+func TestReadLinkedFile_InvalidSubdir(t *testing.T) {
+	dir := t.TempDir()
+	_, err := ReadLinkedFile(dir, "other/file.txt")
+	if err == nil {
+		t.Error("expected error for invalid subdir")
+	}
+}
+
+func TestSkillsToPrompt_Tier1(t *testing.T) {
 	skills := []Skill{
 		{
 			Name:        "coding",
 			Description: "Expert coder",
-			Content:     "You are an expert coder.",
 			Source:      "global",
 		},
 		{
 			Name:        "review",
 			Description: "Code reviewer",
-			Content:     "Review code carefully.",
+			Category:    "coding",
 			Source:      "workspace",
 		},
 	}
@@ -238,20 +397,15 @@ func TestSkillsToPrompt(t *testing.T) {
 	if !strings.Contains(result, "## Skills") {
 		t.Error("missing '## Skills' header")
 	}
-	if !strings.Contains(result, "### coding (global)") {
-		t.Error("missing coding heading")
+	if !strings.Contains(result, "**coding**: Expert coder") {
+		t.Error("missing coding summary")
 	}
-	if !strings.Contains(result, "### review (workspace)") {
-		t.Error("missing review heading")
+	if !strings.Contains(result, "**review** (coding): Code reviewer") {
+		t.Error("missing review with category")
 	}
-	if !strings.Contains(result, "> Expert coder") {
-		t.Error("missing coding description")
-	}
-	if !strings.Contains(result, "You are an expert coder.") {
-		t.Error("missing coding content")
-	}
-	if !strings.Contains(result, "Review code carefully.") {
-		t.Error("missing review content")
+	// Tier-1 should NOT include full content
+	if strings.Contains(result, "You are") {
+		t.Error("tier-1 prompt should not include full content")
 	}
 }
 
@@ -262,16 +416,53 @@ func TestSkillsToPrompt_Empty(t *testing.T) {
 	}
 }
 
-func TestSkillsToPrompt_ContentNoTrailingNewline(t *testing.T) {
-	skills := []Skill{
-		{
-			Name:    "test",
-			Content: "no trailing newline", // no trailing \n
-			Source:  "global",
-		},
+func TestFindSkillDir_NewFormat(t *testing.T) {
+	dir := t.TempDir()
+	skillDir := filepath.Join(dir, "my-skill")
+	os.MkdirAll(skillDir, 0755)
+	os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: my-skill\ndescription: test\n---\nbody"), 0644)
+
+	found, err := FindSkillDir(dir, t.TempDir(), "my-skill")
+	if err != nil {
+		t.Fatalf("FindSkillDir: %v", err)
 	}
-	result := SkillsToPrompt(skills)
-	if !strings.Contains(result, "no trailing newline\n") {
-		t.Error("should have appended newline after content")
+	if found != skillDir {
+		t.Errorf("found = %q, want %q", found, skillDir)
+	}
+}
+
+func TestFindSkillDir_WithCategory(t *testing.T) {
+	dir := t.TempDir()
+	skillDir := filepath.Join(dir, "coding", "review")
+	os.MkdirAll(skillDir, 0755)
+	os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: review\ndescription: test\n---\nbody"), 0644)
+
+	found, err := FindSkillDir(dir, t.TempDir(), "review")
+	if err != nil {
+		t.Fatalf("FindSkillDir: %v", err)
+	}
+	if found != skillDir {
+		t.Errorf("found = %q, want %q", found, skillDir)
+	}
+}
+
+func TestFindSkillDir_LegacyMd(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "old-skill.md"), []byte("# Old Skill\nContent"), 0644)
+
+	found, err := FindSkillDir(dir, t.TempDir(), "old-skill")
+	if err != nil {
+		t.Fatalf("FindSkillDir: %v", err)
+	}
+	if found != dir {
+		t.Errorf("found = %q, want %q", found, dir)
+	}
+}
+
+func TestFindSkillDir_NotFound(t *testing.T) {
+	dir := t.TempDir()
+	_, err := FindSkillDir(dir, t.TempDir(), "nonexistent")
+	if err == nil {
+		t.Error("expected error for nonexistent skill")
 	}
 }

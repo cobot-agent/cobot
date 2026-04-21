@@ -1,0 +1,9 @@
+{
+  "type": "object",
+  "properties": {
+    "category": {
+      "type": "string",
+      "description": "Optional category to filter by"
+    }
+  }
+}

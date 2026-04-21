@@ -154,7 +154,7 @@ func configureSkills(agentCfg *config.AgentConfig, sm *agent.SessionManager, ws 
 		enabledSkills = agentCfg.EnabledSkills
 	}
 	skillDirs := []string{workspace.GlobalSkillsDir(), ws.SkillsDir()}
-	loadedSkills, err := skills.LoadSkills(context.Background(), skillDirs, enabledSkills)
+	loadedSkills, err := skills.LoadCatalog(context.Background(), skillDirs, enabledSkills)
 	if err != nil {
 		slog.Warn("failed to load skills", "error", err)
 	}
@@ -214,6 +214,7 @@ func configureSandboxTools(a *agent.Agent, ws *workspace.Workspace, agentCfg *co
 	))
 
 	tools.RegisterWorkspaceTools(a.ToolRegistry(), ws, sandbox)
+	tools.RegisterSkillsTools(a.ToolRegistry(), ws)
 	return sandbox
 }
 

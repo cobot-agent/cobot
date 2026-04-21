@@ -1,0 +1,39 @@
+{
+  "type": "object",
+  "properties": {
+    "action": {
+      "type": "string",
+      "enum": ["create", "edit", "patch", "delete", "write_file", "remove_file"],
+      "description": "Action to perform"
+    },
+    "name": {
+      "type": "string",
+      "description": "Skill name (required for all actions)"
+    },
+    "category": {
+      "type": "string",
+      "description": "Category for create action"
+    },
+    "content": {
+      "type": "string",
+      "description": "Full SKILL.md content for create/edit (including frontmatter)"
+    },
+    "old_string": {
+      "type": "string",
+      "description": "String to find for patch action"
+    },
+    "new_string": {
+      "type": "string",
+      "description": "Replacement string for patch action"
+    },
+    "file_path": {
+      "type": "string",
+      "description": "Linked file path for write_file/remove_file (e.g., 'references/api.md')"
+    },
+    "file_content": {
+      "type": "string",
+      "description": "Content for write_file action"
+    }
+  },
+  "required": ["action", "name"]
+}
