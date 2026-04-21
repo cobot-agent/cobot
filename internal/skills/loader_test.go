@@ -73,6 +73,15 @@ func TestLoadCatalog_BasicScenarios(t *testing.T) {
 			t.Fatalf("expected [real], got %v", s)
 		}
 	})
+	t.Run("dot-file legacy skills skipped", func(t *testing.T) {
+		d := t.TempDir()
+		wf(t, filepath.Join(d, ".hidden.md"), "# Hidden\nHidden skill")
+		wf(t, filepath.Join(d, ".secret.yaml"), "name: secret\ndescription: nope\ncontent: bad\n")
+		wf(t, filepath.Join(d, "visible.md"), "# Visible\nVisible skill")
+		if s := mustLoad(t, []string{d}, nil); len(s) != 1 || s[0].Name != "visible" {
+			t.Fatalf("expected [visible], got %v", s)
+		}
+	})
 }
 
 func TestLoadCatalog_NewFormat(t *testing.T) {
@@ -117,6 +126,14 @@ func TestLoadCatalog_LegacyFormats(t *testing.T) {
 	c := m["coding"]
 	if c.Description != "Coding Expert" || c.Source != "global" || !strings.Contains(c.Content, "Expert coder") {
 		t.Errorf("coding: desc=%q source=%q content=%q", c.Description, c.Source, c.Content)
+	}
+}
+func TestLoadCatalog_LegacyYAMLInvalidName(t *testing.T) {
+	dir := t.TempDir()
+	wf(t, filepath.Join(dir, "bad.yaml"), "name: ../etc\ndescription: Evil\ncontent: oops\n")
+	s := mustLoad(t, []string{dir}, nil)
+	if len(s) != 0 {
+		t.Errorf("expected 0 skills (invalid YAML name should be rejected), got %d", len(s))
 	}
 }
 func TestLoadCatalog_MergeOverride(t *testing.T) {
@@ -444,6 +461,8 @@ func TestExtractDescription(t *testing.T) {
 		{"empty content", "", ""},
 		{"only whitespace", "   \n  \n", ""},
 		{"heading no space", "##NoSpace\nContent", "##NoSpace"},
+		{"heading multiple spaces", "##  Double Space\nContent", "Double Space"},
+		{"h1 multiple spaces", "#  Extra\nContent", "Extra"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -479,6 +498,20 @@ func TestEnsureContainedDir(t *testing.T) {
 			t.Error("expected error for path traversal")
 		}
 	})
+	t.Run("symlink in intermediate component blocked", func(t *testing.T) {
+		base := t.TempDir()
+		outside := t.TempDir()
+		os.MkdirAll(filepath.Join(base, "references"), 0755)
+		// Create symlink: references/link -> outside dir
+		if err := os.Symlink(outside, filepath.Join(base, "references", "link")); err != nil {
+			t.Skip(err)
+		}
+		// Try to create a dir under the symlink target (non-existent sub-path)
+		target := filepath.Join(base, "references", "link", "escape")
+		if err := EnsureContainedDir(target, base); err == nil {
+			t.Error("expected error for symlink escape through non-existent path")
+		}
+	})
 }
 
 func TestValidateLinkedFilePath(t *testing.T) {
@@ -496,6 +529,8 @@ func TestValidateLinkedFilePath(t *testing.T) {
 		{"empty path invalid", "", true},
 		{"subdir of valid", "assets/sub/deep.png", false},
 		{"exact subdir name no slash", "assets", true},
+		{"exact subdir name with slash", "assets/", true},
+		{"references trailing slash only", "references/", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

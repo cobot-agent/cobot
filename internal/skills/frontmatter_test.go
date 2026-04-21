@@ -59,6 +59,11 @@ func TestParseFrontMatter(t *testing.T) {
 		},
 		{"empty yaml trailing newline", "---\n---\n", "", "", "", false, nil},
 		{"empty yaml no trailing newline", "---\n---", "", "", "", false, nil},
+		{
+			"utf-8 bom",
+			"\xEF\xBB\xBF---\nname: bom-skill\ndescription: BOM skill\n---\nBody.",
+			"bom-skill", "BOM skill", "Body.", false, nil,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

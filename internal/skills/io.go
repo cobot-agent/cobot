@@ -3,6 +3,7 @@ package skills
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -10,6 +11,38 @@ import (
 
 	"gopkg.in/yaml.v3"
 )
+
+// maxSkillFileSize is the maximum allowed size for a single skill file (1 MB).
+// This protects the catalog loader from unbounded memory reads.
+const maxSkillFileSize int64 = 1 << 20
+
+// readFileWithLimit reads a file after verifying its size does not exceed maxSize.
+// Uses io.LimitReader to protect against TOCTOU races where the file grows between Stat and Read.
+func readFileWithLimit(path string, maxSize int64) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if info.IsDir() {
+		return nil, fmt.Errorf("%s is a directory", path)
+	}
+	if info.Size() > maxSize {
+		return nil, fmt.Errorf("file %s too large: %d bytes (max %d)", path, info.Size(), maxSize)
+	}
+	data, err := io.ReadAll(io.LimitReader(f, maxSize+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > maxSize {
+		return nil, fmt.Errorf("file %s too large (exceeds %d bytes)", path, maxSize)
+	}
+	return data, nil
+}
 
 // ListLinkedFiles returns a map of subdir→filenames for non-empty linked file
 // directories (references/, templates/, scripts/, assets/) under skillDir.
@@ -47,16 +80,27 @@ func ReadLinkedFile(skillDir, filePath string) (string, error) {
 		return "", err
 	}
 	const maxReadSize = 10 << 20 // 10 MB
-	info, err := os.Stat(abs)
+	f, err := os.Open(abs)
+	if err != nil {
+		return "", fmt.Errorf("open linked file: %w", err)
+	}
+	defer f.Close()
+	info, err := f.Stat()
 	if err != nil {
 		return "", fmt.Errorf("stat linked file: %w", err)
+	}
+	if info.IsDir() {
+		return "", fmt.Errorf("linked file path is a directory: %q", filePath)
 	}
 	if info.Size() > maxReadSize {
 		return "", fmt.Errorf("linked file too large: %d bytes (max %d)", info.Size(), maxReadSize)
 	}
-	data, err := os.ReadFile(abs)
+	data, err := io.ReadAll(io.LimitReader(f, maxReadSize+1))
 	if err != nil {
 		return "", fmt.Errorf("read linked file: %w", err)
+	}
+	if len(data) > maxReadSize {
+		return "", fmt.Errorf("linked file too large: exceeds %d bytes", maxReadSize)
 	}
 	return string(data), nil
 }
@@ -84,7 +128,7 @@ func FindNewFormatSkillDir(skillsDir, name string) (string, error) {
 	}
 	path, err := findSkillDirIn(name, skillsDir)
 	if err != nil {
-		return "", fmt.Errorf("skill not found: %q", name)
+		return "", fmt.Errorf("find skill %q: %w", name, err)
 	}
 	if path == skillsDir {
 		return "", fmt.Errorf("skill %q is in legacy format; migrate to %s directory format first", name, SkillFile)
@@ -94,6 +138,8 @@ func FindNewFormatSkillDir(skillsDir, name string) (string, error) {
 
 // EnsureContainedDir verifies that parentDir is safely contained under skillDir
 // (blocking path traversal) and creates parentDir with mode 0755 if it doesn't exist.
+// Handles symlinks in intermediate path components by resolving the longest
+// existing prefix before performing the containment check.
 func EnsureContainedDir(parentDir, skillDir string) error {
 	checkDir := parentDir
 	if r, err := filepath.EvalSymlinks(parentDir); err == nil {
@@ -101,20 +147,58 @@ func EnsureContainedDir(parentDir, skillDir string) error {
 	}
 	if _, err := VerifyContainment(checkDir, skillDir); err != nil {
 		if !os.IsNotExist(err) {
+			if errors.Is(err, ErrPathTraversal) {
+				return ErrPathTraversal
+			}
+			return fmt.Errorf("verify containment: %w", err)
+		}
+		// Target doesn't exist. Resolve longest existing prefix to handle
+		// symlinks in intermediate components, then verify full resolved path.
+		resolved, err := resolveExistingPrefix(parentDir)
+		if err != nil {
 			return ErrPathTraversal
 		}
-		absCheck, err1 := filepath.Abs(parentDir)
-		absBase, err2 := filepath.Abs(skillDir)
-		if err1 != nil || err2 != nil || !strings.HasPrefix(absCheck, absBase+string(filepath.Separator)) {
+		absBase, err := filepath.Abs(skillDir)
+		if err != nil {
+			return ErrPathTraversal
+		}
+		absBaseResolved, err := filepath.EvalSymlinks(absBase)
+		if err != nil {
+			absBaseResolved = absBase
+		}
+		if !strings.HasPrefix(resolved, absBaseResolved+string(filepath.Separator)) {
 			return ErrPathTraversal
 		}
 	}
 	return os.MkdirAll(parentDir, 0755)
 }
 
+// resolveExistingPrefix walks up the path to find the longest existing ancestor,
+// resolves its symlinks, and appends the non-existing suffix to produce a fully
+// resolved path.
+func resolveExistingPrefix(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	p := abs
+	for {
+		r, err := filepath.EvalSymlinks(p)
+		if err == nil {
+			remaining := strings.TrimPrefix(abs, p)
+			return filepath.Clean(r + remaining), nil
+		}
+		parent := filepath.Dir(p)
+		if parent == p {
+			return "", fmt.Errorf("no existing prefix for %q", path)
+		}
+		p = parent
+	}
+}
+
 // loadNewFormatSkill loads a SkillFile from a skill directory.
 func loadNewFormatSkill(skillDir, category, source string) (Skill, error) {
-	data, err := os.ReadFile(filepath.Join(skillDir, SkillFile))
+	data, err := readFileWithLimit(filepath.Join(skillDir, SkillFile), maxSkillFileSize)
 	if err != nil {
 		return Skill{}, fmt.Errorf("read %s: %w", SkillFile, err)
 	}
@@ -131,18 +215,22 @@ func loadNewFormatSkill(skillDir, category, source string) (Skill, error) {
 	if dirName := filepath.Base(skillDir); fm.Name != dirName {
 		return Skill{}, fmt.Errorf("skill name %q does not match directory name %q", fm.Name, dirName)
 	}
-	absDir, _ := filepath.Abs(skillDir)
+	absDir, err := filepath.Abs(skillDir)
+	if err != nil {
+		return Skill{}, fmt.Errorf("resolve skill dir: %w", err)
+	}
 	return Skill{Name: fm.Name, Description: fm.Description, Category: category, Content: body, Source: source, Dir: absDir, Metadata: fm.Metadata}, nil
 }
 
 // loadLegacyFile loads a legacy flat-file skill (.md or .yaml/.yml).
+// Skips dot-files (e.g., .hidden.md) for consistency with category dir filtering.
 func loadLegacyFile(dir, filename, src string) (Skill, bool) {
 	ext := filepath.Ext(filename)
 	name := strings.TrimSuffix(filename, ext)
-	if !isValidLegacyName(name) || (ext != ".md" && ext != ".yaml" && ext != ".yml") {
+	if !isValidLegacyName(name) || strings.HasPrefix(name, ".") || (ext != ".md" && ext != ".yaml" && ext != ".yml") {
 		return Skill{}, false
 	}
-	data, err := os.ReadFile(filepath.Join(dir, filename))
+	data, err := readFileWithLimit(filepath.Join(dir, filename), maxSkillFileSize)
 	if err != nil {
 		return Skill{}, false
 	}
@@ -156,6 +244,9 @@ func loadLegacyFile(dir, filename, src string) (Skill, bool) {
 	if ys.Name != "" {
 		name = ys.Name
 	}
+	if !isValidLegacyName(name) {
+		return Skill{}, false
+	}
 	return Skill{Name: name, Description: ys.Description, Content: ys.Content, Source: src}, true
 }
 
@@ -167,7 +258,7 @@ func findSkillDirIn(name, root string) (string, error) {
 	}
 	ents, err := os.ReadDir(root)
 	if err != nil {
-		return "", fmt.Errorf("skill not found in %s", root)
+		return "", fmt.Errorf("read skills dir %s: %w", root, err)
 	}
 	for _, ent := range ents {
 		if ent.IsDir() && isValidCategoryName(ent.Name()) {

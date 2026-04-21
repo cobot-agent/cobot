@@ -43,7 +43,11 @@ type frontMatter struct {
 // Content must start with frontmatter delimiter ("---") after trimming whitespace (CRLF normalized to LF).
 func parseFrontMatter(content string) (frontMatter, string, error) {
 	var fm frontMatter
-	content = strings.TrimSpace(strings.ReplaceAll(content, "\r\n", "\n"))
+	content = strings.ReplaceAll(content, "\r\n", "\n")
+	content = strings.ReplaceAll(content, "\r", "\n")
+	content = strings.TrimSpace(content)
+	// Strip UTF-8 BOM if present (some editors prepend it).
+	content = strings.TrimPrefix(content, "\xEF\xBB\xBF")
 	if !strings.HasPrefix(content, frontmatterDelimiter) {
 		return fm, "", errors.New("content does not start with frontmatter delimiter")
 	}
@@ -85,7 +89,7 @@ func extractDescription(content string) string {
 			continue
 		}
 		if stripped := strings.TrimLeft(line, "#"); len(stripped) < len(line) && strings.HasPrefix(stripped, " ") {
-			line = stripped[1:]
+			line = strings.TrimLeft(stripped, " ")
 		}
 		return line
 	}

@@ -176,6 +176,26 @@ func TestExecuteManage_CreateDuplicateFails(t *testing.T) {
 	}
 }
 
+func TestExecuteManage_CreateCategoryConflictsWithExistingSkill(t *testing.T) {
+	h := newTestSkillsHandler(t)
+	// Create a top-level skill named "coding".
+	codingContent := skillContent("coding", "Coding skill", "body")
+	codingArgs, _ := json.Marshal(manageParams{Action: "create", Name: "coding", Content: codingContent})
+	if _, err := h.executeManage(context.Background(), codingArgs); err != nil {
+		t.Fatal(err)
+	}
+	// Try to create a skill under category "coding" — should fail because
+	// "coding" is already a skill and the scanner would never find nested skills.
+	reviewContent := skillContent("review", "Review skill", "body")
+	reviewArgs, _ := json.Marshal(manageParams{
+		Action: "create", Name: "review", Category: "coding", Content: reviewContent,
+	})
+	_, err := h.executeManage(context.Background(), reviewArgs)
+	if err == nil || !strings.Contains(err.Error(), "a skill with that name already exists") {
+		t.Errorf("expected category-conflict error, got: %v", err)
+	}
+}
+
 func TestExecuteManage_Edit(t *testing.T) {
 	h := newTestSkillsHandler(t)
 	// Create first.
@@ -277,6 +297,36 @@ func TestExecuteManage_WriteAndRemoveFile(t *testing.T) {
 	}
 	if !strings.Contains(got, "file removed") {
 		t.Errorf("unexpected: %s", got)
+	}
+}
+
+func TestExecuteManage_WriteFile_SymlinkEscape(t *testing.T) {
+	h := newTestSkillsHandler(t)
+	createArgs, _ := json.Marshal(manageParams{Action: "create", Name: "sym", Content: skillContent("sym", "D", "b")})
+	h.executeManage(context.Background(), createArgs)
+
+	// Create a symlink inside references/ pointing outside the skill dir.
+	skillDir := filepath.Join(h.ws.SkillsDir(), "sym")
+	os.MkdirAll(filepath.Join(skillDir, "references"), 0755)
+	outside := filepath.Join(t.TempDir(), "sensitive.txt")
+	os.WriteFile(outside, []byte("secret"), 0644)
+	link := filepath.Join(skillDir, "references", "escape.md")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skip(err)
+	}
+
+	// Attempting to write through the symlink should fail.
+	writeArgs, _ := json.Marshal(manageParams{
+		Action: "write_file", Name: "sym", FilePath: "references/escape.md", FileContent: "pwned",
+	})
+	_, err := h.executeManage(context.Background(), writeArgs)
+	if err == nil {
+		t.Error("expected error for symlink escape")
+	}
+	// Verify the outside file was NOT overwritten.
+	data, _ := os.ReadFile(outside)
+	if string(data) != "secret" {
+		t.Errorf("outside file was modified: %q", string(data))
 	}
 }
 

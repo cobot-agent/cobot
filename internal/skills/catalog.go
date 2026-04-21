@@ -150,14 +150,16 @@ func scanCategoryDir(parent, catName, src string) []Skill {
 	if !isValidCategoryName(catName) {
 		return nil
 	}
-	catEnts, err := os.ReadDir(filepath.Join(parent, catName))
+	catPath := filepath.Join(parent, catName)
+	catEnts, err := os.ReadDir(catPath)
 	if err != nil {
+		slog.Warn("failed to read category directory", "path", catPath, "error", err)
 		return nil
 	}
 	var result []Skill
 	for _, catEnt := range catEnts {
 		if catEnt.IsDir() {
-			if sk, ok := tryLoadSkillDir(filepath.Join(parent, catName), catEnt.Name(), catName, src); ok {
+			if sk, ok := tryLoadSkillDir(catPath, catEnt.Name(), catName, src); ok {
 				result = append(result, sk)
 			}
 		}

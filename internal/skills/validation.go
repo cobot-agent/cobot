@@ -119,9 +119,15 @@ func VerifyContainment(fullPath string, baseDir string) (string, error) {
 
 // ValidateLinkedFilePath ensures a file path is under an allowed linked subdir.
 // Returns an error if the path is not under references/, templates/, scripts/, or assets/.
+// Also rejects paths with traversal patterns for defense-in-depth.
+// Uses "/" directly (not os.PathSeparator) because filePath comes from JSON and always uses "/".
 func ValidateLinkedFilePath(filePath string) error {
+	if !IsPathTraversalSafe(filePath) {
+		return ErrPathTraversal
+	}
 	for _, subdir := range linkedSubdirs {
-		if strings.HasPrefix(filePath, subdir+"/") {
+		prefix := subdir + "/"
+		if strings.HasPrefix(filePath, prefix) && len(filePath) > len(prefix) {
 			return nil
 		}
 	}

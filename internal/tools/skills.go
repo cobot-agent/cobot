@@ -140,15 +140,29 @@ func (h *skillsHandler) executeView(ctx context.Context, args json.RawMessage) (
 	var b strings.Builder
 	content := sk.Content
 	if sk.Dir != "" {
-		if data, err := os.ReadFile(filepath.Join(sk.Dir, skills.SkillFile)); err == nil {
+		skillMD := filepath.Join(sk.Dir, skills.SkillFile)
+		if info, err := os.Stat(skillMD); err == nil {
+			if info.Size() > int64(maxSkillContentSize) {
+				return "", fmt.Errorf("skill content exceeds maximum size of %d bytes", maxSkillContentSize)
+			}
+			data, err := os.ReadFile(skillMD)
+			if err != nil {
+				return "", fmt.Errorf("read %s: %w", skills.SkillFile, err)
+			}
+			// Post-read safety check in case file grew between Stat and ReadFile.
 			if len(data) > maxSkillContentSize {
 				return "", fmt.Errorf("skill content exceeds maximum size of %d bytes", maxSkillContentSize)
 			}
 			content = string(data)
 		}
-		appendLinkedFiles(&b, sk.Dir)
+	}
+	if len(content) > maxSkillContentSize {
+		return "", fmt.Errorf("skill content exceeds maximum size of %d bytes", maxSkillContentSize)
 	}
 	b.WriteString(content)
+	if sk.Dir != "" {
+		appendLinkedFiles(&b, sk.Dir)
+	}
 	return b.String(), nil
 }
 
@@ -223,17 +237,43 @@ func (h *skillsHandler) doCreate(p manageParams) (string, error) {
 		if err := skills.ValidateSkillName(p.Category); err != nil {
 			return "", fmt.Errorf("invalid category: %w", err)
 		}
-		skillDir = filepath.Join(h.ws.SkillsDir(), p.Category, p.Name)
+		catDir := filepath.Join(h.ws.SkillsDir(), p.Category)
+		// Reject if category directory is itself a skill (has SKILL.md),
+		// because the scanner treats such dirs as skills, not categories,
+		// making nested skills invisible to the catalog.
+		if info, err := os.Stat(filepath.Join(catDir, skills.SkillFile)); err == nil && !info.IsDir() {
+			return "", fmt.Errorf("cannot use %q as category: a skill with that name already exists", p.Category)
+		}
+		skillDir = filepath.Join(catDir, p.Name)
+	}
+	// Reject if target directory already exists (could shadow category skills).
+	if info, err := os.Stat(skillDir); err == nil && info.IsDir() {
+		if _, serr := os.Stat(filepath.Join(skillDir, skills.SkillFile)); serr == nil {
+			return "", fmt.Errorf("skill %q already exists; use edit or patch to modify it", p.Name)
+		}
+		return "", fmt.Errorf("cannot create skill %q: directory already exists with other content", p.Name)
 	}
 	if err := os.MkdirAll(skillDir, 0755); err != nil {
 		return "", fmt.Errorf("create skill directory: %w", err)
 	}
 	skillMD := filepath.Join(skillDir, skills.SkillFile)
-	if _, err := os.Stat(skillMD); err == nil {
-		return "", fmt.Errorf("skill %q already exists; use edit or patch to modify it", p.Name)
-	}
-	if err := os.WriteFile(skillMD, []byte(p.Content), 0644); err != nil {
+	f, err := os.OpenFile(skillMD, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
+	if err != nil {
+		if os.IsExist(err) {
+			return "", fmt.Errorf("skill %q already exists; use edit or patch to modify it", p.Name)
+		}
 		return "", fmt.Errorf("write %s: %w", skills.SkillFile, err)
+	}
+	if _, err := f.WriteString(p.Content); err != nil {
+		f.Close()
+		os.Remove(skillMD)
+		os.Remove(skillDir) // clean up empty dir if we created it
+		return "", fmt.Errorf("write %s: %w", skills.SkillFile, err)
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(skillMD)
+		os.Remove(skillDir) // clean up empty dir if we created it
+		return "", fmt.Errorf("close %s: %w", skills.SkillFile, err)
 	}
 	slog.Info("skill created", "name", p.Name, "category", p.Category)
 	return fmt.Sprintf("skill created: %s", p.Name), nil
@@ -262,9 +302,19 @@ func (h *skillsHandler) doPatch(p manageParams) (string, error) {
 		return "", err
 	}
 	skillMD := filepath.Join(skillDir, skills.SkillFile)
+	info, err := os.Stat(skillMD)
+	if err != nil {
+		return "", fmt.Errorf("stat %s: %w", skills.SkillFile, err)
+	}
+	if info.Size() > int64(maxSkillContentSize) {
+		return "", fmt.Errorf("%s exceeds maximum size of %d bytes", skills.SkillFile, maxSkillContentSize)
+	}
 	data, err := os.ReadFile(skillMD)
 	if err != nil {
 		return "", fmt.Errorf("read %s: %w", skills.SkillFile, err)
+	}
+	if len(data) > maxSkillContentSize {
+		return "", fmt.Errorf("%s exceeds maximum size of %d bytes", skills.SkillFile, maxSkillContentSize)
 	}
 	content := string(data)
 	if !strings.Contains(content, p.OldString) {
@@ -302,6 +352,16 @@ func (h *skillsHandler) doWriteFile(p manageParams) (string, error) {
 	}
 	if len(p.FileContent) > maxLinkedFileSize {
 		return "", fmt.Errorf("file_content exceeds maximum size of %d bytes", maxLinkedFileSize)
+	}
+	// Verify containment if file already exists (defense against symlink escape).
+	if _, err := skills.VerifyContainment(fullPath, skillDir); err != nil {
+		if !os.IsNotExist(err) {
+			if errors.Is(err, skills.ErrPathTraversal) {
+				return "", skills.ErrPathTraversal
+			}
+			return "", fmt.Errorf("verify containment: %w", err)
+		}
+		// File doesn't exist yet; parent containment verified below.
 	}
 	if err := skills.EnsureContainedDir(filepath.Dir(fullPath), skillDir); err != nil {
 		return "", err
