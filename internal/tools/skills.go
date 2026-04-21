@@ -1,0 +1,361 @@
+package tools
+
+import (
+	"context"
+	_ "embed"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+
+	"github.com/cobot-agent/cobot/internal/skills"
+	"github.com/cobot-agent/cobot/internal/workspace"
+	cobot "github.com/cobot-agent/cobot/pkg"
+)
+
+const (
+	maxSkillContentSize = 256 * 1024  // 256 KB
+	maxLinkedFileSize   = 1024 * 1024 // 1 MB
+)
+
+//go:embed schemas/embed_skills_list_params.json
+var skillsListParamsJSON []byte
+
+//go:embed schemas/embed_skill_view_params.json
+var skillViewParamsJSON []byte
+
+//go:embed schemas/embed_skill_manage_params.json
+var skillManageParamsJSON []byte
+
+// skillSummary is the JSON DTO for listing skills.
+type skillSummary struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Category    string `json:"category,omitempty"`
+	Source      string `json:"source,omitempty"`
+}
+
+// fnTool adapts a function into a cobot.Tool, eliminating per-tool struct boilerplate.
+type fnTool struct {
+	name    string
+	desc    string
+	params  json.RawMessage
+	execute func(ctx context.Context, args json.RawMessage) (string, error)
+}
+
+func (t *fnTool) Name() string                { return t.name }
+func (t *fnTool) Description() string         { return t.desc }
+func (t *fnTool) Parameters() json.RawMessage { return t.params }
+func (t *fnTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
+	return t.execute(ctx, args)
+}
+
+// skillsHandler holds shared state for all skills tool operations.
+type skillsHandler struct {
+	ws *workspace.Workspace
+}
+
+func (h *skillsHandler) skillDirs() []string {
+	return []string{workspace.GlobalSkillsDir(), h.ws.SkillsDir()}
+}
+
+func (h *skillsHandler) findWritableDir(name string) (string, error) {
+	return skills.FindNewFormatSkillDir(h.ws.SkillsDir(), name)
+}
+
+// RegisterSkillsTools registers all skills-related tools.
+func RegisterSkillsTools(registry cobot.ToolRegistry, ws *workspace.Workspace) {
+	h := &skillsHandler{ws: ws}
+	registry.Register(&fnTool{
+		name: "skills_list", desc: "List all available skills with name, description, and category",
+		params: json.RawMessage(skillsListParamsJSON), execute: h.executeList,
+	})
+	registry.Register(&fnTool{
+		name: "skill_view", desc: "View full skill content and list linked files, or read a specific linked file",
+		params: json.RawMessage(skillViewParamsJSON), execute: h.executeView,
+	})
+	registry.Register(&fnTool{
+		name: "skill_manage", desc: "Create, edit, patch, delete skills, or manage linked files",
+		params: json.RawMessage(skillManageParamsJSON), execute: h.executeManage,
+	})
+}
+
+func (h *skillsHandler) executeList(ctx context.Context, args json.RawMessage) (string, error) {
+	var params struct {
+		Category string `json:"category"`
+	}
+	if err := decodeArgs(args, &params); err != nil {
+		return "", err
+	}
+	catalog, err := skills.LoadCatalog(ctx, h.skillDirs(), nil)
+	if err != nil {
+		return "", fmt.Errorf("load skills catalog: %w", err)
+	}
+	summaries := make([]skillSummary, 0, len(catalog))
+	for _, sk := range catalog {
+		if params.Category != "" && sk.Category != params.Category {
+			continue
+		}
+		summaries = append(summaries, skillSummary{
+			Name: sk.Name, Description: sk.Description,
+			Category: sk.Category, Source: sk.Source,
+		})
+	}
+	data, err := json.MarshalIndent(summaries, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("marshal skills: %w", err)
+	}
+	return string(data), nil
+}
+
+func (h *skillsHandler) executeView(ctx context.Context, args json.RawMessage) (string, error) {
+	var params struct {
+		Name     string `json:"name"`
+		FilePath string `json:"file_path"`
+	}
+	if err := decodeArgs(args, &params); err != nil {
+		return "", err
+	}
+	if params.Name == "" {
+		return "", errors.New("name is required")
+	}
+	if err := skills.ValidateSkillNameForView(params.Name); err != nil {
+		return "", err
+	}
+	if params.FilePath != "" {
+		skillDir, err := skills.FindSkillDir(h.ws.SkillsDir(), workspace.GlobalSkillsDir(), params.Name)
+		if err != nil {
+			return "", err
+		}
+		return skills.ReadLinkedFile(skillDir, params.FilePath)
+	}
+	sk, err := skills.LoadFull(ctx, h.skillDirs(), params.Name)
+	if err != nil {
+		return "", err
+	}
+	var b strings.Builder
+	content := sk.Content
+	if sk.Dir != "" {
+		if data, err := os.ReadFile(filepath.Join(sk.Dir, skills.SkillFile)); err == nil {
+			if len(data) > maxSkillContentSize {
+				return "", fmt.Errorf("skill content exceeds maximum size of %d bytes", maxSkillContentSize)
+			}
+			content = string(data)
+		}
+		appendLinkedFiles(&b, sk.Dir)
+	}
+	b.WriteString(content)
+	return b.String(), nil
+}
+
+func appendLinkedFiles(b *strings.Builder, skillDir string) {
+	linked := skills.ListLinkedFiles(skillDir)
+	if len(linked) == 0 {
+		return
+	}
+	b.WriteString("\n\n## Linked Files\n")
+	subdirs := make([]string, 0, len(linked))
+	for subdir := range linked {
+		subdirs = append(subdirs, subdir)
+	}
+	sort.Strings(subdirs)
+	for _, subdir := range subdirs {
+		fmt.Fprintf(b, "\n**%s/**\n", subdir)
+		for _, f := range linked[subdir] {
+			fmt.Fprintf(b, "- %s\n", f)
+		}
+	}
+}
+
+// --- manage actions ---
+
+type manageParams struct {
+	Action      string `json:"action"`
+	Name        string `json:"name"`
+	Category    string `json:"category"`
+	Content     string `json:"content"`
+	OldString   string `json:"old_string"`
+	NewString   string `json:"new_string"`
+	FilePath    string `json:"file_path"`
+	FileContent string `json:"file_content"`
+}
+
+var manageActions = map[string]func(*skillsHandler, manageParams) (string, error){
+	"create":      (*skillsHandler).doCreate,
+	"edit":        (*skillsHandler).doEdit,
+	"patch":       (*skillsHandler).doPatch,
+	"delete":      (*skillsHandler).doDelete,
+	"write_file":  (*skillsHandler).doWriteFile,
+	"remove_file": (*skillsHandler).doRemoveFile,
+}
+
+func (h *skillsHandler) executeManage(_ context.Context, args json.RawMessage) (string, error) {
+	var p manageParams
+	if err := decodeArgs(args, &p); err != nil {
+		return "", err
+	}
+	if p.Name == "" {
+		return "", errors.New("name is required")
+	}
+	if err := skills.ValidateSkillName(p.Name); err != nil {
+		return "", err
+	}
+	if p.Action == "" {
+		return "", errors.New("action is required (create, edit, patch, delete, write_file, remove_file)")
+	}
+	fn, ok := manageActions[p.Action]
+	if !ok {
+		return "", fmt.Errorf("unknown action: %q", p.Action)
+	}
+	return fn(h, p)
+}
+
+func (h *skillsHandler) doCreate(p manageParams) (string, error) {
+	if err := validateAndCheckContent(p.Content, p.Name); err != nil {
+		return "", err
+	}
+	skillDir := filepath.Join(h.ws.SkillsDir(), p.Name)
+	if p.Category != "" {
+		if err := skills.ValidateSkillName(p.Category); err != nil {
+			return "", fmt.Errorf("invalid category: %w", err)
+		}
+		skillDir = filepath.Join(h.ws.SkillsDir(), p.Category, p.Name)
+	}
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		return "", fmt.Errorf("create skill directory: %w", err)
+	}
+	skillMD := filepath.Join(skillDir, skills.SkillFile)
+	if _, err := os.Stat(skillMD); err == nil {
+		return "", fmt.Errorf("skill %q already exists; use edit or patch to modify it", p.Name)
+	}
+	if err := os.WriteFile(skillMD, []byte(p.Content), 0644); err != nil {
+		return "", fmt.Errorf("write %s: %w", skills.SkillFile, err)
+	}
+	slog.Info("skill created", "name", p.Name, "category", p.Category)
+	return fmt.Sprintf("skill created: %s", p.Name), nil
+}
+
+func (h *skillsHandler) doEdit(p manageParams) (string, error) {
+	if err := validateAndCheckContent(p.Content, p.Name); err != nil {
+		return "", err
+	}
+	skillDir, err := h.findWritableDir(p.Name)
+	if err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, skills.SkillFile), []byte(p.Content), 0644); err != nil {
+		return "", fmt.Errorf("write %s: %w", skills.SkillFile, err)
+	}
+	return fmt.Sprintf("skill updated: %s", p.Name), nil
+}
+
+func (h *skillsHandler) doPatch(p manageParams) (string, error) {
+	if p.OldString == "" {
+		return "", errors.New("old_string is required for patch action")
+	}
+	skillDir, err := h.findWritableDir(p.Name)
+	if err != nil {
+		return "", err
+	}
+	skillMD := filepath.Join(skillDir, skills.SkillFile)
+	data, err := os.ReadFile(skillMD)
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", skills.SkillFile, err)
+	}
+	content := string(data)
+	if !strings.Contains(content, p.OldString) {
+		return "", fmt.Errorf("old_string not found in %s", skills.SkillFile)
+	}
+	newContent := strings.Replace(content, p.OldString, p.NewString, 1)
+	if len(newContent) > maxSkillContentSize {
+		return "", fmt.Errorf("patched content exceeds maximum size of %d bytes", maxSkillContentSize)
+	}
+	if err := skills.ValidateContent(newContent, p.Name); err != nil {
+		return "", fmt.Errorf("patched content: %w", err)
+	}
+	if err := os.WriteFile(skillMD, []byte(newContent), 0644); err != nil {
+		return "", fmt.Errorf("write patched %s: %w", skills.SkillFile, err)
+	}
+	return fmt.Sprintf("skill patched: %s", p.Name), nil
+}
+
+func (h *skillsHandler) doDelete(p manageParams) (string, error) {
+	skillDir, err := h.findWritableDir(p.Name)
+	if err != nil {
+		return "", err
+	}
+	if err := os.RemoveAll(skillDir); err != nil {
+		return "", fmt.Errorf("remove skill directory: %w", err)
+	}
+	slog.Info("skill deleted", "name", p.Name)
+	return fmt.Sprintf("skill deleted: %s", p.Name), nil
+}
+
+func (h *skillsHandler) doWriteFile(p manageParams) (string, error) {
+	skillDir, fullPath, err := h.resolveLinkedFile(p.Name, p.FilePath)
+	if err != nil {
+		return "", err
+	}
+	if len(p.FileContent) > maxLinkedFileSize {
+		return "", fmt.Errorf("file_content exceeds maximum size of %d bytes", maxLinkedFileSize)
+	}
+	if err := skills.EnsureContainedDir(filepath.Dir(fullPath), skillDir); err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(fullPath, []byte(p.FileContent), 0644); err != nil {
+		return "", fmt.Errorf("write file: %w", err)
+	}
+	return fmt.Sprintf("file written: %s/%s", p.Name, p.FilePath), nil
+}
+
+func (h *skillsHandler) doRemoveFile(p manageParams) (string, error) {
+	skillDir, fullPath, err := h.resolveLinkedFile(p.Name, p.FilePath)
+	if err != nil {
+		return "", err
+	}
+	if _, err := skills.VerifyContainment(fullPath, skillDir); err != nil {
+		if os.IsNotExist(err) {
+			return "", fmt.Errorf("file not found: %q", p.FilePath)
+		}
+		return "", err
+	}
+	if err := os.Remove(fullPath); err != nil {
+		return "", fmt.Errorf("remove file: %w", err)
+	}
+	return fmt.Sprintf("file removed: %s/%s", p.Name, p.FilePath), nil
+}
+
+// --- helpers ---
+
+func validateAndCheckContent(content, name string) error {
+	if content == "" {
+		return errors.New("content is required")
+	}
+	if len(content) > maxSkillContentSize {
+		return fmt.Errorf("content exceeds maximum size of %d bytes", maxSkillContentSize)
+	}
+	return skills.ValidateContent(content, name)
+}
+
+func (h *skillsHandler) resolveLinkedFile(name, filePath string) (string, string, error) {
+	if filePath == "" {
+		return "", "", errors.New("file_path is required")
+	}
+	if !skills.IsPathTraversalSafe(filePath) {
+		return "", "", skills.ErrPathTraversal
+	}
+	if err := skills.ValidateLinkedFilePath(filePath); err != nil {
+		return "", "", err
+	}
+	skillDir, err := h.findWritableDir(name)
+	if err != nil {
+		return "", "", err
+	}
+	return skillDir, filepath.Join(skillDir, filePath), nil
+}
+
+var _ cobot.Tool = (*fnTool)(nil)

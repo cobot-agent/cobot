@@ -4,175 +4,83 @@ import (
 	"testing"
 )
 
-func TestParseFrontMatter_Valid(t *testing.T) {
-	content := `---
-name: code-review
-description: Review code for quality and security.
-metadata:
-  author: cobot
-  version: "1.0"
----
-
-# Code Review
-
-## Steps
-1. Read the diff
-`
-
-	fm, body, err := ParseFrontMatter(content)
-	if err != nil {
-		t.Fatalf("ParseFrontMatter: %v", err)
+func TestParseFrontMatter(t *testing.T) {
+	tests := []struct {
+		name      string
+		content   string
+		wantName  string
+		wantDesc  string
+		wantBody  string
+		wantErr   bool
+		checkMeta func(*testing.T, map[string]string)
+	}{
+		{
+			"valid with metadata",
+			"---\nname: code-review\ndescription: Review code for quality and security.\nmetadata:\n  author: cobot\n  version: \"1.0\"\n---\n\n# Code Review\n\n## Steps\n1. Read the diff\n",
+			"code-review", "Review code for quality and security.",
+			"\n# Code Review\n\n## Steps\n1. Read the diff",
+			false,
+			func(t *testing.T, m map[string]string) {
+				if m == nil || m["author"] != "cobot" {
+					t.Errorf("metadata.author = %v", m)
+				}
+				if m == nil || m["version"] != "1.0" {
+					t.Errorf("metadata.version = %v", m)
+				}
+			},
+		},
+		{
+			"no metadata",
+			"---\nname: simple\ndescription: A simple skill\n---\n\nSimple body.\n",
+			"simple", "A simple skill", "\nSimple body.", false,
+			func(t *testing.T, m map[string]string) {
+				if m != nil {
+					t.Errorf("expected nil metadata, got %v", m)
+				}
+			},
+		},
+		{"no frontmatter", "Just regular markdown", "", "", "", true, nil},
+		{"missing close delimiter", "---\nname: broken\ndescription: Missing close\n", "", "", "", true, nil},
+		{"empty yaml", "---\n---\nBody content.", "", "", "Body content.", false, nil},
+		{
+			"crlf",
+			"---\r\nname: crlf-skill\r\ndescription: Skill with CRLF\r\n---\r\nBody here.\r\n",
+			"crlf-skill", "Skill with CRLF", "Body here.", false, nil,
+		},
+		{
+			"dashes in value",
+			"---\nname: test-skill\ndescription: \"Use --- for separators\"\n---\nBody text.",
+			"test-skill", "Use --- for separators", "Body text.", false, nil,
+		},
+		{
+			"no body",
+			"---\nname: no-body\ndescription: Skill with no body\n---\n",
+			"no-body", "Skill with no body", "", false, nil,
+		},
+		{"empty yaml trailing newline", "---\n---\n", "", "", "", false, nil},
+		{"empty yaml no trailing newline", "---\n---", "", "", "", false, nil},
 	}
-	if fm.Name != "code-review" {
-		t.Errorf("name = %q, want code-review", fm.Name)
-	}
-	if fm.Description != "Review code for quality and security." {
-		t.Errorf("description = %q", fm.Description)
-	}
-	if fm.Metadata == nil {
-		t.Fatal("metadata is nil")
-	}
-	if fm.Metadata["author"] != "cobot" {
-		t.Errorf("metadata.author = %q", fm.Metadata["author"])
-	}
-	if fm.Metadata["version"] != "1.0" {
-		t.Errorf("metadata.version = %q", fm.Metadata["version"])
-	}
-	if body != "\n# Code Review\n\n## Steps\n1. Read the diff" {
-		t.Errorf("body = %q", body)
-	}
-}
-
-func TestParseFrontMatter_NoMetadata(t *testing.T) {
-	content := `---
-name: simple
-description: A simple skill
----
-
-Simple body.
-`
-	fm, body, err := ParseFrontMatter(content)
-	if err != nil {
-		t.Fatalf("ParseFrontMatter: %v", err)
-	}
-	if fm.Name != "simple" {
-		t.Errorf("name = %q, want simple", fm.Name)
-	}
-	if fm.Metadata != nil {
-		t.Errorf("expected nil metadata, got %v", fm.Metadata)
-	}
-	if body != "\nSimple body." {
-		t.Errorf("body = %q", body)
-	}
-}
-
-func TestParseFrontMatter_NoFrontmatter(t *testing.T) {
-	content := "Just regular markdown"
-	_, _, err := ParseFrontMatter(content)
-	if err == nil {
-		t.Error("expected error for content without frontmatter")
-	}
-}
-
-func TestParseFrontMatter_MissingCloseDelimiter(t *testing.T) {
-	content := `---
-name: broken
-description: Missing close
-`
-	_, _, err := ParseFrontMatter(content)
-	if err == nil {
-		t.Error("expected error for missing closing delimiter")
-	}
-}
-
-func TestParseFrontMatter_EmptyYAML(t *testing.T) {
-	content := "---\n---\nBody content."
-	fm, body, err := ParseFrontMatter(content)
-	if err != nil {
-		t.Fatalf("ParseFrontMatter with empty YAML: %v", err)
-	}
-	if fm.Name != "" {
-		t.Errorf("name = %q, want empty", fm.Name)
-	}
-	if body != "Body content." {
-		t.Errorf("body = %q, want %q", body, "Body content.")
-	}
-}
-
-func TestParseFrontMatter_CRLF(t *testing.T) {
-	content := "---\r\nname: crlf-skill\r\ndescription: Skill with CRLF\r\n---\r\nBody here.\r\n"
-	fm, body, err := ParseFrontMatter(content)
-	if err != nil {
-		t.Fatalf("ParseFrontMatter with CRLF: %v", err)
-	}
-	if fm.Name != "crlf-skill" {
-		t.Errorf("name = %q, want crlf-skill", fm.Name)
-	}
-	if fm.Description != "Skill with CRLF" {
-		t.Errorf("description = %q", fm.Description)
-	}
-	if body != "Body here." {
-		t.Errorf("body = %q, want %q", body, "Body here.")
-	}
-}
-
-func TestParseFrontMatter_DashesInValue(t *testing.T) {
-	// Ensure that a value containing "---" doesn't break the parser.
-	content := "---\nname: test-skill\ndescription: \"Use --- for separators\"\n---\nBody text."
-	fm, body, err := ParseFrontMatter(content)
-	if err != nil {
-		t.Fatalf("ParseFrontMatter with dashes in value: %v", err)
-	}
-	if fm.Name != "test-skill" {
-		t.Errorf("name = %q, want test-skill", fm.Name)
-	}
-	if fm.Description != "Use --- for separators" {
-		t.Errorf("description = %q", fm.Description)
-	}
-	if body != "Body text." {
-		t.Errorf("body = %q, want %q", body, "Body text.")
-	}
-}
-
-func TestParseFrontMatter_NoBody(t *testing.T) {
-	content := "---\nname: no-body\ndescription: Skill with no body\n---\n"
-	fm, body, err := ParseFrontMatter(content)
-	if err != nil {
-		t.Fatalf("ParseFrontMatter with no body: %v", err)
-	}
-	if fm.Name != "no-body" {
-		t.Errorf("name = %q, want no-body", fm.Name)
-	}
-	if body != "" {
-		t.Errorf("body = %q, want empty", body)
-	}
-}
-
-func TestParseFrontMatter_EmptyYAMLTrailingNewline(t *testing.T) {
-	// "---\n---\n" → after TrimSpace becomes "---\n---" which should still parse.
-	content := "---\n---\n"
-	fm, body, err := ParseFrontMatter(content)
-	if err != nil {
-		t.Fatalf("ParseFrontMatter with empty YAML and trailing newline: %v", err)
-	}
-	if fm.Name != "" {
-		t.Errorf("name = %q, want empty", fm.Name)
-	}
-	if body != "" {
-		t.Errorf("body = %q, want empty", body)
-	}
-}
-
-func TestParseFrontMatter_EmptyYAMLNoTrailingNewline(t *testing.T) {
-	content := "---\n---"
-	fm, body, err := ParseFrontMatter(content)
-	if err != nil {
-		t.Fatalf("ParseFrontMatter with empty YAML no trailing newline: %v", err)
-	}
-	if fm.Name != "" {
-		t.Errorf("name = %q, want empty", fm.Name)
-	}
-	if body != "" {
-		t.Errorf("body = %q, want empty", body)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fm, body, err := parseFrontMatter(tt.content)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
+			}
+			if tt.wantErr {
+				return
+			}
+			if fm.Name != tt.wantName {
+				t.Errorf("name = %q, want %q", fm.Name, tt.wantName)
+			}
+			if fm.Description != tt.wantDesc {
+				t.Errorf("description = %q, want %q", fm.Description, tt.wantDesc)
+			}
+			if body != tt.wantBody {
+				t.Errorf("body = %q, want %q", body, tt.wantBody)
+			}
+			if tt.checkMeta != nil {
+				tt.checkMeta(t, fm.Metadata)
+			}
+		})
 	}
 }
