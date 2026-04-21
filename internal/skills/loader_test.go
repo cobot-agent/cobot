@@ -247,7 +247,7 @@ func TestSkillsToPrompt(t *testing.T) {
 		{Name: "a", Description: "Alpha"},
 		{Name: "b", Description: "Beta", Category: "cat"},
 	})
-	if !strings.Contains(r, "**a**: Alpha") || !strings.Contains(r, "**b** (cat): Beta") {
+	if !strings.Contains(r, "- a: Alpha") || !strings.Contains(r, "cat:\n    - b: Beta") {
 		t.Errorf("prompt = %q", r)
 	}
 }

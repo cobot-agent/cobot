@@ -56,7 +56,8 @@ func (t *fnTool) Execute(ctx context.Context, args json.RawMessage) (string, err
 
 // skillsHandler holds shared state for all skills tool operations.
 type skillsHandler struct {
-	ws *workspace.Workspace
+	ws       *workspace.Workspace
+	refresher cobot.SkillsPromptRefresher
 }
 
 func (h *skillsHandler) skillDirs() []string {
@@ -68,18 +69,25 @@ func (h *skillsHandler) findWritableDir(name string) (string, error) {
 }
 
 // RegisterSkillsTools registers all skills-related tools.
-func RegisterSkillsTools(registry cobot.ToolRegistry, ws *workspace.Workspace) {
-	h := &skillsHandler{ws: ws}
+// The refresher parameter is optional; when non-nil it is called after
+// mutating skill operations (create/edit/patch/delete) to refresh the
+// system prompt's skills section.
+func RegisterSkillsTools(registry cobot.ToolRegistry, ws *workspace.Workspace, refresher ...cobot.SkillsPromptRefresher) {
+	var r cobot.SkillsPromptRefresher
+	if len(refresher) > 0 {
+		r = refresher[0]
+	}
+	h := &skillsHandler{ws: ws, refresher: r}
 	registry.Register(&fnTool{
-		name: "skills_list", desc: "List all available skills with name, description, and category",
+		name: "skills_list", desc: "List all available skills grouped by category. Use to discover skills that match the current task.",
 		params: json.RawMessage(skillsListParamsJSON), execute: h.executeList,
 	})
 	registry.Register(&fnTool{
-		name: "skill_view", desc: "View full skill content and list linked files, or read a specific linked file",
+		name: "skill_view", desc: "Load a skill's full content and linked files when it matches the current task. Skills contain specialized knowledge — API endpoints, tool-specific commands, and proven workflows. Always load before attempting tasks that match a skill's description. First call returns SKILL.md content + linked file index; set file_path to read a specific linked file.",
 		params: json.RawMessage(skillViewParamsJSON), execute: h.executeView,
 	})
 	registry.Register(&fnTool{
-		name: "skill_manage", desc: "Create, edit, patch, delete skills, or manage linked files",
+		name: "skill_manage", desc: "Create, edit, patch, or delete skills, and manage linked resource files. Use to save new workflows, fix outdated instructions, or update skills after discovering pitfalls.",
 		params: json.RawMessage(skillManageParamsJSON), execute: h.executeManage,
 	})
 }
@@ -276,6 +284,7 @@ func (h *skillsHandler) doCreate(p manageParams) (string, error) {
 		return "", fmt.Errorf("close %s: %w", skills.SkillFile, err)
 	}
 	slog.Info("skill created", "name", p.Name, "category", p.Category)
+	h.refreshSkillsPrompt()
 	return fmt.Sprintf("skill created: %s", p.Name), nil
 }
 
@@ -290,6 +299,7 @@ func (h *skillsHandler) doEdit(p manageParams) (string, error) {
 	if err := os.WriteFile(filepath.Join(skillDir, skills.SkillFile), []byte(p.Content), 0644); err != nil {
 		return "", fmt.Errorf("write %s: %w", skills.SkillFile, err)
 	}
+	h.refreshSkillsPrompt()
 	return fmt.Sprintf("skill updated: %s", p.Name), nil
 }
 
@@ -330,6 +340,7 @@ func (h *skillsHandler) doPatch(p manageParams) (string, error) {
 	if err := os.WriteFile(skillMD, []byte(newContent), 0644); err != nil {
 		return "", fmt.Errorf("write patched %s: %w", skills.SkillFile, err)
 	}
+	h.refreshSkillsPrompt()
 	return fmt.Sprintf("skill patched: %s", p.Name), nil
 }
 
@@ -342,6 +353,7 @@ func (h *skillsHandler) doDelete(p manageParams) (string, error) {
 		return "", fmt.Errorf("remove skill directory: %w", err)
 	}
 	slog.Info("skill deleted", "name", p.Name)
+	h.refreshSkillsPrompt()
 	return fmt.Sprintf("skill deleted: %s", p.Name), nil
 }
 
@@ -390,6 +402,17 @@ func (h *skillsHandler) doRemoveFile(p manageParams) (string, error) {
 }
 
 // --- helpers ---
+
+// refreshSkillsPrompt calls the refresher to rebuild the skills section
+// of the system prompt. No-op when refresher is nil.
+func (h *skillsHandler) refreshSkillsPrompt() {
+	if h.refresher == nil {
+		return
+	}
+	if err := h.refresher.RefreshSkillsPrompt(context.Background()); err != nil {
+		slog.Warn("failed to refresh skills prompt", "error", err)
+	}
+}
 
 func validateAndCheckContent(content, name string) error {
 	if content == "" {

@@ -133,7 +133,7 @@ func ConfigureAgentForWorkspace(a *agent.Agent, ws *workspace.Workspace, registr
 	configureSystemPrompt(agentCfg, sm, ws)
 	configureSkills(agentCfg, sm, ws)
 	store := configureMemory(sm, ws)
-	sandbox := configureSandboxTools(a, ws, agentCfg)
+	sandbox := configureSandboxTools(a, ws, agentCfg, sm)
 	configureMemoryTools(a, store, sandbox)
 	configureDelegateTool(a, ws, registry, sandbox)
 	configureCronTool(a, ws, registry)
@@ -169,6 +169,49 @@ func configureSkills(agentCfg *config.AgentConfig, sm *agent.SessionManager, ws 
 	}
 }
 
+// skillsRefresher implements cobot.SkillsPromptRefresher by reloading the
+// skills catalog and replacing the skills section of the system prompt.
+type skillsRefresher struct {
+	sm *agent.SessionManager
+	ws *workspace.Workspace
+}
+
+func (r *skillsRefresher) RefreshSkillsPrompt(ctx context.Context) error {
+	skillDirs := []string{workspace.GlobalSkillsDir(), r.ws.SkillsDir()}
+	catalog, err := skills.LoadCatalog(ctx, skillDirs, nil) // TODO: pass enabledFilter
+	if err != nil {
+		return err
+	}
+	skillSection := skills.SkillsToPrompt(catalog)
+	currentPrompt := r.sm.GetSystemPrompt()
+	newPrompt := replaceSkillsSection(currentPrompt, skillSection)
+	return r.sm.SetSystemPrompt(newPrompt)
+}
+
+// replaceSkillsSection replaces the existing skills section in the system
+// prompt, or appends a new one if none exists. It locates the section by
+// looking for the "## Skills (mandatory)" header marker.
+func replaceSkillsSection(current, newSection string) string {
+	marker := "## Skills (mandatory)"
+	idx := strings.Index(current, marker)
+	if idx < 0 {
+		// No existing skills section — append.
+		if current == "" {
+			return newSection
+		}
+		return current + "\n\n" + newSection
+	}
+	// Find the end: the section ends at the next top-level markdown heading
+	// (## ) or end of string, whichever comes first. Search after the marker.
+	rest := current[idx+len(marker):]
+	nextHeading := strings.Index(rest, "\n## ")
+	if nextHeading >= 0 {
+		return current[:idx] + newSection + rest[nextHeading:]
+	}
+	// Section extends to end of string.
+	return current[:idx] + newSection
+}
+
 func configureMemory(sm *agent.SessionManager, ws *workspace.Workspace) *memory.Store {
 	if old := sm.MemoryStore(); old != nil {
 		if err := old.Close(); err != nil {
@@ -185,7 +228,7 @@ func configureMemory(sm *agent.SessionManager, ws *workspace.Workspace) *memory.
 	return store
 }
 
-func configureSandboxTools(a *agent.Agent, ws *workspace.Workspace, agentCfg *config.AgentConfig) *sandbox.SandboxConfig {
+func configureSandboxTools(a *agent.Agent, ws *workspace.Workspace, agentCfg *config.AgentConfig, sm *agent.SessionManager) *sandbox.SandboxConfig {
 	var agentSandbox *sandbox.SandboxConfig
 	if agentCfg != nil {
 		agentSandbox = agentCfg.Sandbox
@@ -214,7 +257,8 @@ func configureSandboxTools(a *agent.Agent, ws *workspace.Workspace, agentCfg *co
 	))
 
 	tools.RegisterWorkspaceTools(a.ToolRegistry(), ws, sandbox)
-	tools.RegisterSkillsTools(a.ToolRegistry(), ws)
+	refresher := &skillsRefresher{sm: sm, ws: ws}
+	tools.RegisterSkillsTools(a.ToolRegistry(), ws, refresher)
 	return sandbox
 }
 

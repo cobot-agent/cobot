@@ -97,3 +97,9 @@ type ShortTermMemory interface {
 	StoreShortTermCompressed(ctx context.Context, sessionID, content string) (string, error)
 	SummarizeAndPromoteSTM(ctx context.Context, sessionID string) error
 }
+
+// SkillsPromptRefresher rebuilds the skills section of the system prompt
+// after skills are modified at runtime.
+type SkillsPromptRefresher interface {
+	RefreshSkillsPrompt(ctx context.Context) error
+}

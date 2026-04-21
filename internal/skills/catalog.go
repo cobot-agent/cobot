@@ -58,21 +58,50 @@ func LoadFull(ctx context.Context, dirs []string, name string) (*Skill, error) {
 }
 
 // SkillsToPrompt formats tier-1 catalog for system prompt injection.
-// Format: just name + description per skill, NOT full content.
+// Skills are grouped by category (sorted alphabetically); skills without a
+// category are placed under "general". The output is wrapped in an
+// <available_skills> XML block with mandatory-load semantic guidance.
 func SkillsToPrompt(skills []Skill) string {
 	if len(skills) == 0 {
 		return ""
 	}
-	var b strings.Builder
-	b.WriteString("## Skills\n")
+
+	// Group by category.
+	groups := make(map[string][]Skill)
 	for _, sk := range skills {
-		if sk.Category != "" {
-			fmt.Fprintf(&b, "\n- **%s** (%s): %s", sk.Name, sk.Category, sk.Description)
-		} else {
-			fmt.Fprintf(&b, "\n- **%s**: %s", sk.Name, sk.Description)
+		cat := sk.Category
+		if cat == "" {
+			cat = "general"
+		}
+		groups[cat] = append(groups[cat], sk)
+	}
+
+	// Sort category names.
+	cats := make([]string, 0, len(groups))
+	for cat := range groups {
+		cats = append(cats, cat)
+	}
+	sort.Strings(cats)
+
+	var b strings.Builder
+	b.WriteString("## Skills (mandatory)\n")
+	b.WriteString("Before replying, scan the skills below. If a skill matches or is even partially relevant to your task, you MUST load it with skill_view(name) and follow its instructions. Err on the side of loading — it is always better to have context you don't need than to miss critical steps, pitfalls, or established workflows. Skills contain specialized knowledge — API endpoints, tool-specific commands, and proven workflows that outperform general-purpose approaches. Load the skill even if you think you could handle the task with basic tools.\n\n")
+	b.WriteString("If a skill has issues, fix it with skill_manage(action='patch').\n")
+	b.WriteString("After difficult/iterative tasks, offer to save as a skill. If a skill you loaded was missing steps, had wrong commands, or needed pitfalls you discovered, update it before finishing.\n\n")
+	b.WriteString("<available_skills>\n")
+
+	for _, cat := range cats {
+		b.WriteString("  " + cat + ":\n")
+		members := groups[cat]
+		// Sort skills within category by name.
+		sort.Slice(members, func(i, j int) bool { return members[i].Name < members[j].Name })
+		for _, sk := range members {
+			b.WriteString("    - " + sk.Name + ": " + sk.Description + "\n")
 		}
 	}
-	b.WriteString("\n")
+
+	b.WriteString("</available_skills>\n\n")
+	b.WriteString("Only proceed without loading a skill if genuinely none are relevant to the task.\n")
 	return b.String()
 }
 
