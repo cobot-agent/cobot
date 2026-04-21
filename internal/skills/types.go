@@ -16,4 +16,5 @@ type SkillSummary struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	Category    string `json:"category,omitempty"`
+	Source      string `json:"source,omitempty"`
 }

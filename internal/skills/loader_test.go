@@ -466,3 +466,333 @@ func TestFindSkillDir_NotFound(t *testing.T) {
 		t.Error("expected error for nonexistent skill")
 	}
 }
+
+func TestFindSkillDir_PathTraversal(t *testing.T) {
+	dir := t.TempDir()
+	_, err := FindSkillDir(dir, t.TempDir(), "../../etc")
+	if err == nil {
+		t.Error("expected error for path traversal name")
+	}
+}
+
+func TestFindNewFormatSkillDir_Found(t *testing.T) {
+	dir := t.TempDir()
+	skillDir := filepath.Join(dir, "my-skill")
+	os.MkdirAll(skillDir, 0755)
+	os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: my-skill\ndescription: test\n---\nbody"), 0644)
+
+	found, err := FindNewFormatSkillDir(dir, "my-skill")
+	if err != nil {
+		t.Fatalf("FindNewFormatSkillDir: %v", err)
+	}
+	if found != skillDir {
+		t.Errorf("found = %q, want %q", found, skillDir)
+	}
+}
+
+func TestFindNewFormatSkillDir_WithCategory(t *testing.T) {
+	dir := t.TempDir()
+	skillDir := filepath.Join(dir, "coding", "review")
+	os.MkdirAll(skillDir, 0755)
+	os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: review\ndescription: test\n---\nbody"), 0644)
+
+	found, err := FindNewFormatSkillDir(dir, "review")
+	if err != nil {
+		t.Fatalf("FindNewFormatSkillDir: %v", err)
+	}
+	if found != skillDir {
+		t.Errorf("found = %q, want %q", found, skillDir)
+	}
+}
+
+func TestFindNewFormatSkillDir_NotFound(t *testing.T) {
+	dir := t.TempDir()
+	_, err := FindNewFormatSkillDir(dir, "nonexistent")
+	if err == nil {
+		t.Error("expected error for nonexistent skill")
+	}
+}
+
+func TestFindNewFormatSkillDir_LegacyRejection(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "old-skill.md"), []byte("# Old Skill\nContent"), 0644)
+
+	_, err := FindNewFormatSkillDir(dir, "old-skill")
+	if err == nil {
+		t.Error("expected error for legacy skill")
+	}
+	if !strings.Contains(err.Error(), "legacy format") {
+		t.Errorf("error should mention legacy format: %v", err)
+	}
+}
+
+func TestFindNewFormatSkillDir_PathTraversal(t *testing.T) {
+	dir := t.TempDir()
+	_, err := FindNewFormatSkillDir(dir, "../../etc")
+	if err == nil {
+		t.Error("expected error for path traversal name")
+	}
+}
+
+func TestValidateSkillName(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantErr bool
+	}{
+		{"valid simple", "my-skill", false},
+		{"valid two chars", "ab", false},
+		{"valid alphanumeric", "skill123", false},
+		{"single char too short", "a", true},
+		{"empty", "", true},
+		{"uppercase", "My-Skill", true},
+		{"starts with hyphen", "-skill", true},
+		{"ends with hyphen", "skill-", true},
+		{"contains space", "my skill", true},
+		{"contains slash", "my/skill", true},
+		{"too long", strings.Repeat("a", 65), true},
+		{"max length valid", strings.Repeat("a", 64), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateSkillName(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ValidateSkillName(%q) error = %v, wantErr %v", tt.input, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidateSkillNameForView(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantErr bool
+	}{
+		{"valid simple", "my-skill", false},
+		{"valid two chars", "ab", false},
+		{"valid alphanumeric", "skill123", false},
+		{"single char valid", "a", false},
+		{"empty", "", true},
+		// Legacy names that ValidateSkillName rejects but ForView allows:
+		{"uppercase allowed", "My-Skill", false},
+		{"starts with hyphen allowed", "-skill", false},
+		{"ends with hyphen allowed", "skill-", false},
+		{"contains space allowed", "my skill", false},
+		// Path traversal still blocked:
+		{"contains slash", "my/skill", true},
+		{"contains backslash", "my\\skill", true},
+		{"contains dotdot", "../etc", true},
+		{"too long", strings.Repeat("a", 129), true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateSkillNameForView(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ValidateSkillNameForView(%q) error = %v, wantErr %v", tt.input, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestIsValidCategoryName(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		want    bool
+	}{
+		{"valid", "coding", true},
+		{"valid with hyphen", "code-review", true},
+		{"dot", ".", false},
+		{"dotdot", "..", false},
+		{"hidden", ".hidden", false},
+		{"traversal", "../etc", false},
+		{"slash", "a/b", false},
+		{"backslash", "a\\b", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isValidCategoryName(tt.input)
+			if got != tt.want {
+				t.Errorf("isValidCategoryName(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLoadCatalog_CategoryDotDirSkipped(t *testing.T) {
+	dir := t.TempDir()
+	// Create a .git directory with a nested skill — should be skipped.
+	dotDir := filepath.Join(dir, ".git", "some-skill")
+	os.MkdirAll(dotDir, 0755)
+	os.WriteFile(filepath.Join(dotDir, "SKILL.md"), []byte("---\nname: some-skill\ndescription: leaked\n---\nbody"), 0644)
+
+	// Also create a legitimate skill.
+	skillDir := filepath.Join(dir, "real-skill")
+	os.MkdirAll(skillDir, 0755)
+	os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: real-skill\ndescription: good\n---\nbody"), 0644)
+
+	skills, err := LoadCatalog(context.Background(), []string{dir}, nil)
+	if err != nil {
+		t.Fatalf("LoadCatalog: %v", err)
+	}
+	if len(skills) != 1 {
+		t.Fatalf("expected 1 skill, got %d", len(skills))
+	}
+	if skills[0].Name != "real-skill" {
+		t.Errorf("skill name = %q, want real-skill", skills[0].Name)
+	}
+}
+
+func TestReadLinkedFile_SymlinkEscape(t *testing.T) {
+	dir := t.TempDir()
+	// Create a references subdir.
+	os.MkdirAll(filepath.Join(dir, "references"), 0755)
+
+	// Create an outside file in a completely separate temp directory.
+	outsideDir := t.TempDir()
+	outsideFile := filepath.Join(outsideDir, "secret.txt")
+	os.WriteFile(outsideFile, []byte("secret data"), 0644)
+
+	// Create a symlink: references/link.txt -> absolute path to outside file.
+	linkPath := filepath.Join(dir, "references", "link.txt")
+	if err := os.Symlink(outsideFile, linkPath); err != nil {
+		t.Skipf("symlinks not supported: %v", err)
+	}
+
+	// Reading the symlink should fail containment check because the target
+	// resolves to a directory completely outside the skill dir.
+	_, err := ReadLinkedFile(dir, "references/link.txt")
+	if err == nil {
+		t.Error("expected error for symlink pointing outside skill dir")
+	}
+}
+
+func TestReadLinkedFile_StatError(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "references"), 0755)
+
+	// ReadLinkedFile now propagates stat errors instead of silently ignoring them.
+	// A nonexistent file should still error (from VerifyContainment or Stat).
+	_, err := ReadLinkedFile(dir, "references/nonexistent.txt")
+	if err == nil {
+		t.Error("expected error for nonexistent linked file")
+	}
+}
+
+func TestVerifyContainment_BasicEscape(t *testing.T) {
+	dir := t.TempDir()
+	subDir := filepath.Join(dir, "references")
+	os.MkdirAll(subDir, 0755)
+
+	// A file inside the dir should resolve fine.
+	safePath := filepath.Join(subDir, "file.txt")
+	os.WriteFile(safePath, []byte("ok"), 0644)
+	resolved, err := VerifyContainment(safePath, dir)
+	if err != nil {
+		t.Fatalf("expected success for contained file: %v", err)
+	}
+	// verifyContainment resolves both paths, so the result should be under
+	// the resolved base dir. Compare using EvalSymlinks on both sides.
+	resolvedBase, _ := filepath.EvalSymlinks(dir)
+	if resolvedBase != "" && !strings.HasPrefix(resolved, resolvedBase+string(filepath.Separator)) {
+		t.Errorf("resolved path %q should be under %q", resolved, resolvedBase)
+	}
+}
+
+func TestVerifyContainment_SymlinkEscape(t *testing.T) {
+	dir := t.TempDir()
+	subDir := filepath.Join(dir, "references")
+	os.MkdirAll(subDir, 0755)
+
+	// Create outside file in a separate temp directory.
+	outsideDir := t.TempDir()
+	outsideFile := filepath.Join(outsideDir, "secret.txt")
+	os.WriteFile(outsideFile, []byte("secret"), 0644)
+
+	// Create symlink inside references/ pointing outside.
+	linkPath := filepath.Join(subDir, "link.txt")
+	if err := os.Symlink(outsideFile, linkPath); err != nil {
+		t.Skipf("symlinks not supported: %v", err)
+	}
+
+	_, err := VerifyContainment(linkPath, dir)
+	if err == nil {
+		t.Error("expected error for symlink escaping containment")
+	}
+}
+
+func TestIsPathTraversalSafe(t *testing.T) {
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		{"references/file.md", true},
+		{"templates/output.txt", true},
+		{"../etc/passwd", false},
+		{"/etc/passwd", false},
+		{"\\windows\\system32", false},
+		{"scripts/../../etc/passwd", false},
+		{"", true}, // empty is technically safe (checked elsewhere)
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			if got := IsPathTraversalSafe(tt.input); got != tt.want {
+				t.Errorf("IsPathTraversalSafe(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestExtractDescription(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{"h1 heading", "# My Skill\nContent", "My Skill"},
+		{"h2 heading", "## Code Review\nContent", "Code Review"},
+		{"h3 heading", "### Deep Section\nContent", "Deep Section"},
+		{"h4 heading", "#### Very Deep\nContent", "Very Deep"},
+		{"no heading", "Just a plain description", "Just a plain description"},
+		{"empty lines first", "\n\n## Heading\nContent", "Heading"},
+		{"skips frontmatter delimiter", "---\n## Real Title\nContent", "Real Title"},
+		{"empty content", "", ""},
+		{"only whitespace", "   \n  \n", ""},
+		{"heading no space", "##NoSpace\nContent", "##NoSpace"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractDescription(tt.content)
+			if got != tt.want {
+				t.Errorf("extractDescription(%q) = %q, want %q", tt.content, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestValidateLinkedFilePath(t *testing.T) {
+	tests := []struct {
+		name    string
+		path    string
+		wantErr bool
+	}{
+		{"assets valid", "assets/diagram.png", false},
+		{"references valid", "references/api.yaml", false},
+		{"templates valid", "templates/default.tmpl", false},
+		{"scripts valid", "scripts/setup.sh", false},
+		{"root path invalid", "README.md", true},
+		{"unknown dir invalid", "other/file.txt", true},
+		{"empty path invalid", "", true},
+		{"subdir of valid", "assets/sub/deep.png", false},
+		{"exact subdir name no slash", "assets", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateLinkedFilePath(tt.path)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ValidateLinkedFilePath(%q) error = %v, wantErr %v", tt.path, err, tt.wantErr)
+			}
+		})
+	}
+}

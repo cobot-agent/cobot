@@ -16,55 +16,59 @@ type FrontMatter struct {
 
 // ParseFrontMatter splits content into frontmatter and body.
 // Returns (frontmatter, body, error).
-// Content must start with "---\n". The function finds the closing "---\n".
+// After trimming whitespace and normalizing CRLF, content must start with "---".
+// The function finds the closing "---" delimiter. Handles both LF and CRLF line endings.
 func ParseFrontMatter(content string) (FrontMatter, string, error) {
 	var fm FrontMatter
 
-	trimmed := strings.TrimSpace(content)
+	// Normalize CRLF to LF for consistent parsing.
+	// Only allocate a copy when CRLFs are actually present.
+	var trimmed string
+	if strings.Contains(content, "\r\n") {
+		trimmed = strings.TrimSpace(strings.ReplaceAll(content, "\r\n", "\n"))
+	} else {
+		trimmed = strings.TrimSpace(content)
+	}
 	if !strings.HasPrefix(trimmed, "---") {
-		return fm, content, fmt.Errorf("content does not start with frontmatter delimiter")
+		return fm, "", fmt.Errorf("content does not start with frontmatter delimiter")
 	}
 
-	// Find the opening delimiter end (could be "---\n", "---\r\n", or just "---" at end)
+	// Skip the opening "---" and the following newline.
 	afterOpen := trimmed[3:]
-	// Skip whitespace after opening ---
-	if len(afterOpen) > 0 && (afterOpen[0] == '\n' || afterOpen[0] == '\r') {
-		if afterOpen[0] == '\r' && len(afterOpen) > 1 && afterOpen[1] == '\n' {
-			afterOpen = afterOpen[2:]
-		} else {
-			afterOpen = afterOpen[1:]
-		}
+	if len(afterOpen) > 0 && afterOpen[0] == '\n' {
+		afterOpen = afterOpen[1:]
 	}
 
-	// Find closing "---"
-	closeIdx := strings.Index(afterOpen, "\n---")
+	// Find closing "---" preceded by a newline.
+	closeIdx := strings.Index(afterOpen, "\n---\n")
 	if closeIdx < 0 {
-		// Maybe the closing --- is at the very end without trailing newline
-		if strings.HasSuffix(afterOpen, "---") && len(afterOpen) > 3 {
-			// Check character before --- is a newline
-			yamlContent := afterOpen[:len(afterOpen)-3]
-			if err := yaml.Unmarshal([]byte(yamlContent), &fm); err != nil {
-				return fm, "", fmt.Errorf("parse frontmatter yaml: %w", err)
-			}
-			return fm, "", nil
+		// Check for empty YAML: closing "---" immediately after opening.
+		if strings.HasPrefix(afterOpen, "---\n") {
+			closeIdx = 0
+		} else if afterOpen == "---" {
+			// Closing "---" with no trailing newline (e.g., "---\n---" after TrimSpace).
+			closeIdx = 0
+		} else if strings.HasSuffix(afterOpen, "\n---") && len(afterOpen) >= 4 {
+			// Closing "---" at end of string (no trailing newline after body).
+			closeIdx = len(afterOpen) - 4
 		}
-		return fm, content, fmt.Errorf("missing closing frontmatter delimiter")
+	}
+	if closeIdx < 0 {
+		return fm, "", fmt.Errorf("missing closing frontmatter delimiter")
 	}
 
-	// Extract YAML between delimiters
+	// Extract YAML between delimiters.
 	yamlContent := afterOpen[:closeIdx]
 
-	// Body starts after the closing --- and any following newline
-	bodyStart := closeIdx + 4 // skip \n---
+	// Body starts after the closing --- and following newline.
+	bodyStart := closeIdx + 5 // skip \n---\n
+	// For empty YAML case, the closing --- is right at start without leading \n.
+	if closeIdx == 0 && strings.HasPrefix(afterOpen, "---\n") {
+		bodyStart = 4 // skip ---\n
+	}
 	body := ""
 	if bodyStart < len(afterOpen) {
 		body = afterOpen[bodyStart:]
-		// Skip leading newline in body
-		if len(body) > 0 && body[0] == '\n' {
-			body = body[1:]
-		} else if len(body) > 1 && body[0] == '\r' && body[1] == '\n' {
-			body = body[2:]
-		}
 	}
 
 	if err := yaml.Unmarshal([]byte(yamlContent), &fm); err != nil {

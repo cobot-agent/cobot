@@ -84,3 +84,95 @@ description: Missing close
 		t.Error("expected error for missing closing delimiter")
 	}
 }
+
+func TestParseFrontMatter_EmptyYAML(t *testing.T) {
+	content := "---\n---\nBody content."
+	fm, body, err := ParseFrontMatter(content)
+	if err != nil {
+		t.Fatalf("ParseFrontMatter with empty YAML: %v", err)
+	}
+	if fm.Name != "" {
+		t.Errorf("name = %q, want empty", fm.Name)
+	}
+	if body != "Body content." {
+		t.Errorf("body = %q, want %q", body, "Body content.")
+	}
+}
+
+func TestParseFrontMatter_CRLF(t *testing.T) {
+	content := "---\r\nname: crlf-skill\r\ndescription: Skill with CRLF\r\n---\r\nBody here.\r\n"
+	fm, body, err := ParseFrontMatter(content)
+	if err != nil {
+		t.Fatalf("ParseFrontMatter with CRLF: %v", err)
+	}
+	if fm.Name != "crlf-skill" {
+		t.Errorf("name = %q, want crlf-skill", fm.Name)
+	}
+	if fm.Description != "Skill with CRLF" {
+		t.Errorf("description = %q", fm.Description)
+	}
+	if body != "Body here." {
+		t.Errorf("body = %q, want %q", body, "Body here.")
+	}
+}
+
+func TestParseFrontMatter_DashesInValue(t *testing.T) {
+	// Ensure that a value containing "---" doesn't break the parser.
+	content := "---\nname: test-skill\ndescription: \"Use --- for separators\"\n---\nBody text."
+	fm, body, err := ParseFrontMatter(content)
+	if err != nil {
+		t.Fatalf("ParseFrontMatter with dashes in value: %v", err)
+	}
+	if fm.Name != "test-skill" {
+		t.Errorf("name = %q, want test-skill", fm.Name)
+	}
+	if fm.Description != "Use --- for separators" {
+		t.Errorf("description = %q", fm.Description)
+	}
+	if body != "Body text." {
+		t.Errorf("body = %q, want %q", body, "Body text.")
+	}
+}
+
+func TestParseFrontMatter_NoBody(t *testing.T) {
+	content := "---\nname: no-body\ndescription: Skill with no body\n---\n"
+	fm, body, err := ParseFrontMatter(content)
+	if err != nil {
+		t.Fatalf("ParseFrontMatter with no body: %v", err)
+	}
+	if fm.Name != "no-body" {
+		t.Errorf("name = %q, want no-body", fm.Name)
+	}
+	if body != "" {
+		t.Errorf("body = %q, want empty", body)
+	}
+}
+
+func TestParseFrontMatter_EmptyYAMLTrailingNewline(t *testing.T) {
+	// "---\n---\n" → after TrimSpace becomes "---\n---" which should still parse.
+	content := "---\n---\n"
+	fm, body, err := ParseFrontMatter(content)
+	if err != nil {
+		t.Fatalf("ParseFrontMatter with empty YAML and trailing newline: %v", err)
+	}
+	if fm.Name != "" {
+		t.Errorf("name = %q, want empty", fm.Name)
+	}
+	if body != "" {
+		t.Errorf("body = %q, want empty", body)
+	}
+}
+
+func TestParseFrontMatter_EmptyYAMLNoTrailingNewline(t *testing.T) {
+	content := "---\n---"
+	fm, body, err := ParseFrontMatter(content)
+	if err != nil {
+		t.Fatalf("ParseFrontMatter with empty YAML no trailing newline: %v", err)
+	}
+	if fm.Name != "" {
+		t.Errorf("name = %q, want empty", fm.Name)
+	}
+	if body != "" {
+		t.Errorf("body = %q, want empty", body)
+	}
+}
