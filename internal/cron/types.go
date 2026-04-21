@@ -9,8 +9,8 @@ import (
 	"github.com/google/uuid"
 )
 
-// CronResultPayload is the message payload for cron task execution results.
-type CronResultPayload struct {
+// cronResultPayload is the message payload for cron task execution results.
+type cronResultPayload struct {
 	JobID    string    `json:"job_id"`
 	JobName  string    `json:"job_name"`
 	Result   string    `json:"result"`
@@ -19,8 +19,8 @@ type CronResultPayload struct {
 	Duration int64     `json:"duration_ms"`
 }
 
-// NewCronResultMessage builds a cron result message.
-func NewCronResultMessage(channelID string, payload *CronResultPayload) (*broker.Message, error) {
+// newCronResultMessage builds a cron result message.
+func newCronResultMessage(channelID string, payload *cronResultPayload) (*broker.Message, error) {
 	data, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
@@ -34,9 +34,9 @@ func NewCronResultMessage(channelID string, payload *CronResultPayload) (*broker
 	}, nil
 }
 
-// DecodeCronResult decodes Message.Payload into a CronResultPayload.
-func DecodeCronResult(msg *broker.Message) (*CronResultPayload, error) {
-	var p CronResultPayload
+// decodeCronResult decodes Message.Payload into a cronResultPayload.
+func decodeCronResult(msg *broker.Message) (*cronResultPayload, error) {
+	var p cronResultPayload
 	if err := json.Unmarshal(msg.Payload, &p); err != nil {
 		return nil, err
 	}

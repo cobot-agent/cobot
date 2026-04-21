@@ -252,7 +252,7 @@ func configureCronTool(a *agent.Agent, ws *workspace.Workspace, registry cobot.M
 		},
 	})
 	if err != nil {
-		slog.Warn("failed to setup cron", "error", err)
+		slog.Error("cron setup failed", "error", err, "workspace", ws.SpaceDir())
 		return
 	}
 
@@ -294,6 +294,7 @@ func resolveSystemPrompt(value string, ws *workspace.Workspace) string {
 func resolveAgentConfig(ws *workspace.Workspace) (*config.AgentConfig, error) {
 	configs, err := config.LoadAgentConfigs(ws.AgentsDir())
 	if err != nil {
+		slog.Warn("failed to load agent configs", "error", err, "path", ws.AgentsDir())
 		return nil, nil
 	}
 

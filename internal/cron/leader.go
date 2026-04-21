@@ -22,8 +22,7 @@ func (s *Scheduler) renewLeaseLoop(ctx context.Context) {
 		case <-ticker.C:
 			if err := s.broker.Renew(ctx, schedulerLeaseKey, s.holderID, leaseTTL); err != nil {
 				slog.Warn("failed to renew scheduler lease, stepping down", "error", err)
-				cronCtx := s.cron.Stop()
-				<-cronCtx.Done() // wait for in-flight jobs to finish
+				s.stopCronAndWait()
 				s.isLeader.Store(false)
 				// Try to re-acquire immediately
 				acquired, acqErr := s.broker.TryAcquire(ctx, schedulerLeaseKey, s.holderID, leaseTTL)
@@ -32,20 +31,7 @@ func (s *Scheduler) renewLeaseLoop(ctx context.Context) {
 					// continue loop — will retry next tick
 				} else if acquired {
 					slog.Info("re-acquired scheduler leader lease", "holder", s.holderID)
-					s.mu.Lock()
-					s.cron = cron.New()
-					s.mu.Unlock()
-					s.isLeader.Store(true)
-					s.rescheduleAllJobs()
-					s.cron.Start()
-					if s.cleanupRunning.CompareAndSwap(false, true) {
-						s.wg.Add(1)
-						go func() {
-							// cleanupLoop defers wg.Done() — no extra wg.Done here.
-							defer s.cleanupRunning.Store(false)
-							s.cleanupLoop(ctx)
-						}()
-					}
+					s.becomeLeader()
 				}
 				// If not acquired, stay follower — will retry next tick
 				continue
@@ -107,9 +93,7 @@ func (s *Scheduler) syncJobs() {
 	for id := range s.jobs {
 		sj, exists := storeIDs[id]
 		if !exists || sj.Status != StatusActive {
-			s.cron.Remove(s.jobs[id])
-			delete(s.jobs, id)
-			delete(s.jobSchedules, id)
+			s.removeJobEntryLocked(id)
 			if !exists {
 				slog.Info("sync: removed deleted job", "job_id", id)
 			} else {

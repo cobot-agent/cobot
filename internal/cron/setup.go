@@ -31,11 +31,12 @@ func Setup(ctx context.Context, cfg SetupConfig) (*Scheduler, broker.Broker, err
 
 	cronStore := NewStore(cfg.CronDir)
 	runStore := NewRunStore(cfg.RunsDir)
-	executeFn := NewAgentExecutor(cfg.NewAgent, runStore)
+	executeFn := NewAgentExecutor(cfg.NewAgent)
 	scheduler := NewScheduler(cronStore, executeFn, runStore, brokerDB, cfg.Notifier)
 
 	if err := scheduler.Start(ctx); err != nil {
 		_ = brokerDB.Close()
+		runStore.Close()
 		return nil, nil, fmt.Errorf("start scheduler: %w", err)
 	}
 

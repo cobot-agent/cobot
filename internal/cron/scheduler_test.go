@@ -37,14 +37,16 @@ func noopExecuteFn(_ context.Context, _, _, _ string) (string, error) {
 func newTestScheduler(t *testing.T, br broker.Broker) *Scheduler {
 	t.Helper()
 	store := NewStore(t.TempDir())
-	return NewScheduler(store, noopExecuteFn, nil, br, nil)
+	runStore := NewRunStore(t.TempDir())
+	return NewScheduler(store, noopExecuteFn, runStore, br, nil)
 }
 
 // newTestSchedulerWithStore creates a Scheduler backed by a specific store directory.
 func newTestSchedulerWithStore(t *testing.T, storeDir string, br broker.Broker) *Scheduler {
 	t.Helper()
 	store := NewStore(storeDir)
-	return NewScheduler(store, noopExecuteFn, nil, br, nil)
+	runStore := NewRunStore(t.TempDir())
+	return NewScheduler(store, noopExecuteFn, runStore, br, nil)
 }
 
 // ---------------------------------------------------------------------------
@@ -66,7 +68,6 @@ func TestScheduler_LeaderAcquireAndRelease(t *testing.T) {
 	if err := s.Start(ctx); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	defer s.Stop()
 
 	// Scheduler should be leader.
 	if !s.isLeader.Load() {

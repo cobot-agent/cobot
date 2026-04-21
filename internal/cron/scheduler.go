@@ -47,7 +47,6 @@ const cleanupInterval = 60 * time.Second
 const brokerOpTimeout = 5 * time.Second
 const schedulerLeaseKey = "cron:scheduler"
 
-// NewScheduler creates a new Scheduler with the given store, execute function, run store, broker and notifier.
 func NewScheduler(store *Store, executeFn func(ctx context.Context, jobID, prompt, model string) (string, error), runStore *RunStore, br broker.Broker, notifier cobot.Notifier) *Scheduler {
 	return &Scheduler{
 		store:        store,
@@ -107,23 +106,34 @@ func (s *Scheduler) Start(ctx context.Context) error {
 	go s.consumeLoop(ctx)
 	// All wg.Add(1) calls above happen synchronously before their respective
 	// goroutines start, ensuring Stop()'s wg.Wait() always observes all
-	// counters. The renewLeaseLoop may add wg.Add(1) for the cleanupLoop on
-	// re-acquisition, but that Add also precedes the go call.
+	// counters.
 	return nil
+}
+
+// stopCronAndWait stops the cron scheduler and waits for in-flight jobs.
+func (s *Scheduler) stopCronAndWait() {
+	s.mu.Lock()
+	c := s.cron
+	s.mu.Unlock()
+	cronCtx := c.Stop()
+	<-cronCtx.Done()
 }
 
 // Stop halts the cron scheduler, releases the leader lease, and closes the run store.
 func (s *Scheduler) Stop() {
 	// Stop cron first to prevent new job executions.
 	if s.isLeader.Load() {
-		cronCtx := s.cron.Stop()
-		<-cronCtx.Done() // wait for in-flight jobs to finish
+		s.stopCronAndWait()
 	}
-	if s.cancel != nil {
-		s.cancel()
-	}
+	s.cancel()
 	s.wg.Wait()
 
+	// Second check: catch cron started during wg.Wait()
+	if s.isLeader.Load() {
+		s.stopCronAndWait()
+	}
+
+	// Background context is correct — Stop has no request context.
 	ctx, cancel := context.WithTimeout(context.Background(), brokerOpTimeout)
 	defer cancel()
 
@@ -133,16 +143,32 @@ func (s *Scheduler) Stop() {
 		}
 	}
 
-	if s.runStore != nil {
-		s.runStore.Close()
-	}
+	s.runStore.Close()
+}
+
+// becomeLeader transitions this scheduler instance to leader state.
+func (s *Scheduler) becomeLeader() {
+	s.mu.Lock()
+	old := s.cron
+	s.cron = cron.New()
+	s.mu.Unlock()
+
+	// Stop the old cron outside the lock to avoid blocking other operations.
+	// In the normal flow the old cron is already stopped (step-down calls
+	// stopCronAndWait), so this is a safety measure for the shutdown race.
+	cronCtx := old.Stop()
+	<-cronCtx.Done()
+
+	s.rescheduleAllJobs()
+	s.isLeader.Store(true)
+	s.cron.Start()
 }
 
 // validateSchedule parses the schedule without mutating in-memory cron state.
 // Returns an error if the cron expression or one-shot timestamp is invalid.
 func validateSchedule(job *Job) error {
 	if job.OneShot {
-		t, err := time.Parse(time.RFC3339, job.Schedule)
+		t, err := parseOneShotTime(job.Schedule)
 		if err != nil {
 			return fmt.Errorf("invalid timestamp %q: %w", job.Schedule, err)
 		}
@@ -182,6 +208,10 @@ func (s *Scheduler) AddJob(job *Job) error {
 			slog.Warn("failed to schedule persisted job", "job_id", job.ID, "error", err)
 			// Job is persisted; leader will pick it up via syncJobs.
 		}
+		// Persist the NextRun that was set by scheduleJob
+		if job.NextRun != nil {
+			_ = s.store.Update(job) // best-effort; non-critical if this fails
+		}
 	}
 	return nil
 }
@@ -190,32 +220,32 @@ func (s *Scheduler) AddJob(job *Job) error {
 // readID is required — it's an opaque token from a prior list/get that proves
 // the caller has seen the current state.
 func (s *Scheduler) RemoveJob(readID string) error {
-	id, token, err := ParseReadID(readID)
+	jobID, token, err := parseSchedulerReadID(readID)
 	if err != nil {
-		return fmt.Errorf("invalid read_id: %w", err)
-	}
-	s.unscheduleJob(id)
-	if err := s.store.Delete(id, token); err != nil {
 		return err
 	}
-	s.CleanupJobDB(id)
+	s.unscheduleJob(jobID)
+	if err := s.store.Delete(jobID, token); err != nil {
+		return err
+	}
+	s.CleanupJobDB(jobID)
 	return nil
 }
 
 // PauseJob removes a job from cron but keeps it in the store as paused.
 // readID is required to verify the caller has seen the current state.
 func (s *Scheduler) PauseJob(readID string) error {
-	id, token, err := ParseReadID(readID)
-	if err != nil {
-		return fmt.Errorf("invalid read_id: %w", err)
-	}
-
-	job, err := s.store.Read(id, token)
+	jobID, token, err := parseSchedulerReadID(readID)
 	if err != nil {
 		return err
 	}
 
-	s.unscheduleJob(id)
+	job, err := s.store.Read(jobID, token)
+	if err != nil {
+		return err
+	}
+
+	s.unscheduleJob(jobID)
 
 	job.Status = StatusPaused
 	return s.store.Update(job) // Update regenerates token
@@ -225,17 +255,17 @@ func (s *Scheduler) PauseJob(readID string) error {
 // Only schedules locally if this instance is the leader.
 // readID is required to verify the caller has seen the current state.
 func (s *Scheduler) ResumeJob(readID string) error {
-	id, token, err := ParseReadID(readID)
+	jobID, token, err := parseSchedulerReadID(readID)
 	if err != nil {
-		return fmt.Errorf("invalid read_id: %w", err)
+		return err
 	}
 
-	job, err := s.store.Read(id, token)
+	job, err := s.store.Read(jobID, token)
 	if err != nil {
 		return err
 	}
 	if job.Status != StatusPaused {
-		return fmt.Errorf("job %s is not paused (status: %s)", id, job.Status)
+		return fmt.Errorf("job %s is not paused (status: %s)", jobID, job.Status)
 	}
 	job.Status = StatusActive
 	if s.isLeader.Load() {
@@ -251,22 +281,23 @@ func (s *Scheduler) ListJobs() ([]*Job, error) {
 	return s.store.List()
 }
 
-// GetJob returns a single job by ID.
-func (s *Scheduler) GetJob(id string) (*Job, error) {
-	return s.store.Get(id)
-}
-
-// scheduleJob registers a job with the cron scheduler (acquires lock).
+// scheduleJob — caller must NOT hold s.mu.
 func (s *Scheduler) scheduleJob(job *Job) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.scheduleJobLocked(job)
 }
 
-// unscheduleJob removes a job from the in-memory cron scheduler (acquires lock).
+// unscheduleJob — caller must NOT hold s.mu.
 func (s *Scheduler) unscheduleJob(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.removeJobEntryLocked(id)
+}
+
+// removeJobEntryLocked removes a job from cron and both maps.
+// Caller must hold s.mu.
+func (s *Scheduler) removeJobEntryLocked(id string) {
 	if entryID, ok := s.jobs[id]; ok {
 		s.cron.Remove(entryID)
 		delete(s.jobs, id)
@@ -276,17 +307,23 @@ func (s *Scheduler) unscheduleJob(id string) {
 
 // scheduleJobLocked registers a job assuming mu is already held.
 func (s *Scheduler) scheduleJobLocked(job *Job) error {
-	// Remove existing entry if re-scheduling.
-	if entryID, ok := s.jobs[job.ID]; ok {
-		s.cron.Remove(entryID)
-		delete(s.jobs, job.ID)
-		delete(s.jobSchedules, job.ID)
+	if _, ok := s.jobs[job.ID]; ok {
+		s.removeJobEntryLocked(job.ID)
 	}
 
 	if job.OneShot {
 		return s.scheduleOneShotLocked(job)
 	}
 	return s.scheduleCronExprLocked(job)
+}
+
+func (s *Scheduler) registerEntry(job *Job, sched cron.Schedule) {
+	jobID := job.ID
+	entryID := s.cron.Schedule(sched, cron.FuncJob(func() {
+		s.runJob(jobID)
+	}))
+	s.jobs[jobID] = entryID
+	s.jobSchedules[jobID] = job.Schedule
 }
 
 // scheduleCronExprLocked schedules a recurring job using a cron expression (caller holds mu).
@@ -296,14 +333,9 @@ func (s *Scheduler) scheduleCronExprLocked(job *Job) error {
 		return fmt.Errorf("invalid cron expression %q: %w", job.Schedule, err)
 	}
 
-	entryID := s.cron.Schedule(schedule, cron.FuncJob(func() {
-		s.runJob(job)
-	}))
-	s.jobs[job.ID] = entryID
-	s.jobSchedules[job.ID] = job.Schedule
+	s.registerEntry(job, schedule)
 
-	// Calculate and store next run time.
-	next := s.cron.Entry(entryID).Next
+	next := s.cron.Entry(s.jobs[job.ID]).Next
 	if !next.IsZero() {
 		job.NextRun = &next
 	}
@@ -313,7 +345,7 @@ func (s *Scheduler) scheduleCronExprLocked(job *Job) error {
 
 // scheduleOneShotLocked schedules a one-time job at a specific timestamp (caller holds mu).
 func (s *Scheduler) scheduleOneShotLocked(job *Job) error {
-	t, err := time.Parse(time.RFC3339, job.Schedule)
+	t, err := parseOneShotTime(job.Schedule)
 	if err != nil {
 		return fmt.Errorf("invalid timestamp %q: %w", job.Schedule, err)
 	}
@@ -333,18 +365,26 @@ func (s *Scheduler) scheduleOneShotLocked(job *Job) error {
 		return fmt.Errorf("one-shot time %q passed before scheduling", job.Schedule)
 	}
 
-	// Schedule with a custom one-shot wrapper.
-	entryID := s.cron.Schedule(sched, cron.FuncJob(func() {
-		s.runJob(job)
-	}))
-	s.jobs[job.ID] = entryID
-	s.jobSchedules[job.ID] = job.Schedule
-
+	s.registerEntry(job, sched)
 	return nil
 }
 
-// runJob executes a job and updates its last run info.
-func (s *Scheduler) runJob(job *Job) {
+func (s *Scheduler) runJob(jobID string) {
+	// Check if the job is still scheduled (may have been removed by syncJobs or RemoveJob).
+	s.mu.Lock()
+	_, scheduled := s.jobs[jobID]
+	s.mu.Unlock()
+	if !scheduled {
+		return
+	}
+
+	// Load the latest job state from the store to avoid using a stale pointer.
+	job, err := s.store.Read(jobID, "")
+	if err != nil {
+		slog.Debug("cron job no longer exists in store", "job_id", jobID, "error", err)
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), jobTimeout)
 	defer cancel()
 
@@ -360,14 +400,21 @@ func (s *Scheduler) runJob(job *Job) {
 	}
 
 	now := time.Now()
-	s.updateAndPersistJob(job, now)
+	stillScheduled := s.updateAndPersistJob(job, now)
 
+	// Only store the run record if the job is still alive (not deleted mid-execution).
+	if stillScheduled {
+		s.storeRunRecord(job, start, duration, result, err)
+	}
+
+	// Always publish the result (even for deleted jobs, the user might want to see the last output).
 	s.publishJobResult(job, result, err, duration)
 }
 
 // updateAndPersistJob updates job state (LastRun, RunCount, NextRun, Status)
 // and persists the change, all under s.mu to avoid races with PauseJob/ResumeJob.
-func (s *Scheduler) updateAndPersistJob(job *Job, now time.Time) {
+// Returns whether the job was still scheduled at the time of the update.
+func (s *Scheduler) updateAndPersistJob(job *Job, now time.Time) bool {
 	var toUpdate *Job
 	s.mu.Lock()
 
@@ -388,11 +435,7 @@ func (s *Scheduler) updateAndPersistJob(job *Job, now time.Time) {
 		}
 	} else {
 		job.Status = StatusCompleted
-		if entryID, ok := s.jobs[job.ID]; ok {
-			s.cron.Remove(entryID)
-			delete(s.jobs, job.ID)
-			delete(s.jobSchedules, job.ID)
-		}
+		s.removeJobEntryLocked(job.ID)
 	}
 
 	// IMPORTANT: stillScheduled must be captured BEFORE one-shot cleanup
@@ -408,30 +451,36 @@ func (s *Scheduler) updateAndPersistJob(job *Job, now time.Time) {
 			slog.Warn("failed to persist job update", "job_id", job.ID, "error", err)
 		}
 	}
+
+	return stillScheduled
 }
 
-// HasRunRecords checks if a job has execution history.
-func (s *Scheduler) HasRunRecords(jobID string) (bool, error) {
-	if s.runStore == nil {
-		return false, nil
+// storeRunRecord persists a single execution record for a job via the run store.
+func (s *Scheduler) storeRunRecord(job *Job, start time.Time, duration time.Duration, result string, runErr error) {
+	record := &RunRecord{
+		ID:       NewJobID(),
+		JobID:    job.ID,
+		RunAt:    start,
+		Duration: duration.Milliseconds(),
+		Result:   result,
 	}
-	return s.runStore.RunsExist(jobID)
+	if runErr != nil {
+		record.Error = runErr.Error()
+	}
+	if err := s.runStore.StoreRun(record); err != nil {
+		slog.Warn("failed to store cron run record", "job_id", job.ID, "error", err)
+	}
 }
 
 // CleanupJobDB removes the run database for a job.
 func (s *Scheduler) CleanupJobDB(jobID string) {
-	if s.runStore != nil {
-		if err := s.runStore.DeleteJobDB(jobID); err != nil {
-			slog.Warn("failed to delete run db", "job_id", jobID, "error", err)
-		}
+	if err := s.runStore.DeleteJobDB(jobID); err != nil {
+		slog.Warn("failed to delete run db", "job_id", jobID, "error", err)
 	}
 }
 
 // ListJobRuns returns execution records for a job.
 func (s *Scheduler) ListJobRuns(jobID string, limit int) ([]*RunRecord, error) {
-	if s.runStore == nil {
-		return nil, nil
-	}
 	return s.runStore.ListRuns(jobID, limit)
 }
 
@@ -442,7 +491,7 @@ func NewJobID() string {
 
 // IsOneShot detects if a schedule string is an ISO timestamp (one-shot).
 func IsOneShot(schedule string) bool {
-	_, err := time.Parse(time.RFC3339, schedule)
+	_, err := parseOneShotTime(schedule)
 	return err == nil
 }
 
@@ -456,4 +505,14 @@ func (o oneShotSchedule) Next(t time.Time) time.Time {
 		return o.at
 	}
 	return time.Time{} // zero = no more runs
+}
+
+// parseOneShotTime parses a schedule string as an RFC3339 timestamp.
+// Returns the parsed time or an error if the string is not a valid RFC3339 timestamp.
+func parseOneShotTime(schedule string) (time.Time, error) {
+	return time.Parse(time.RFC3339, schedule)
+}
+
+func parseSchedulerReadID(readID string) (jobID, token string, err error) {
+	return ParseReadID(readID)
 }

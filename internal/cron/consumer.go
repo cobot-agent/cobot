@@ -29,6 +29,8 @@ func (s *Scheduler) consumeLoop(ctx context.Context) {
 	}
 }
 
+const maxAckMessages = 1000
+
 // ackAllExisting consumes and acks all pending messages without notifying.
 // This prevents re-delivery of cron results from previous process lifetimes.
 // It consumes messages for ALL channels (channelID="") because on restart the
@@ -37,12 +39,11 @@ func (s *Scheduler) consumeLoop(ctx context.Context) {
 // is always safe; in multi-instance deployments, each instance acks on behalf
 // of its own previous session.
 func (s *Scheduler) ackAllExisting(ctx context.Context) {
-	if s.broker == nil {
-		return
-	}
+	acked := 0
 	for {
 		msgs, err := s.broker.Consume(ctx, cobot.MessageTypeCronResult, "", s.sessionID, 100)
 		if err != nil || len(msgs) == 0 {
+			slog.Debug("ackAllExisting completed", "acked", acked)
 			return
 		}
 		// Batch ack all messages in the fetched batch.
@@ -53,14 +54,16 @@ func (s *Scheduler) ackAllExisting(ctx context.Context) {
 		if err := s.broker.AckAll(ctx, ids, s.sessionID); err != nil {
 			slog.Warn("batch ack failed", "error", err, "count", len(ids))
 		}
+		acked += len(msgs)
+		if acked >= maxAckMessages {
+			slog.Warn("ackAllExisting hit iteration limit, some messages remain", "limit", maxAckMessages)
+			break
+		}
 	}
 }
 
 // consumeOnce consumes unacknowledged cron result messages and delivers them locally.
 func (s *Scheduler) consumeOnce(ctx context.Context) {
-	if s.broker == nil || s.notifier == nil {
-		return
-	}
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Warn("consumeOnce recovered from panic", "error", r)
@@ -72,27 +75,37 @@ func (s *Scheduler) consumeOnce(ctx context.Context) {
 		slog.Warn("failed to consume cron results", "error", err)
 		return
 	}
+
+	if len(msgs) == 0 {
+		return
+	}
+
+	notifyCtx, notifyCancel := context.WithTimeout(ctx, brokerOpTimeout)
+	defer notifyCancel()
+
+	ackIDs := make([]string, 0, len(msgs))
 	for _, msg := range msgs {
-		payload, err := DecodeCronResult(msg)
+		payload, err := decodeCronResult(msg)
 		if err != nil {
 			slog.Warn("failed to decode cron result", "msg_id", msg.ID, "error", err)
-			_ = s.broker.Ack(ctx, msg.ID, s.sessionID)
+			ackIDs = append(ackIDs, msg.ID)
 			continue
 		}
 		if msg.ChannelID == "" {
-			_ = s.broker.Ack(ctx, msg.ID, s.sessionID)
+			ackIDs = append(ackIDs, msg.ID)
 			continue
 		}
-		notifyCtx, cancel := context.WithTimeout(ctx, brokerOpTimeout)
 		content := formatCronResult(payload.JobName, payload.Result, payload.Error)
 		s.notifier.Notify(notifyCtx, msg.ChannelID, cobot.ChannelMessage{
 			Type:    cobot.MessageTypeCronResult,
 			Title:   fmt.Sprintf("Cron job %q completed", payload.JobName),
 			Content: content,
 		})
-		cancel()
-		if ackErr := s.broker.Ack(ctx, msg.ID, s.sessionID); ackErr != nil {
-			slog.Warn("failed to ack cron result", "msg_id", msg.ID, "error", ackErr)
+		ackIDs = append(ackIDs, msg.ID)
+	}
+	if len(ackIDs) > 0 {
+		if err := s.broker.AckAll(notifyCtx, ackIDs, s.sessionID); err != nil {
+			slog.Warn("failed to batch ack cron results", "error", err)
 		}
 	}
 }
@@ -107,10 +120,7 @@ func formatCronResult(jobName, result, runErr string) string {
 
 // publishJobResult publishes the job result via the broker so followers can consume it.
 func (s *Scheduler) publishJobResult(job *Job, result string, runErr error, duration time.Duration) {
-	if s.broker == nil {
-		return
-	}
-	payload := &CronResultPayload{
+	payload := &cronResultPayload{
 		JobID:    job.ID,
 		JobName:  job.Name,
 		Result:   result,
@@ -120,11 +130,12 @@ func (s *Scheduler) publishJobResult(job *Job, result string, runErr error, dura
 	if runErr != nil {
 		payload.Error = runErr.Error()
 	}
-	msg, err := NewCronResultMessage(job.ChannelID, payload)
+	msg, err := newCronResultMessage(job.ChannelID, payload)
 	if err != nil {
 		slog.Warn("failed to marshal cron result", "job_id", job.ID, "error", err)
 		return
 	}
+	// Use Background() so publish completes even if the job's ctx was cancelled.
 	ctx, cancel := context.WithTimeout(context.Background(), brokerOpTimeout)
 	defer cancel()
 	if err := s.broker.Publish(ctx, msg); err != nil {

@@ -2,6 +2,8 @@ package cron
 
 import (
 	"fmt"
+	"hash/fnv"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -19,11 +21,14 @@ const (
 	StatusCompleted = "completed"
 )
 
+const jobExt = ".yaml"
+
 var validJobID = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
-// ValidateJobID returns an error if the ID contains characters that could
+// validateJobID returns an error if the ID contains characters that could
 // cause path traversal or is empty.
-func ValidateJobID(id string) error {
+// ID must not contain ":" (used as separator in ReadID format).
+func validateJobID(id string) error {
 	if id == "" {
 		return fmt.Errorf("job id is empty")
 	}
@@ -64,12 +69,6 @@ func (j *Job) ReadID() string {
 	return j.ID + ":" + j.ReadToken
 }
 
-// generateToken creates a random opaque token. Uses UUID which is already a
-// project dependency and provides 122 bits of randomness.
-func generateToken() string {
-	return uuid.NewString()
-}
-
 // ParseReadID splits a read_id token ("<jobID>:<token>") into its components.
 // Returns the job ID, expected token, and any parse error.
 func ParseReadID(readID string) (jobID string, token string, err error) {
@@ -77,10 +76,17 @@ func ParseReadID(readID string) (jobID string, token string, err error) {
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
 		return "", "", fmt.Errorf("invalid read_id format: %q (expected \"<job_id>:<token>\")", readID)
 	}
-	if err := ValidateJobID(parts[0]); err != nil {
+	if err := validateJobID(parts[0]); err != nil {
 		return "", "", err
 	}
 	return parts[0], parts[1], nil
+}
+
+func verifyReadToken(job *Job, expected string) error {
+	if expected != "" && job.ReadToken != expected {
+		return fmt.Errorf("job %s has been modified since last read. Re-read the job and retry", job.ID)
+	}
+	return nil
 }
 
 // Store manages Job persistence as individual YAML files.
@@ -95,10 +101,9 @@ func NewStore(dir string) *Store {
 }
 
 func (s *Store) jobPath(id string) string {
-	return filepath.Join(s.dir, id+".yaml")
+	return filepath.Join(s.dir, id+jobExt)
 }
 
-// writeJob marshals and writes the job file.
 func (s *Store) writeJob(job *Job) error {
 	data, err := yaml.Marshal(job)
 	if err != nil {
@@ -111,45 +116,40 @@ func (s *Store) writeJob(job *Job) error {
 }
 
 // HasChanged returns true if any job file has been modified since last check.
-// It uses a lightweight fingerprint combining file count, total mtime nanos,
-// and max mtime to detect additions, deletions, and content changes without
-// reading file contents.
+// It uses an FNV-1a hash of filenames and modification times to detect
+// additions, deletions, and content changes without reading file contents.
+// First call always reports "changed" (zero-value fingerprint).
 func (s *Store) HasChanged() bool {
 	entries, err := os.ReadDir(s.dir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return false
 		}
-		return true // assume changed if we can't read
+		return true
 	}
-	var (
-		count   int64
-		sum     int64
-		maxTime int64
-	)
+	h := fnv.New64a()
 	for _, e := range entries {
-		if e.IsDir() || filepath.Ext(e.Name()) != ".yaml" {
+		if e.IsDir() || filepath.Ext(e.Name()) != jobExt {
 			continue
 		}
 		info, err := e.Info()
 		if err != nil {
 			continue
 		}
-		mt := info.ModTime().UnixNano()
-		count++
-		sum += mt
-		if mt > maxTime {
-			maxTime = mt
+		fmt.Fprintf(h, "%s:%d\n", e.Name(), info.ModTime().UnixNano())
+	}
+	fingerprint := int64(h.Sum64())
+	for {
+		prev := s.lastMod.Load()
+		if fingerprint == prev {
+			return false
+		}
+		if s.lastMod.CompareAndSwap(prev, fingerprint) {
+			return true
 		}
 	}
-	// Combine count + sum + max into a single fingerprint that is sensitive
-	// to file additions, deletions, and modifications.
-	fingerprint := count*31 ^ sum ^ (maxTime * 17)
-	prev := s.lastMod.Swap(fingerprint)
-	return fingerprint != prev
 }
 
-// loadJob reads and unmarshals a single job file by ID.
 func (s *Store) loadJob(id string) (*Job, error) {
 	data, err := os.ReadFile(s.jobPath(id))
 	if err != nil {
@@ -165,7 +165,6 @@ func (s *Store) loadJob(id string) (*Job, error) {
 	return &job, nil
 }
 
-// listJobIDs scans the store directory and returns job IDs (derived from .yaml filenames).
 func (s *Store) ListJobIDs() ([]string, error) {
 	entries, err := os.ReadDir(s.dir)
 	if err != nil {
@@ -174,25 +173,25 @@ func (s *Store) ListJobIDs() ([]string, error) {
 		}
 		return nil, fmt.Errorf("read jobs directory: %w", err)
 	}
-	var ids []string
+	ids := make([]string, 0, len(entries))
 	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".yaml" {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != jobExt {
 			continue
 		}
-		ids = append(ids, entry.Name()[:len(entry.Name())-len(".yaml")])
+		ids = append(ids, strings.TrimSuffix(entry.Name(), jobExt))
 	}
 	return ids, nil
 }
 
-// Create writes a new job to disk. Generates an initial ReadToken.
+// Create persists a new job with an initial ReadToken for optimistic concurrency.
 func (s *Store) Create(job *Job) error {
-	if err := ValidateJobID(job.ID); err != nil {
+	if err := validateJobID(job.ID); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(s.dir, 0755); err != nil {
 		return fmt.Errorf("create cron dir: %w", err)
 	}
-	job.ReadToken = generateToken()
+	job.ReadToken = uuid.NewString()
 	return s.writeJob(job)
 }
 
@@ -203,7 +202,7 @@ func (s *Store) Create(job *Job) error {
 // token (e.g. internal reconciliation) should use Read() instead to avoid the
 // unnecessary I/O.
 func (s *Store) Get(id string) (*Job, error) {
-	if err := ValidateJobID(id); err != nil {
+	if err := validateJobID(id); err != nil {
 		return nil, err
 	}
 	job, err := s.loadJob(id)
@@ -211,7 +210,7 @@ func (s *Store) Get(id string) (*Job, error) {
 		return nil, err
 	}
 	// Regenerate token on every read.
-	job.ReadToken = generateToken()
+	job.ReadToken = uuid.NewString()
 	if writeErr := s.writeJob(job); writeErr != nil {
 		return nil, fmt.Errorf("refresh read token: %w", writeErr)
 	}
@@ -222,36 +221,36 @@ func (s *Store) Get(id string) (*Job, error) {
 // Used internally by mutations that need the current state but should not
 // change the token (the subsequent Update/Delete will handle that).
 // If expectedToken is non-empty, validates the token matches before returning.
-func (s *Store) Read(id string, expectedToken ...string) (*Job, error) {
-	if err := ValidateJobID(id); err != nil {
+func (s *Store) Read(id string, expectedToken string) (*Job, error) {
+	if err := validateJobID(id); err != nil {
 		return nil, err
 	}
 	job, err := s.loadJob(id)
 	if err != nil {
 		return nil, err
 	}
-	if len(expectedToken) > 0 && expectedToken[0] != "" && job.ReadToken != expectedToken[0] {
-		return nil, fmt.Errorf("job %s has been modified since last read. Re-read the job and retry", id)
+	if err := verifyReadToken(job, expectedToken); err != nil {
+		return nil, err
 	}
 	return job, nil
 }
 
-// List reads all jobs from the store directory.
-// Each job gets a fresh ReadToken (via Get), so every list call invalidates
-// all previously issued read_ids.
+// List returns all jobs with refreshed ReadTokens for optimistic concurrency.
 func (s *Store) List() ([]*Job, error) {
 	ids, err := s.ListJobIDs()
 	if err != nil {
 		return nil, err
 	}
-	var jobs []*Job
+	jobs := make([]*Job, 0, len(ids))
 	for _, id := range ids {
 		job, err := s.loadJob(id)
 		if err != nil {
+			slog.Warn("cron store: skipping job due to load error", "job_id", id, "error", err)
 			continue
 		}
-		job.ReadToken = generateToken()
+		job.ReadToken = uuid.NewString()
 		if err := s.writeJob(job); err != nil {
+			slog.Warn("cron store: skipping job due to write error", "job_id", id, "error", err)
 			continue
 		}
 		jobs = append(jobs, job)
@@ -267,10 +266,11 @@ func (s *Store) ListReadOnly() ([]*Job, error) {
 	if err != nil {
 		return nil, err
 	}
-	var jobs []*Job
+	jobs := make([]*Job, 0, len(ids))
 	for _, id := range ids {
 		job, err := s.loadJob(id)
 		if err != nil {
+			slog.Warn("skip unloadable job", "id", id, "error", err)
 			continue
 		}
 		jobs = append(jobs, job)
@@ -280,6 +280,7 @@ func (s *Store) ListReadOnly() ([]*Job, error) {
 
 // ListReadOnlyIfChanged returns jobs only if the store has changed since
 // the last call. Returns (nil, nil) if unchanged.
+// First call always reports "changed" (zero-value fingerprint).
 func (s *Store) ListReadOnlyIfChanged() ([]*Job, error) {
 	if !s.HasChanged() {
 		return nil, nil
@@ -291,10 +292,10 @@ func (s *Store) ListReadOnlyIfChanged() ([]*Job, error) {
 // If the file does not exist it will be created (equivalent to Create).
 // Precondition: the store directory exists (established by Create's MkdirAll).
 func (s *Store) Update(job *Job) error {
-	if err := ValidateJobID(job.ID); err != nil {
+	if err := validateJobID(job.ID); err != nil {
 		return err
 	}
-	job.ReadToken = generateToken()
+	job.ReadToken = uuid.NewString()
 	return s.writeJob(job)
 }
 
@@ -305,7 +306,7 @@ func (s *Store) Delete(id string, expectedToken string) error {
 	// could modify the file in that window, causing us to delete a newer version.
 	// This is acceptable for the current single-process deployment model. If
 	// multi-process access is needed, consider file-locking or a database backend.
-	if err := ValidateJobID(id); err != nil {
+	if err := validateJobID(id); err != nil {
 		return err
 	}
 	if expectedToken != "" {
@@ -313,8 +314,8 @@ func (s *Store) Delete(id string, expectedToken string) error {
 		if err != nil {
 			return err
 		}
-		if job.ReadToken != expectedToken {
-			return fmt.Errorf("job %s has been modified since last read. Re-read the job and retry", id)
+		if err := verifyReadToken(job, expectedToken); err != nil {
+			return err
 		}
 	}
 	if err := os.Remove(s.jobPath(id)); err != nil && !os.IsNotExist(err) {

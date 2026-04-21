@@ -16,6 +16,8 @@ import (
 // consistent microsecond-precision timestamps across all SQLite storage.
 const sqliteTimeFmt = "2006-01-02 15:04:05.000000"
 
+const defaultListRunsLimit = 20
+
 // RunRecord represents a single cron job execution result.
 type RunRecord struct {
 	ID       string    `json:"id"`
@@ -33,7 +35,6 @@ type RunStore struct {
 	closed atomic.Bool // set by Close(); prevents new getDB calls
 }
 
-// NewRunStore creates a RunStore backed by the given directory.
 func NewRunStore(dir string) *RunStore {
 	return &RunStore{dir: dir}
 }
@@ -86,8 +87,8 @@ func (rs *RunStore) getDB(jobID string) (*sql.DB, error) {
 	return db, nil
 }
 
-// Close closes all cached database connections and clears the cache.
-// After Close returns, any subsequent operations will return an error.
+// Close closes all open job databases. Must only be called after all goroutines
+// using getDB have exited (Scheduler.Stop ensures this via WaitGroup).
 func (rs *RunStore) Close() {
 	rs.closed.Store(true)
 	rs.dbs.Range(func(key, value any) bool {
@@ -98,7 +99,7 @@ func (rs *RunStore) Close() {
 }
 
 func (rs *RunStore) withDB(jobID string, fn func(*sql.DB) error) error {
-	if err := ValidateJobID(jobID); err != nil {
+	if err := validateJobID(jobID); err != nil {
 		return err
 	}
 	db, err := rs.getDB(jobID)
@@ -108,7 +109,6 @@ func (rs *RunStore) withDB(jobID string, fn func(*sql.DB) error) error {
 	return fn(db)
 }
 
-// StoreRun saves a single execution record.
 func (rs *RunStore) StoreRun(record *RunRecord) error {
 	return rs.withDB(record.JobID, func(db *sql.DB) error {
 		_, err := db.Exec(`INSERT INTO runs (id, run_at, duration_ms, result, error) VALUES (?, ?, ?, ?, ?)`,
@@ -117,13 +117,12 @@ func (rs *RunStore) StoreRun(record *RunRecord) error {
 	})
 }
 
-// ListRuns returns the most recent runs for a job, limited by limit.
 func (rs *RunStore) ListRuns(jobID string, limit int) ([]*RunRecord, error) {
-	if limit <= 0 {
-		limit = 20
+	if err := validateJobID(jobID); err != nil {
+		return nil, fmt.Errorf("invalid job ID: %w", err)
 	}
-	if err := ValidateJobID(jobID); err != nil {
-		return nil, err
+	if limit <= 0 {
+		limit = defaultListRunsLimit
 	}
 	// Don't create the DB file just to list runs.
 	if _, err := os.Stat(rs.dbPath(jobID)); os.IsNotExist(err) {
@@ -133,7 +132,7 @@ func (rs *RunStore) ListRuns(jobID string, limit int) ([]*RunRecord, error) {
 	if err != nil {
 		return nil, err
 	}
-	var records []*RunRecord
+	records := make([]*RunRecord, 0, limit)
 	rows, err := db.Query(`SELECT id, run_at, duration_ms, result, error FROM runs ORDER BY run_at DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
@@ -158,7 +157,7 @@ func (rs *RunStore) ListRuns(jobID string, limit int) ([]*RunRecord, error) {
 // Returns nil if the database does not exist (idempotent).
 // Also removes SQLite WAL and SHM sidecar files.
 func (rs *RunStore) DeleteJobDB(jobID string) error {
-	if err := ValidateJobID(jobID); err != nil {
+	if err := validateJobID(jobID); err != nil {
 		return err
 	}
 	// Close and remove from cache before deleting files.
@@ -176,9 +175,6 @@ func (rs *RunStore) DeleteJobDB(jobID string) error {
 // RunsExist checks if any run records exist for a job.
 // Short-circuits with os.Stat to avoid creating an empty DB file.
 func (rs *RunStore) RunsExist(jobID string) (bool, error) {
-	if err := ValidateJobID(jobID); err != nil {
-		return false, err
-	}
 	// Don't create the DB file just to check existence.
 	if _, err := os.Stat(rs.dbPath(jobID)); os.IsNotExist(err) {
 		return false, nil

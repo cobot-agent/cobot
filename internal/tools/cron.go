@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/cobot-agent/cobot/internal/textutil"
@@ -17,6 +18,17 @@ import (
 var cronParamsJSON []byte
 
 var _ cobot.Tool = (*CronTool)(nil)
+
+const (
+	actionCreate   = "create"
+	actionList     = "list"
+	actionDelete   = "delete"
+	actionPause    = "pause"
+	actionResume   = "resume"
+	actionListRuns = "list_runs"
+)
+
+const displayTimeFmt = "2006-01-02 15:04:05"
 
 // CronTool allows the agent to schedule and manage recurring and one-shot tasks.
 type CronTool struct {
@@ -79,20 +91,20 @@ func (t *CronTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 	}
 
 	switch params.Action {
-	case "create":
+	case actionCreate:
 		return t.handleCreate(ctx, params)
-	case "list":
+	case actionList:
 		return t.handleList()
-	case "delete":
+	case actionDelete:
 		return t.handleDelete(params)
-	case "pause":
+	case actionPause:
 		return t.handlePause(params)
-	case "resume":
+	case actionResume:
 		return t.handleResume(params)
-	case "list_runs":
+	case actionListRuns:
 		return t.handleListRuns(params)
 	default:
-		return "", fmt.Errorf("unknown action: %s (valid: create, list, delete, pause, resume, list_runs)", params.Action)
+		return "", fmt.Errorf("unknown action: %s (valid: %s, %s, %s, %s, %s, %s)", params.Action, actionCreate, actionList, actionDelete, actionPause, actionResume, actionListRuns)
 	}
 }
 
@@ -152,7 +164,9 @@ func (t *CronTool) handleList() (string, error) {
 		return "No cron jobs found.", nil
 	}
 
-	result := fmt.Sprintf("Cron jobs (%d):\n", len(jobs))
+	var b strings.Builder
+	b.Grow(len(jobs) * 120)
+	fmt.Fprintf(&b, "Cron jobs (%d):\n", len(jobs))
 	for _, job := range jobs {
 		lastRun := "never"
 		if job.LastRun != nil {
@@ -162,10 +176,10 @@ func (t *CronTool) handleList() (string, error) {
 		if job.NextRun != nil {
 			nextRun = job.NextRun.Format(time.RFC3339)
 		}
-		result += fmt.Sprintf("  %s | %s | %s | status=%s | runs=%d | last=%s | next=%s | read_id=%s\n",
+		fmt.Fprintf(&b, "  %s | %s | %s | status=%s | runs=%d | last=%s | next=%s | read_id=%s\n",
 			job.ID, job.Name, job.Schedule, job.Status, job.RunCount, lastRun, nextRun, job.ReadID())
 	}
-	return result, nil
+	return b.String(), nil
 }
 
 // withReadID validates and extracts a job ID from readID, calls fn, and formats the result.
@@ -173,10 +187,13 @@ func (t *CronTool) withReadID(readID string, action string, fn func(string) erro
 	if readID == "" {
 		return "", fmt.Errorf("read_id is required for %s action. Use the list action first to get the current read_id", action)
 	}
+	jobID, _, err := cron.ParseReadID(readID)
+	if err != nil {
+		return "", fmt.Errorf("invalid read ID: %w", err)
+	}
 	if err := fn(readID); err != nil {
 		return "", err
 	}
-	jobID, _, _ := cron.ParseReadID(readID)
 	return fmt.Sprintf("Job %s %s.", jobID, verb), nil
 }
 
@@ -203,14 +220,16 @@ func (t *CronTool) handleListRuns(params cronParams) (string, error) {
 	if len(records) == 0 {
 		return fmt.Sprintf("No execution records for job %s.", params.JobID), nil
 	}
-	result := fmt.Sprintf("Execution records for job %s (%d most recent):\n", params.JobID, len(records))
+	var b strings.Builder
+	b.Grow(len(records) * 120)
+	fmt.Fprintf(&b, "Execution records for job %s (%d most recent):\n", params.JobID, len(records))
 	for _, r := range records {
 		if r.Error != "" {
-			result += fmt.Sprintf("  [%s] FAILED (%dms): %s\n", r.RunAt.Format("2006-01-02 15:04:05"), r.Duration, r.Error)
+			fmt.Fprintf(&b, "  [%s] FAILED (%dms): %s\n", r.RunAt.Format(displayTimeFmt), r.Duration, r.Error)
 		} else {
 			output := textutil.Truncate(r.Result, 100)
-			result += fmt.Sprintf("  [%s] OK (%dms): %s\n", r.RunAt.Format("2006-01-02 15:04:05"), r.Duration, output)
+			fmt.Fprintf(&b, "  [%s] OK (%dms): %s\n", r.RunAt.Format(displayTimeFmt), r.Duration, output)
 		}
 	}
-	return result, nil
+	return b.String(), nil
 }
