@@ -21,7 +21,7 @@ func skillContent(name, desc, body string) string {
 	return "---\nname: " + name + "\ndescription: " + desc + "\n---\n\n" + body + "\n"
 }
 
-// --- validateAndCheckContent ---
+// --- ValidateContent ---
 
 func TestValidateAndCheckContent_ValidatesContent(t *testing.T) {
 	tests := []struct {
@@ -234,6 +234,49 @@ func TestExecuteManage_Patch(t *testing.T) {
 	}
 }
 
+func TestExecuteManage_PatchDeleteSubstring(t *testing.T) {
+	h := newTestSkillsHandler(t)
+	createArgs, _ := json.Marshal(manageParams{Action: "create", Name: "pd", Content: skillContent("pd", "D", "hello world")})
+	h.executeManage(context.Background(), createArgs)
+
+	// Patch with empty NewString deletes OldString.
+	patchArgs, _ := json.Marshal(manageParams{
+		Action: "patch", Name: "pd", OldString: "hello ", NewString: "",
+	})
+	got, err := h.executeManage(context.Background(), patchArgs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "skill patched") {
+		t.Errorf("unexpected: %s", got)
+	}
+	data, _ := os.ReadFile(filepath.Join(h.ws.SkillsDir(), "pd", skills.SkillFile))
+	if !strings.Contains(string(data), "world") {
+		t.Errorf("patched content wrong: %q", string(data))
+	}
+	if strings.Contains(string(data), "hello ") {
+		t.Errorf("old_string not deleted: %q", string(data))
+	}
+}
+
+func TestExecuteManage_PatchInvalidatesFrontmatter(t *testing.T) {
+	h := newTestSkillsHandler(t)
+	createArgs, _ := json.Marshal(manageParams{Action: "create", Name: "pi", Content: skillContent("pi", "D", "body")})
+	h.executeManage(context.Background(), createArgs)
+
+	// Patch that removes the frontmatter name should fail validation.
+	patchArgs, _ := json.Marshal(manageParams{
+		Action: "patch", Name: "pi", OldString: "name: pi", NewString: "name: wrong",
+	})
+	_, err := h.executeManage(context.Background(), patchArgs)
+	if err == nil {
+		t.Error("expected error for patched content with mismatched name")
+	}
+	if !strings.Contains(err.Error(), "does not match") {
+		t.Errorf("expected name-mismatch error, got: %v", err)
+	}
+}
+
 func TestExecuteManage_PatchOldStringNotFound(t *testing.T) {
 	h := newTestSkillsHandler(t)
 	createArgs, _ := json.Marshal(manageParams{Action: "create", Name: "pn", Content: skillContent("pn", "D", "body")})
@@ -416,6 +459,41 @@ func TestExecuteList(t *testing.T) {
 	}
 	if !strings.Contains(got, "list-skill") {
 		t.Errorf("list output: %q", got)
+	}
+}
+
+func TestExecuteList_CategoryFilter(t *testing.T) {
+	h := newTestSkillsHandler(t)
+	// Create skill in "coding" category.
+	catSkillDir := filepath.Join(h.ws.SkillsDir(), "coding", "review")
+	os.MkdirAll(catSkillDir, 0755)
+	os.WriteFile(filepath.Join(catSkillDir, skills.SkillFile), []byte(skillContent("review", "Review skill", "b")), 0644)
+	// Create top-level skill.
+	topDir := filepath.Join(h.ws.SkillsDir(), "standalone")
+	os.MkdirAll(topDir, 0755)
+	os.WriteFile(filepath.Join(topDir, skills.SkillFile), []byte(skillContent("standalone", "Standalone skill", "b")), 0644)
+
+	// Filter by "coding" category.
+	args, _ := json.Marshal(map[string]string{"category": "coding"})
+	got, err := h.executeList(context.Background(), args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "review") {
+		t.Errorf("expected review in filtered output: %q", got)
+	}
+	if strings.Contains(got, "standalone") {
+		t.Errorf("standalone should be filtered out: %q", got)
+	}
+
+	// Filter by non-existent category returns empty list.
+	args2, _ := json.Marshal(map[string]string{"category": "nonexistent"})
+	got2, err := h.executeList(context.Background(), args2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got2 != "[]" {
+		t.Errorf("expected empty array, got: %q", got2)
 	}
 }
 
