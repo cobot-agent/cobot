@@ -10,6 +10,9 @@ import (
 	"strings"
 )
 
+// SkillsSectionMarker is the header marker for the skills section in system prompts.
+const SkillsSectionMarker = "## Skills (mandatory)"
+
 // LoadCatalog discovers all skills and returns full Skill objects (with tier-1 info populated).
 // Scans dirs in order; later dirs override earlier (workspace > global).
 // enabledFilter: if non-empty, only include named skills.
@@ -57,6 +60,51 @@ func LoadFull(ctx context.Context, dirs []string, name string) (*Skill, error) {
 	return nil, fmt.Errorf("skill not found: %q", name)
 }
 
+// LoadOne loads a single skill by name, searching workspace then global dirs.
+// More efficient than LoadFull for single-skill lookups — avoids scanning all skills.
+func LoadOne(ctx context.Context, dirs []string, name string) (*Skill, error) {
+	if err := ValidateSkillNameForView(name); err != nil {
+		return nil, err
+	}
+	// Use last-match-wins semantics (workspace overrides global), consistent with LoadCatalog.
+	var found *Skill
+	for i, dir := range dirs {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		skillPath := filepath.Join(dir, name, SkillFile)
+		if _, err := os.Stat(skillPath); err != nil {
+			continue
+		}
+		src := sourceLabel(i)
+		sk, err := loadNewFormatSkill(filepath.Join(dir, name), "", src)
+		if err != nil {
+			slog.Warn("failed to load skill in fast path", "path", filepath.Join(dir, name), "error", err)
+			continue
+		}
+		if sk.Name == name {
+			s := sk
+			found = &s
+		}
+	}
+	if found != nil {
+		return found, nil
+	}
+	// Fallback: scan for categorized or legacy skills (also last-match-wins)
+	if err := scanAllDirs(ctx, dirs, func(sk Skill) {
+		if sk.Name == name {
+			s := sk
+			found = &s
+		}
+	}); err != nil {
+		return nil, err
+	}
+	if found != nil {
+		return found, nil
+	}
+	return nil, fmt.Errorf("skill not found: %q", name)
+}
+
 // SkillsToPrompt formats tier-1 catalog for system prompt injection.
 // Skills are grouped by category (sorted alphabetically); skills without a
 // category are placed under "general". The output is wrapped in an
@@ -84,7 +132,7 @@ func SkillsToPrompt(skills []Skill) string {
 	sort.Strings(cats)
 
 	var b strings.Builder
-	b.WriteString("## Skills (mandatory)\n")
+	b.WriteString(SkillsSectionMarker + "\n")
 	b.WriteString("Before replying, scan the skills below. If a skill matches or is even partially relevant to your task, you MUST load it with skill_view(name) and follow its instructions. Err on the side of loading — it is always better to have context you don't need than to miss critical steps, pitfalls, or established workflows. Skills contain specialized knowledge — API endpoints, tool-specific commands, and proven workflows that outperform general-purpose approaches. Load the skill even if you think you could handle the task with basic tools.\n\n")
 	b.WriteString("If a skill has issues, fix it with skill_manage(action='patch').\n")
 	b.WriteString("After difficult/iterative tasks, offer to save as a skill. If a skill you loaded was missing steps, had wrong commands, or needed pitfalls you discovered, update it before finishing.\n\n")
@@ -128,6 +176,7 @@ func scanAllDirs(ctx context.Context, dirs []string, cb func(Skill)) error {
 }
 
 // scanDir scans a single skills directory for both new (SkillFile) and legacy (.md/.yaml) formats.
+// New-format skills (subdirectories with SKILL.md) take precedence over legacy flat files.
 func scanDir(dir string, dirIndex int) ([]Skill, error) {
 	ents, err := os.ReadDir(dir)
 	if err != nil {
@@ -136,8 +185,26 @@ func scanDir(dir string, dirIndex int) ([]Skill, error) {
 	src := sourceLabel(dirIndex)
 	var result []Skill
 
+	// First pass: collect new-format skill directory names so legacy files
+	// for the same skill name are skipped.
+	skillDirs := make(map[string]struct{})
 	for _, ent := range ents {
 		if !ent.IsDir() {
+			continue
+		}
+		skillPath := filepath.Join(dir, ent.Name(), SkillFile)
+		if _, err := os.Stat(skillPath); err == nil {
+			skillDirs[ent.Name()] = struct{}{}
+		}
+	}
+
+	for _, ent := range ents {
+		if !ent.IsDir() {
+			// Skip legacy file if a new-format skill directory exists with same name.
+			base := strings.TrimSuffix(ent.Name(), filepath.Ext(ent.Name()))
+			if _, hasDir := skillDirs[base]; hasDir {
+				continue
+			}
 			if sk, ok := loadLegacyFile(dir, ent.Name(), src); ok {
 				result = append(result, sk)
 			}
@@ -145,6 +212,10 @@ func scanDir(dir string, dirIndex int) ([]Skill, error) {
 		}
 		if sk, ok := tryLoadSkillDir(dir, ent.Name(), "", src); ok {
 			result = append(result, sk)
+			continue
+		}
+		// If directory has SKILL.md but failed to load, skip rather than treating as category.
+		if _, isSkillDir := skillDirs[ent.Name()]; isSkillDir {
 			continue
 		}
 		result = append(result, scanCategoryDir(dir, ent.Name(), src)...)
@@ -162,13 +233,9 @@ func sourceLabel(dirIndex int) string {
 
 // tryLoadSkillDir attempts to load a SkillFile from parent/name/.
 func tryLoadSkillDir(parent, name, category, src string) (Skill, bool) {
-	skillMD := filepath.Join(parent, name, SkillFile)
-	if info, err := os.Stat(skillMD); err != nil || info.IsDir() {
-		return Skill{}, false
-	}
 	sk, err := loadNewFormatSkill(filepath.Join(parent, name), category, src)
 	if err != nil {
-		slog.Warn("failed to load skill", "path", skillMD, "error", err)
+		slog.Warn("failed to load skill", "path", filepath.Join(parent, name), "error", err)
 		return Skill{}, false
 	}
 	return sk, true

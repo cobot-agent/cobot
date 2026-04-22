@@ -170,7 +170,7 @@ func TestRegisterWorkspaceTools(t *testing.T) {
 	ws := newTestWorkspace(t)
 	registry := NewRegistry()
 	RegisterWorkspaceTools(registry, ws, nil)
-	RegisterSkillsTools(registry, ws)
+	RegisterSkillsTools(registry, ws, nil)
 
 	tool, err := registry.Get("workspace_config_update")
 	if err != nil {

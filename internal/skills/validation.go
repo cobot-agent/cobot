@@ -20,8 +20,8 @@ var validNameRe = regexp.MustCompile(`^[a-z][a-z0-9-]*[a-z0-9]$`)
 var linkedSubdirs = []string{"references", "templates", "scripts", "assets"}
 
 const (
-	nameMinLen    = 2
-	nameMaxLen    = 64
+	nameMinLen     = 2
+	nameMaxLen     = 64
 	viewNameMaxLen = 128
 )
 
@@ -48,22 +48,22 @@ func ValidateSkillNameForView(name string) error {
 	if len(name) > viewNameMaxLen {
 		return fmt.Errorf("invalid name: too long (%d bytes)", len(name))
 	}
-	if !isValidLegacyName(name) {
+	if !IsValidLegacyName(name) {
 		return fmt.Errorf("invalid name %q: path components not allowed", name)
 	}
 	return nil
 }
 
-// isValidLegacyName checks if a name is safe for legacy flat file compat (no path traversal).
+// IsValidLegacyName checks if a name is safe for legacy flat file compat (no path traversal).
 // Returns false for empty strings.
-func isValidLegacyName(name string) bool {
+func IsValidLegacyName(name string) bool {
 	return name != "" && !strings.Contains(name, "/") && !strings.Contains(name, "\\") && !strings.Contains(name, "..")
 }
 
 // isValidCategoryName checks if a directory name is a valid category.
 // Blocks path traversal components and dotfiles/dot-directories.
 func isValidCategoryName(name string) bool {
-	return isValidLegacyName(name) && !strings.HasPrefix(name, ".")
+	return IsValidLegacyName(name) && !strings.HasPrefix(name, ".")
 }
 
 // IsPathTraversalSafe returns false if filePath contains traversal patterns.
@@ -111,7 +111,15 @@ func VerifyContainment(fullPath string, baseDir string) (string, error) {
 	if err != nil {
 		absBaseResolved = absBase
 	}
-	if !strings.HasPrefix(absResolved, absBaseResolved+string(filepath.Separator)) {
+	// Handle root directory special case: every valid path is "under" root.
+	sep := string(filepath.Separator)
+	if absBaseResolved == sep {
+		if absResolved == sep {
+			return "", ErrPathTraversal
+		}
+		return absResolved, nil
+	}
+	if !strings.HasPrefix(absResolved, absBaseResolved+sep) {
 		return "", ErrPathTraversal
 	}
 	return absResolved, nil

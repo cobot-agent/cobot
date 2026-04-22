@@ -57,7 +57,7 @@ func TestValidateAndCheckContent(t *testing.T) {
 	}{
 		{"valid", skillContent("s", "D", "body"), "s", false, ""},
 		{"empty content", "", "s", true, "content is required"},
-		{"oversized", strings.Repeat("x", maxSkillContentSize+1), "s", true, "maximum size"},
+		{"oversized", strings.Repeat("x", int(skills.MaxSkillFileSize)+1), "s", true, "maximum size"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

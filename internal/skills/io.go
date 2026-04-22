@@ -12,13 +12,16 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// maxSkillFileSize is the maximum allowed size for a single skill file (1 MB).
+// MaxSkillFileSize is the maximum allowed size for a single skill file (1 MB).
 // This protects the catalog loader from unbounded memory reads.
-const maxSkillFileSize int64 = 1 << 20
+const MaxSkillFileSize int64 = 1 << 20 // 1 MB
 
-// readFileWithLimit reads a file after verifying its size does not exceed maxSize.
-// Uses io.LimitReader to protect against TOCTOU races where the file grows between Stat and Read.
-func readFileWithLimit(path string, maxSize int64) ([]byte, error) {
+// maxSkillFileSize aliases the exported constant for internal use.
+const maxSkillFileSize = MaxSkillFileSize
+
+// ReadFileWithLimit reads a file after verifying its size does not exceed maxSize.
+// Uses io.LimitReader to protect against TOCTOU races.
+func ReadFileWithLimit(path string, maxSize int64) ([]byte, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -79,35 +82,16 @@ func ReadLinkedFile(skillDir, filePath string) (string, error) {
 		}
 		return "", err
 	}
-	const maxReadSize = 10 << 20 // 10 MB
-	f, err := os.Open(abs)
-	if err != nil {
-		return "", fmt.Errorf("open linked file: %w", err)
-	}
-	defer f.Close()
-	info, err := f.Stat()
-	if err != nil {
-		return "", fmt.Errorf("stat linked file: %w", err)
-	}
-	if info.IsDir() {
-		return "", fmt.Errorf("linked file path is a directory: %q", filePath)
-	}
-	if info.Size() > maxReadSize {
-		return "", fmt.Errorf("linked file too large: %d bytes (max %d)", info.Size(), maxReadSize)
-	}
-	data, err := io.ReadAll(io.LimitReader(f, maxReadSize+1))
+	data, err := ReadFileWithLimit(abs, 10<<20) // 10 MB
 	if err != nil {
 		return "", fmt.Errorf("read linked file: %w", err)
-	}
-	if len(data) > maxReadSize {
-		return "", fmt.Errorf("linked file too large: exceeds %d bytes", maxReadSize)
 	}
 	return string(data), nil
 }
 
 // FindSkillDir searches workspace then global skills dir for a skill by name (legacy returns parent dir).
 func FindSkillDir(wsSkillsDir, globalSkillsDir, name string) (string, error) {
-	if !isValidLegacyName(name) {
+	if !IsValidLegacyName(name) {
 		return "", fmt.Errorf("invalid skill name %q", name)
 	}
 	if p, err := findSkillDirIn(name, wsSkillsDir); err == nil {
@@ -198,7 +182,7 @@ func resolveExistingPrefix(path string) (string, error) {
 
 // loadNewFormatSkill loads a SkillFile from a skill directory.
 func loadNewFormatSkill(skillDir, category, source string) (Skill, error) {
-	data, err := readFileWithLimit(filepath.Join(skillDir, SkillFile), maxSkillFileSize)
+	data, err := ReadFileWithLimit(filepath.Join(skillDir, SkillFile), maxSkillFileSize)
 	if err != nil {
 		return Skill{}, fmt.Errorf("read %s: %w", SkillFile, err)
 	}
@@ -227,10 +211,10 @@ func loadNewFormatSkill(skillDir, category, source string) (Skill, error) {
 func loadLegacyFile(dir, filename, src string) (Skill, bool) {
 	ext := filepath.Ext(filename)
 	name := strings.TrimSuffix(filename, ext)
-	if !isValidLegacyName(name) || strings.HasPrefix(name, ".") || (ext != ".md" && ext != ".yaml" && ext != ".yml") {
+	if !IsValidLegacyName(name) || strings.HasPrefix(name, ".") || (ext != ".md" && ext != ".yaml" && ext != ".yml") {
 		return Skill{}, false
 	}
-	data, err := readFileWithLimit(filepath.Join(dir, filename), maxSkillFileSize)
+	data, err := ReadFileWithLimit(filepath.Join(dir, filename), maxSkillFileSize)
 	if err != nil {
 		return Skill{}, false
 	}
@@ -243,8 +227,12 @@ func loadLegacyFile(dir, filename, src string) (Skill, bool) {
 	}
 	if ys.Name != "" {
 		name = ys.Name
+		// Reject dot-prefixed names (consistent with markdown legacy skills).
+		if strings.HasPrefix(name, ".") {
+			return Skill{}, false
+		}
 	}
-	if !isValidLegacyName(name) {
+	if !IsValidLegacyName(name) {
 		return Skill{}, false
 	}
 	return Skill{Name: name, Description: ys.Description, Content: ys.Content, Source: src}, true

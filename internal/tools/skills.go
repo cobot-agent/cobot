@@ -18,8 +18,7 @@ import (
 )
 
 const (
-	maxSkillContentSize = 256 * 1024  // 256 KB
-	maxLinkedFileSize   = 1024 * 1024 // 1 MB
+	maxLinkedFileSize = 1024 * 1024 // 1 MB
 )
 
 //go:embed schemas/embed_skills_list_params.json
@@ -39,24 +38,9 @@ type skillSummary struct {
 	Source      string `json:"source,omitempty"`
 }
 
-// fnTool adapts a function into a cobot.Tool, eliminating per-tool struct boilerplate.
-type fnTool struct {
-	name    string
-	desc    string
-	params  json.RawMessage
-	execute func(ctx context.Context, args json.RawMessage) (string, error)
-}
-
-func (t *fnTool) Name() string                { return t.name }
-func (t *fnTool) Description() string         { return t.desc }
-func (t *fnTool) Parameters() json.RawMessage { return t.params }
-func (t *fnTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
-	return t.execute(ctx, args)
-}
-
 // skillsHandler holds shared state for all skills tool operations.
 type skillsHandler struct {
-	ws       *workspace.Workspace
+	ws        *workspace.Workspace
 	refresher cobot.SkillsPromptRefresher
 }
 
@@ -69,15 +53,10 @@ func (h *skillsHandler) findWritableDir(name string) (string, error) {
 }
 
 // RegisterSkillsTools registers all skills-related tools.
-// The refresher parameter is optional; when non-nil it is called after
-// mutating skill operations (create/edit/patch/delete) to refresh the
-// system prompt's skills section.
-func RegisterSkillsTools(registry cobot.ToolRegistry, ws *workspace.Workspace, refresher ...cobot.SkillsPromptRefresher) {
-	var r cobot.SkillsPromptRefresher
-	if len(refresher) > 0 {
-		r = refresher[0]
-	}
-	h := &skillsHandler{ws: ws, refresher: r}
+// The refresher is called after mutating skill operations (create/edit/patch/delete)
+// to refresh the system prompt's skills section.
+func RegisterSkillsTools(registry cobot.ToolRegistry, ws *workspace.Workspace, refresher cobot.SkillsPromptRefresher) {
+	h := &skillsHandler{ws: ws, refresher: refresher}
 	registry.Register(&fnTool{
 		name: "skills_list", desc: "List all available skills grouped by category. Use to discover skills that match the current task.",
 		params: json.RawMessage(skillsListParamsJSON), execute: h.executeList,
@@ -141,33 +120,25 @@ func (h *skillsHandler) executeView(ctx context.Context, args json.RawMessage) (
 		}
 		return skills.ReadLinkedFile(skillDir, params.FilePath)
 	}
-	sk, err := skills.LoadFull(ctx, h.skillDirs(), params.Name)
+	sk, err := skills.LoadOne(ctx, h.skillDirs(), params.Name)
 	if err != nil {
 		return "", err
 	}
 	var b strings.Builder
-	content := sk.Content
 	if sk.Dir != "" {
 		skillMD := filepath.Join(sk.Dir, skills.SkillFile)
-		if info, err := os.Stat(skillMD); err == nil {
-			if info.Size() > int64(maxSkillContentSize) {
-				return "", fmt.Errorf("skill content exceeds maximum size of %d bytes", maxSkillContentSize)
-			}
-			data, err := os.ReadFile(skillMD)
-			if err != nil {
-				return "", fmt.Errorf("read %s: %w", skills.SkillFile, err)
-			}
-			// Post-read safety check in case file grew between Stat and ReadFile.
-			if len(data) > maxSkillContentSize {
-				return "", fmt.Errorf("skill content exceeds maximum size of %d bytes", maxSkillContentSize)
-			}
-			content = string(data)
+		data, err := skills.ReadFileWithLimit(skillMD, skills.MaxSkillFileSize)
+		if err != nil {
+			return "", fmt.Errorf("read %s: %w", skills.SkillFile, err)
 		}
+		b.WriteString(string(data))
+	} else {
+		// Legacy format — use pre-loaded content
+		if len(sk.Content) > int(skills.MaxSkillFileSize) {
+			return "", fmt.Errorf("skill content exceeds maximum size of %d bytes", skills.MaxSkillFileSize)
+		}
+		b.WriteString(sk.Content)
 	}
-	if len(content) > maxSkillContentSize {
-		return "", fmt.Errorf("skill content exceeds maximum size of %d bytes", maxSkillContentSize)
-	}
-	b.WriteString(content)
 	if sk.Dir != "" {
 		appendLinkedFiles(&b, sk.Dir)
 	}
@@ -207,12 +178,12 @@ type manageParams struct {
 }
 
 var manageActions = map[string]func(*skillsHandler, manageParams) (string, error){
-	"create":      (*skillsHandler).doCreate,
-	"edit":        (*skillsHandler).doEdit,
-	"patch":       (*skillsHandler).doPatch,
-	"delete":      (*skillsHandler).doDelete,
-	"write_file":  (*skillsHandler).doWriteFile,
-	"remove_file": (*skillsHandler).doRemoveFile,
+	skills.ActionCreate:     (*skillsHandler).doCreate,
+	skills.ActionEdit:       (*skillsHandler).doEdit,
+	skills.ActionPatch:      (*skillsHandler).doPatch,
+	skills.ActionDelete:     (*skillsHandler).doDelete,
+	skills.ActionWriteFile:  (*skillsHandler).doWriteFile,
+	skills.ActionRemoveFile: (*skillsHandler).doRemoveFile,
 }
 
 func (h *skillsHandler) executeManage(_ context.Context, args json.RawMessage) (string, error) {
@@ -249,13 +220,13 @@ func (h *skillsHandler) doCreate(p manageParams) (string, error) {
 		// Reject if category directory is itself a skill (has SKILL.md),
 		// because the scanner treats such dirs as skills, not categories,
 		// making nested skills invisible to the catalog.
-		if info, err := os.Stat(filepath.Join(catDir, skills.SkillFile)); err == nil && !info.IsDir() {
+		if _, err := os.Stat(filepath.Join(catDir, skills.SkillFile)); err == nil {
 			return "", fmt.Errorf("cannot use %q as category: a skill with that name already exists", p.Category)
 		}
 		skillDir = filepath.Join(catDir, p.Name)
 	}
-	// Reject if target directory already exists (could shadow category skills).
-	if info, err := os.Stat(skillDir); err == nil && info.IsDir() {
+	// Reject if target path already exists.
+	if _, err := os.Stat(skillDir); err == nil {
 		if _, serr := os.Stat(filepath.Join(skillDir, skills.SkillFile)); serr == nil {
 			return "", fmt.Errorf("skill %q already exists; use edit or patch to modify it", p.Name)
 		}
@@ -312,27 +283,17 @@ func (h *skillsHandler) doPatch(p manageParams) (string, error) {
 		return "", err
 	}
 	skillMD := filepath.Join(skillDir, skills.SkillFile)
-	info, err := os.Stat(skillMD)
-	if err != nil {
-		return "", fmt.Errorf("stat %s: %w", skills.SkillFile, err)
-	}
-	if info.Size() > int64(maxSkillContentSize) {
-		return "", fmt.Errorf("%s exceeds maximum size of %d bytes", skills.SkillFile, maxSkillContentSize)
-	}
-	data, err := os.ReadFile(skillMD)
+	data, err := skills.ReadFileWithLimit(skillMD, skills.MaxSkillFileSize)
 	if err != nil {
 		return "", fmt.Errorf("read %s: %w", skills.SkillFile, err)
-	}
-	if len(data) > maxSkillContentSize {
-		return "", fmt.Errorf("%s exceeds maximum size of %d bytes", skills.SkillFile, maxSkillContentSize)
 	}
 	content := string(data)
 	if !strings.Contains(content, p.OldString) {
 		return "", fmt.Errorf("old_string not found in %s", skills.SkillFile)
 	}
 	newContent := strings.Replace(content, p.OldString, p.NewString, 1)
-	if len(newContent) > maxSkillContentSize {
-		return "", fmt.Errorf("patched content exceeds maximum size of %d bytes", maxSkillContentSize)
+	if len(newContent) > int(skills.MaxSkillFileSize) {
+		return "", fmt.Errorf("patched content exceeds maximum size of %d bytes", skills.MaxSkillFileSize)
 	}
 	if err := skills.ValidateContent(newContent, p.Name); err != nil {
 		return "", fmt.Errorf("patched content: %w", err)
@@ -365,18 +326,39 @@ func (h *skillsHandler) doWriteFile(p manageParams) (string, error) {
 	if len(p.FileContent) > maxLinkedFileSize {
 		return "", fmt.Errorf("file_content exceeds maximum size of %d bytes", maxLinkedFileSize)
 	}
-	// Verify containment if file already exists (defense against symlink escape).
-	if _, err := skills.VerifyContainment(fullPath, skillDir); err != nil {
-		if !os.IsNotExist(err) {
-			if errors.Is(err, skills.ErrPathTraversal) {
-				return "", skills.ErrPathTraversal
+	// Verify file-level containment to catch symlink escapes.
+	fi, err := os.Lstat(fullPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// New file — ensure parent dir is contained and proceed.
+			if err := skills.EnsureContainedDir(filepath.Dir(fullPath), skillDir); err != nil {
+				return "", err
 			}
-			return "", fmt.Errorf("verify containment: %w", err)
+		} else {
+			return "", fmt.Errorf("stat file: %w", err)
 		}
-		// File doesn't exist yet; parent containment verified below.
-	}
-	if err := skills.EnsureContainedDir(filepath.Dir(fullPath), skillDir); err != nil {
-		return "", err
+	} else if fi.Mode()&os.ModeSymlink != 0 {
+		target, err := os.Readlink(fullPath)
+		if err != nil {
+			return "", fmt.Errorf("read symlink: %w", err)
+		}
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(filepath.Dir(fullPath), target)
+		}
+		if _, err := skills.VerifyContainment(target, skillDir); err != nil {
+			if os.IsNotExist(err) {
+				// Dangling symlink: verify the symlink path itself is contained.
+				if _, err := skills.VerifyContainment(fullPath, skillDir); err != nil {
+					return "", fmt.Errorf("symlink escapes skill directory: %w", err)
+				}
+			} else {
+				return "", fmt.Errorf("symlink target escapes skill directory: %w", err)
+			}
+		}
+	} else {
+		if _, err := skills.VerifyContainment(fullPath, skillDir); err != nil {
+			return "", err
+		}
 	}
 	if err := os.WriteFile(fullPath, []byte(p.FileContent), 0644); err != nil {
 		return "", fmt.Errorf("write file: %w", err)
@@ -389,11 +371,33 @@ func (h *skillsHandler) doRemoveFile(p manageParams) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if _, err := skills.VerifyContainment(fullPath, skillDir); err != nil {
+	// For dangling symlinks, VerifyContainment fails because EvalSymlinks cannot resolve.
+	// Use Lstat to check existence and Lstat-based containment for symlinks.
+	fi, err := os.Lstat(fullPath)
+	if err != nil {
 		if os.IsNotExist(err) {
 			return "", fmt.Errorf("file not found: %q", p.FilePath)
 		}
-		return "", err
+		return "", fmt.Errorf("stat file: %w", err)
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		target, err := os.Readlink(fullPath)
+		if err != nil {
+			return "", fmt.Errorf("read symlink: %w", err)
+		}
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(filepath.Dir(fullPath), target)
+		}
+		if _, err := skills.VerifyContainment(target, skillDir); err != nil {
+			if !os.IsNotExist(err) {
+				return "", fmt.Errorf("symlink target escapes skill directory: %w", err)
+			}
+			// Dangling symlink pointing within skill dir is safe to remove.
+		}
+	} else {
+		if _, err := skills.VerifyContainment(fullPath, skillDir); err != nil {
+			return "", err
+		}
 	}
 	if err := os.Remove(fullPath); err != nil {
 		return "", fmt.Errorf("remove file: %w", err)
@@ -418,8 +422,8 @@ func validateAndCheckContent(content, name string) error {
 	if content == "" {
 		return errors.New("content is required")
 	}
-	if len(content) > maxSkillContentSize {
-		return fmt.Errorf("content exceeds maximum size of %d bytes", maxSkillContentSize)
+	if len(content) > int(skills.MaxSkillFileSize) {
+		return fmt.Errorf("content exceeds maximum size of %d bytes", skills.MaxSkillFileSize)
 	}
 	return skills.ValidateContent(content, name)
 }
@@ -427,9 +431,6 @@ func validateAndCheckContent(content, name string) error {
 func (h *skillsHandler) resolveLinkedFile(name, filePath string) (string, string, error) {
 	if filePath == "" {
 		return "", "", errors.New("file_path is required")
-	}
-	if !skills.IsPathTraversalSafe(filePath) {
-		return "", "", skills.ErrPathTraversal
 	}
 	if err := skills.ValidateLinkedFilePath(filePath); err != nil {
 		return "", "", err

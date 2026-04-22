@@ -514,6 +514,64 @@ func TestEnsureContainedDir(t *testing.T) {
 	})
 }
 
+func TestLoadOne(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("finds new format skill via fast path", func(t *testing.T) {
+		dir := t.TempDir()
+		skillDir := filepath.Join(dir, "my-skill")
+		if err := os.MkdirAll(skillDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		content := "---\nname: my-skill\ndescription: test\n---\nbody content"
+		if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		sk, err := LoadOne(ctx, []string{dir}, "my-skill")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if sk.Name != "my-skill" {
+			t.Errorf("got name %q, want %q", sk.Name, "my-skill")
+		}
+		if sk.Description != "test" {
+			t.Errorf("got description %q, want %q", sk.Description, "test")
+		}
+	})
+
+	t.Run("finds categorized skill via fallback", func(t *testing.T) {
+		dir := t.TempDir()
+		catDir := filepath.Join(dir, "coding", "my-cat-skill")
+		if err := os.MkdirAll(catDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		content := "---\nname: my-cat-skill\ndescription: categorized\n---\ncat body"
+		if err := os.WriteFile(filepath.Join(catDir, "SKILL.md"), []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		sk, err := LoadOne(ctx, []string{dir}, "my-cat-skill")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if sk.Name != "my-cat-skill" {
+			t.Errorf("got name %q, want %q", sk.Name, "my-cat-skill")
+		}
+	})
+
+	t.Run("returns error for missing skill", func(t *testing.T) {
+		dir := t.TempDir()
+		_, err := LoadOne(ctx, []string{dir}, "nonexistent")
+		if err == nil {
+			t.Fatal("expected error for missing skill")
+		}
+		if !strings.Contains(err.Error(), "not found") {
+			t.Errorf("error %q should contain %q", err.Error(), "not found")
+		}
+	})
+}
+
 func TestValidateLinkedFilePath(t *testing.T) {
 	tests := []struct {
 		name    string

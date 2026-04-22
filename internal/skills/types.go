@@ -49,33 +49,31 @@ func parseFrontMatter(content string) (frontMatter, string, error) {
 	// Strip UTF-8 BOM if present (some editors prepend it).
 	content = strings.TrimPrefix(content, "\xEF\xBB\xBF")
 	if !strings.HasPrefix(content, frontmatterDelimiter) {
-		return fm, "", errors.New("content does not start with frontmatter delimiter")
+		return fm, "", errors.New("skill file must start with YAML frontmatter (---)")
 	}
-
-	// Skip opening delimiter and its newline.
 	rest := content[len(frontmatterDelimiter):]
+	// Skip optional newline after opening delimiter
 	if len(rest) > 0 && rest[0] == '\n' {
 		rest = rest[1:]
 	}
-
-	// Find closing delimiter on its own line.
+	// Find closing delimiter line. Must be the first non-indented line that is exactly "---"
+	// (possibly with trailing whitespace). Indented "---" inside YAML block scalars is ignored.
 	lines := strings.Split(rest, "\n")
-	closeIdx := -1
+	closeLine := -1
 	for i, line := range lines {
-		if line == frontmatterDelimiter {
-			closeIdx = i
+		// Require "---" at line start (not indented) to avoid matching inside YAML values.
+		if strings.HasPrefix(line, "---") && strings.TrimSpace(line) == "---" {
+			closeLine = i
 			break
 		}
 	}
-	if closeIdx < 0 {
-		return fm, "", errors.New("missing closing frontmatter delimiter")
+	if closeLine < 0 {
+		return fm, "", errors.New("frontmatter closing delimiter not found")
 	}
-
-	yamlContent := strings.Join(lines[:closeIdx], "\n")
-	body := strings.Join(lines[closeIdx+1:], "\n")
-
-	if err := yaml.Unmarshal([]byte(yamlContent), &fm); err != nil {
-		return fm, "", fmt.Errorf("parse frontmatter yaml: %w", err)
+	fmContent := strings.Join(lines[:closeLine], "\n")
+	body := strings.TrimRight(strings.Join(lines[closeLine+1:], "\n"), "\n")
+	if err := yaml.Unmarshal([]byte(fmContent), &fm); err != nil {
+		return fm, "", fmt.Errorf("parse YAML frontmatter: %w", err)
 	}
 	return fm, body, nil
 }
@@ -90,6 +88,9 @@ func extractDescription(content string) string {
 		}
 		if stripped := strings.TrimLeft(line, "#"); len(stripped) < len(line) && strings.HasPrefix(stripped, " ") {
 			line = strings.TrimLeft(stripped, " ")
+			if line == "" {
+				continue
+			}
 		}
 		return line
 	}
