@@ -1,6 +1,7 @@
 package skills
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
 	"io"
@@ -70,7 +71,7 @@ func ListLinkedFiles(skillDir string) map[string][]string {
 	return result
 }
 
-// ReadLinkedFile reads a linked file under an allowed subdir with path safety and 10 MB limit.
+// ReadLinkedFile reads a linked file under an allowed subdir with path safety and 1 MB limit.
 func ReadLinkedFile(skillDir, filePath string) (string, error) {
 	if err := ValidateLinkedFilePath(filePath); err != nil {
 		return "", err
@@ -82,7 +83,7 @@ func ReadLinkedFile(skillDir, filePath string) (string, error) {
 		}
 		return "", err
 	}
-	data, err := ReadFileWithLimit(abs, 10<<20) // 10 MB
+	data, err := ReadFileWithLimit(abs, MaxSkillFileSize)
 	if err != nil {
 		return "", fmt.Errorf("read linked file: %w", err)
 	}
@@ -178,6 +179,81 @@ func resolveExistingPrefix(path string) (string, error) {
 		}
 		p = parent
 	}
+}
+
+// loadFrontmatterOnly loads only the YAML frontmatter from a SkillFile, leaving
+// Content empty. Used for tier-1 catalog scanning to avoid reading full bodies.
+func loadFrontmatterOnly(skillDir, category, source string) (Skill, error) {
+	f, err := os.Open(filepath.Join(skillDir, SkillFile))
+	if err != nil {
+		return Skill{}, fmt.Errorf("read %s: %w", SkillFile, err)
+	}
+	defer f.Close()
+
+	info, err := f.Stat()
+	if err != nil {
+		return Skill{}, fmt.Errorf("stat %s: %w", SkillFile, err)
+	}
+	if info.IsDir() {
+		return Skill{}, fmt.Errorf("%s is a directory", filepath.Join(skillDir, SkillFile))
+	}
+	if info.Size() > maxSkillFileSize {
+		return Skill{}, fmt.Errorf("file %s too large: %d bytes (max %d)", filepath.Join(skillDir, SkillFile), info.Size(), maxSkillFileSize)
+	}
+
+	// Read line by line until closing delimiter.
+	const maxLineSize = 64 * 1024
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 4096), maxLineSize)
+
+	var lines []string
+	foundOpen := false
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !foundOpen {
+			trimmed := strings.TrimSpace(line)
+			if trimmed == "" {
+				continue
+			}
+			if trimmed == "---" {
+				foundOpen = true
+				continue
+			}
+			return Skill{}, errors.New("skill file must start with YAML frontmatter (---)")
+		}
+		if strings.HasPrefix(line, "---") && strings.TrimSpace(line) == "---" {
+			break
+		}
+		lines = append(lines, line)
+	}
+	if err := scanner.Err(); err != nil {
+		return Skill{}, fmt.Errorf("read %s: %w", SkillFile, err)
+	}
+
+	// Normalize CRLF to LF for consistency with parseFrontMatter.
+	for i, line := range lines {
+		lines[i] = strings.TrimRight(line, "\r")
+	}
+
+	fmContent := strings.Join(lines, "\n")
+	var fm frontMatter
+	if err := yaml.Unmarshal([]byte(fmContent), &fm); err != nil {
+		return Skill{}, fmt.Errorf("parse YAML frontmatter: %w", err)
+	}
+	if fm.Name == "" || fm.Description == "" {
+		return Skill{}, errors.New("skill name and description are required in frontmatter")
+	}
+	if err := ValidateSkillName(fm.Name); err != nil {
+		return Skill{}, fmt.Errorf("invalid frontmatter name: %w", err)
+	}
+	if dirName := filepath.Base(skillDir); fm.Name != dirName {
+		return Skill{}, fmt.Errorf("skill name %q does not match directory name %q", fm.Name, dirName)
+	}
+	absDir, err := filepath.Abs(skillDir)
+	if err != nil {
+		return Skill{}, fmt.Errorf("resolve skill dir: %w", err)
+	}
+	return Skill{Name: fm.Name, Description: fm.Description, Category: category, Content: "", Source: source, Dir: absDir, Metadata: fm.Metadata}, nil
 }
 
 // loadNewFormatSkill loads a SkillFile from a skill directory.

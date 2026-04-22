@@ -45,9 +45,42 @@ func LoadCatalog(ctx context.Context, dirs []string, enabledFilter []string) ([]
 // LoadFull loads tier-2 content for a specific skill by name.
 // Searches all dirs in order; workspace version wins (last-match).
 func LoadFull(ctx context.Context, dirs []string, name string) (*Skill, error) {
+	if err := ValidateSkillNameForView(name); err != nil {
+		return nil, err
+	}
+	// Use last-match-wins semantics, same as LoadOne.
 	var found *Skill
+	for i, dir := range dirs {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		skillPath := filepath.Join(dir, name, SkillFile)
+		if _, err := os.Stat(skillPath); err != nil {
+			continue
+		}
+		src := sourceLabel(i)
+		sk, err := loadNewFormatSkill(filepath.Join(dir, name), "", src)
+		if err != nil {
+			slog.Warn("failed to load skill in fast path", "path", filepath.Join(dir, name), "error", err)
+			continue
+		}
+		if sk.Name == name {
+			s := sk
+			found = &s
+		}
+	}
+	if found != nil {
+		return found, nil
+	}
+	// Fallback: scan for categorized or legacy skills.
 	if err := scanAllDirs(ctx, dirs, func(sk Skill) {
 		if sk.Name == name {
+			// For new-format skills found in fallback, reload to get full content.
+			if sk.Dir != "" {
+				if full, err := loadNewFormatSkill(sk.Dir, sk.Category, sk.Source); err == nil {
+					sk = full
+				}
+			}
 			s := sk
 			found = &s
 		}
@@ -93,6 +126,12 @@ func LoadOne(ctx context.Context, dirs []string, name string) (*Skill, error) {
 	// Fallback: scan for categorized or legacy skills (also last-match-wins)
 	if err := scanAllDirs(ctx, dirs, func(sk Skill) {
 		if sk.Name == name {
+			// For new-format skills found in fallback, reload to get full content.
+			if sk.Dir != "" {
+				if full, err := loadNewFormatSkill(sk.Dir, sk.Category, sk.Source); err == nil {
+					sk = full
+				}
+			}
 			s := sk
 			found = &s
 		}
@@ -233,7 +272,7 @@ func sourceLabel(dirIndex int) string {
 
 // tryLoadSkillDir attempts to load a SkillFile from parent/name/.
 func tryLoadSkillDir(parent, name, category, src string) (Skill, bool) {
-	sk, err := loadNewFormatSkill(filepath.Join(parent, name), category, src)
+	sk, err := loadFrontmatterOnly(filepath.Join(parent, name), category, src)
 	if err != nil {
 		slog.Warn("failed to load skill", "path", filepath.Join(parent, name), "error", err)
 		return Skill{}, false

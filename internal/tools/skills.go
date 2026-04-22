@@ -114,9 +114,12 @@ func (h *skillsHandler) executeView(ctx context.Context, args json.RawMessage) (
 		return "", err
 	}
 	if params.FilePath != "" {
-		skillDir, err := skills.FindSkillDir(h.ws.SkillsDir(), workspace.GlobalSkillsDir(), params.Name)
+		skillDir, err := skills.FindNewFormatSkillDir(h.ws.SkillsDir(), params.Name)
 		if err != nil {
-			return "", err
+			skillDir, err = skills.FindNewFormatSkillDir(workspace.GlobalSkillsDir(), params.Name)
+			if err != nil {
+				return "", errors.New("linked files supported only for SKILL.md format skills")
+			}
 		}
 		return skills.ReadLinkedFile(skillDir, params.FilePath)
 	}
@@ -177,7 +180,7 @@ type manageParams struct {
 	FileContent string `json:"file_content"`
 }
 
-var manageActions = map[string]func(*skillsHandler, manageParams) (string, error){
+var manageActions = map[string]func(*skillsHandler, context.Context, manageParams) (string, error){
 	skills.ActionCreate:     (*skillsHandler).doCreate,
 	skills.ActionEdit:       (*skillsHandler).doEdit,
 	skills.ActionPatch:      (*skillsHandler).doPatch,
@@ -186,7 +189,7 @@ var manageActions = map[string]func(*skillsHandler, manageParams) (string, error
 	skills.ActionRemoveFile: (*skillsHandler).doRemoveFile,
 }
 
-func (h *skillsHandler) executeManage(_ context.Context, args json.RawMessage) (string, error) {
+func (h *skillsHandler) executeManage(ctx context.Context, args json.RawMessage) (string, error) {
 	var p manageParams
 	if err := decodeArgs(args, &p); err != nil {
 		return "", err
@@ -204,10 +207,10 @@ func (h *skillsHandler) executeManage(_ context.Context, args json.RawMessage) (
 	if !ok {
 		return "", fmt.Errorf("unknown action: %q", p.Action)
 	}
-	return fn(h, p)
+	return fn(h, ctx, p)
 }
 
-func (h *skillsHandler) doCreate(p manageParams) (string, error) {
+func (h *skillsHandler) doCreate(ctx context.Context, p manageParams) (string, error) {
 	if err := validateAndCheckContent(p.Content, p.Name); err != nil {
 		return "", err
 	}
@@ -255,11 +258,11 @@ func (h *skillsHandler) doCreate(p manageParams) (string, error) {
 		return "", fmt.Errorf("close %s: %w", skills.SkillFile, err)
 	}
 	slog.Info("skill created", "name", p.Name, "category", p.Category)
-	h.refreshSkillsPrompt()
+	h.refreshSkillsPrompt(ctx)
 	return fmt.Sprintf("skill created: %s", p.Name), nil
 }
 
-func (h *skillsHandler) doEdit(p manageParams) (string, error) {
+func (h *skillsHandler) doEdit(ctx context.Context, p manageParams) (string, error) {
 	if err := validateAndCheckContent(p.Content, p.Name); err != nil {
 		return "", err
 	}
@@ -270,11 +273,11 @@ func (h *skillsHandler) doEdit(p manageParams) (string, error) {
 	if err := os.WriteFile(filepath.Join(skillDir, skills.SkillFile), []byte(p.Content), 0644); err != nil {
 		return "", fmt.Errorf("write %s: %w", skills.SkillFile, err)
 	}
-	h.refreshSkillsPrompt()
+	h.refreshSkillsPrompt(ctx)
 	return fmt.Sprintf("skill updated: %s", p.Name), nil
 }
 
-func (h *skillsHandler) doPatch(p manageParams) (string, error) {
+func (h *skillsHandler) doPatch(ctx context.Context, p manageParams) (string, error) {
 	if p.OldString == "" {
 		return "", errors.New("old_string is required for patch action")
 	}
@@ -301,11 +304,11 @@ func (h *skillsHandler) doPatch(p manageParams) (string, error) {
 	if err := os.WriteFile(skillMD, []byte(newContent), 0644); err != nil {
 		return "", fmt.Errorf("write patched %s: %w", skills.SkillFile, err)
 	}
-	h.refreshSkillsPrompt()
+	h.refreshSkillsPrompt(ctx)
 	return fmt.Sprintf("skill patched: %s", p.Name), nil
 }
 
-func (h *skillsHandler) doDelete(p manageParams) (string, error) {
+func (h *skillsHandler) doDelete(ctx context.Context, p manageParams) (string, error) {
 	skillDir, err := h.findWritableDir(p.Name)
 	if err != nil {
 		return "", err
@@ -314,11 +317,11 @@ func (h *skillsHandler) doDelete(p manageParams) (string, error) {
 		return "", fmt.Errorf("remove skill directory: %w", err)
 	}
 	slog.Info("skill deleted", "name", p.Name)
-	h.refreshSkillsPrompt()
+	h.refreshSkillsPrompt(ctx)
 	return fmt.Sprintf("skill deleted: %s", p.Name), nil
 }
 
-func (h *skillsHandler) doWriteFile(p manageParams) (string, error) {
+func (h *skillsHandler) doWriteFile(ctx context.Context, p manageParams) (string, error) {
 	skillDir, fullPath, err := h.resolveLinkedFile(p.Name, p.FilePath)
 	if err != nil {
 		return "", err
@@ -366,7 +369,7 @@ func (h *skillsHandler) doWriteFile(p manageParams) (string, error) {
 	return fmt.Sprintf("file written: %s/%s", p.Name, p.FilePath), nil
 }
 
-func (h *skillsHandler) doRemoveFile(p manageParams) (string, error) {
+func (h *skillsHandler) doRemoveFile(ctx context.Context, p manageParams) (string, error) {
 	skillDir, fullPath, err := h.resolveLinkedFile(p.Name, p.FilePath)
 	if err != nil {
 		return "", err
@@ -409,11 +412,11 @@ func (h *skillsHandler) doRemoveFile(p manageParams) (string, error) {
 
 // refreshSkillsPrompt calls the refresher to rebuild the skills section
 // of the system prompt. No-op when refresher is nil.
-func (h *skillsHandler) refreshSkillsPrompt() {
+func (h *skillsHandler) refreshSkillsPrompt(ctx context.Context) {
 	if h.refresher == nil {
 		return
 	}
-	if err := h.refresher.RefreshSkillsPrompt(context.Background()); err != nil {
+	if err := h.refresher.RefreshSkillsPrompt(ctx); err != nil {
 		slog.Warn("failed to refresh skills prompt", "error", err)
 	}
 }
