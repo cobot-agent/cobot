@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -103,75 +102,6 @@ func TestWorkspaceConfigUpdateTool_Sandbox(t *testing.T) {
 	}
 }
 
-func TestSkillCreateTool_Markdown(t *testing.T) {
-	ws := newTestWorkspace(t)
-	tool := &SkillCreateTool{workspace: ws}
-
-	args, _ := json.Marshal(map[string]interface{}{
-		"name":    "my-skill",
-		"format":  "markdown",
-		"content": "# My Skill\n\nThis is a test skill.",
-	})
-	result, err := tool.Execute(context.Background(), args)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result != "skill created: my-skill.md" {
-		t.Fatalf("unexpected result: %s", result)
-	}
-
-	expectedPath := filepath.Join(ws.SkillsDir(), "my-skill.md")
-	data, err := os.ReadFile(expectedPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(data) != "# My Skill\n\nThis is a test skill." {
-		t.Fatalf("unexpected content: %s", string(data))
-	}
-}
-
-func TestSkillCreateTool_YAML(t *testing.T) {
-	ws := newTestWorkspace(t)
-	tool := &SkillCreateTool{workspace: ws}
-
-	args, _ := json.Marshal(map[string]interface{}{
-		"name":    "yaml-skill",
-		"format":  "yaml",
-		"content": "name: yaml-skill\ndescription: test",
-	})
-	result, err := tool.Execute(context.Background(), args)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result != "skill created: yaml-skill.yaml" {
-		t.Fatalf("unexpected result: %s", result)
-	}
-
-	expectedPath := filepath.Join(ws.SkillsDir(), "yaml-skill.yaml")
-	data, err := os.ReadFile(expectedPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(data) != "name: yaml-skill\ndescription: test" {
-		t.Fatalf("unexpected content: %s", string(data))
-	}
-}
-
-func TestSkillCreateTool_InvalidFormat(t *testing.T) {
-	ws := newTestWorkspace(t)
-	tool := &SkillCreateTool{workspace: ws}
-
-	args, _ := json.Marshal(map[string]interface{}{
-		"name":    "bad",
-		"format":  "txt",
-		"content": "content",
-	})
-	_, err := tool.Execute(context.Background(), args)
-	if err == nil {
-		t.Fatal("expected error for invalid format")
-	}
-}
-
 func TestPersonaUpdateTool_SOUL(t *testing.T) {
 	ws := newTestWorkspace(t)
 	tool := &PersonaUpdateTool{workspace: ws}
@@ -240,6 +170,7 @@ func TestRegisterWorkspaceTools(t *testing.T) {
 	ws := newTestWorkspace(t)
 	registry := NewRegistry()
 	RegisterWorkspaceTools(registry, ws, nil)
+	RegisterSkillsTools(registry, ws, nil)
 
 	tool, err := registry.Get("workspace_config_update")
 	if err != nil {
@@ -249,11 +180,11 @@ func TestRegisterWorkspaceTools(t *testing.T) {
 		t.Fatalf("unexpected name: %s", tool.Name())
 	}
 
-	tool, err = registry.Get("skill_create")
+	tool, err = registry.Get("skills_list")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if tool.Name() != "skill_create" {
+	if tool.Name() != "skills_list" {
 		t.Fatalf("unexpected name: %s", tool.Name())
 	}
 

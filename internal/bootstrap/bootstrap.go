@@ -103,6 +103,7 @@ func InitAgent(cfg *cobot.Config, requireProvider bool) (*Result, error) {
 		if requireProvider {
 			hcCancel()
 			channelMgr.StopHealthCheck()
+			a.Close()
 			return nil, err
 		}
 		slog.Warn("provider init failed", "err", err)
@@ -111,6 +112,7 @@ func InitAgent(cfg *cobot.Config, requireProvider bool) (*Result, error) {
 	if err := ConfigureAgentForWorkspace(a, ws, registry); err != nil {
 		hcCancel()
 		channelMgr.StopHealthCheck()
+		a.Close()
 		return nil, err
 	}
 
@@ -133,7 +135,7 @@ func ConfigureAgentForWorkspace(a *agent.Agent, ws *workspace.Workspace, registr
 	configureSystemPrompt(agentCfg, sm, ws)
 	configureSkills(agentCfg, sm, ws)
 	store := configureMemory(sm, ws)
-	sandbox := configureSandboxTools(a, ws, agentCfg)
+	sandbox := configureSandboxTools(a, ws, agentCfg, sm)
 	configureMemoryTools(a, store, sandbox)
 	configureDelegateTool(a, ws, registry, sandbox)
 	configureCronTool(a, ws, registry)
@@ -154,19 +156,84 @@ func configureSkills(agentCfg *config.AgentConfig, sm *agent.SessionManager, ws 
 		enabledSkills = agentCfg.EnabledSkills
 	}
 	skillDirs := []string{workspace.GlobalSkillsDir(), ws.SkillsDir()}
-	loadedSkills, err := skills.LoadSkills(context.Background(), skillDirs, enabledSkills)
+	loadedSkills, err := skills.LoadCatalog(context.Background(), skillDirs, enabledSkills)
 	if err != nil {
-		slog.Warn("failed to load skills", "error", err)
+		slog.Warn("failed to load skills, leaving existing skills section", "error", err)
+		return
 	}
-	if len(loadedSkills) > 0 {
-		skillSection := skills.SkillsToPrompt(loadedSkills)
-		currentPrompt := sm.GetSystemPrompt()
-		if currentPrompt == "" {
-			_ = sm.SetSystemPrompt(skillSection)
-		} else {
-			_ = sm.SetSystemPrompt(currentPrompt + "\n\n" + skillSection)
+	skillSection := skills.SkillsToPrompt(loadedSkills)
+	currentPrompt := sm.GetSystemPrompt()
+	_ = sm.SetSystemPrompt(replaceSkillsSection(currentPrompt, skillSection))
+}
+
+// skillsRefresher implements cobot.SkillsPromptRefresher by reloading the
+// skills catalog and replacing the skills section of the system prompt.
+type skillsRefresher struct {
+	sm     *agent.SessionManager
+	ws     *workspace.Workspace
+	filter []string
+}
+
+func (r *skillsRefresher) RefreshSkillsPrompt(ctx context.Context) error {
+	skillDirs := []string{workspace.GlobalSkillsDir(), r.ws.SkillsDir()}
+	catalog, err := skills.LoadCatalog(ctx, skillDirs, r.filter)
+	if err != nil {
+		return err
+	}
+	skillSection := skills.SkillsToPrompt(catalog)
+	currentPrompt := r.sm.GetSystemPrompt()
+	newPrompt := replaceSkillsSection(currentPrompt, skillSection)
+	return r.sm.SetSystemPrompt(newPrompt)
+}
+
+// replaceSkillsSection replaces the existing skills section in the system
+// prompt, or appends a new one if none exists. It locates the section by
+// looking for the "## Skills (mandatory)" header marker.
+func replaceSkillsSection(current, newSection string) string {
+	marker := skills.SkillsSectionMarker
+	// Search for the marker as a line start: either at position 0 or preceded by \n
+	idx := 0
+	for {
+		i := strings.Index(current[idx:], marker)
+		if i < 0 {
+			break
+		}
+		pos := idx + i
+		if (pos == 0 || current[pos-1] == '\n' || current[pos-1] == '\r') && !insideCodeBlock(current[:pos]) {
+			idx = pos
+			goto found
+		}
+		idx = pos + 1
+	}
+	// Marker not found — append
+	return current + "\n\n" + newSection
+found:
+	end := idx + len(marker)
+	if end < len(current) && current[end] == '\n' {
+		end++
+	}
+	// Find next ## heading or end of string, respecting code blocks.
+	for i := end; i < len(current); i++ {
+		if i+4 < len(current) && current[i] == '\n' && current[i+1] == '#' && current[i+2] == '#' && current[i+3] == ' ' {
+			if !insideCodeBlock(current[:i]) {
+				return current[:idx] + newSection + current[i:]
+			}
 		}
 	}
+	return current[:idx] + newSection
+}
+
+// insideCodeBlock returns true if the text ends inside a fenced code block.
+// Only counts ``` at the start of a line (after optional whitespace).
+func insideCodeBlock(text string) bool {
+	inBlock := false
+	for _, line := range strings.Split(text, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "```") {
+			inBlock = !inBlock
+		}
+	}
+	return inBlock
 }
 
 func configureMemory(sm *agent.SessionManager, ws *workspace.Workspace) *memory.Store {
@@ -185,7 +252,7 @@ func configureMemory(sm *agent.SessionManager, ws *workspace.Workspace) *memory.
 	return store
 }
 
-func configureSandboxTools(a *agent.Agent, ws *workspace.Workspace, agentCfg *config.AgentConfig) *sandbox.SandboxConfig {
+func configureSandboxTools(a *agent.Agent, ws *workspace.Workspace, agentCfg *config.AgentConfig, sm *agent.SessionManager) *sandbox.SandboxConfig {
 	var agentSandbox *sandbox.SandboxConfig
 	if agentCfg != nil {
 		agentSandbox = agentCfg.Sandbox
@@ -214,6 +281,12 @@ func configureSandboxTools(a *agent.Agent, ws *workspace.Workspace, agentCfg *co
 	))
 
 	tools.RegisterWorkspaceTools(a.ToolRegistry(), ws, sandbox)
+	var enabledSkills []string
+	if agentCfg != nil {
+		enabledSkills = agentCfg.EnabledSkills
+	}
+	refresher := &skillsRefresher{sm: sm, ws: ws, filter: enabledSkills}
+	tools.RegisterSkillsTools(a.ToolRegistry(), ws, refresher)
 	return sandbox
 }
 

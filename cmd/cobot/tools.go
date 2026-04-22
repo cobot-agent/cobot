@@ -23,8 +23,9 @@ var toolsListCmd = &cobra.Command{
 			"filesystem_read", "filesystem_write", "shell_exec",
 			"filesystem_grep",
 			"memory_search", "memory_store", "l3_deep_search",
-			"workspace_config_update", "skill_create", "persona_update",
-			"agent_config_update", "skill_update", "delegate",
+			"workspace_config_update", "skills_list", "skill_view",
+			"skill_manage", "persona_update",
+			"agent_config_update", "delegate",
 			"cron",
 		}
 

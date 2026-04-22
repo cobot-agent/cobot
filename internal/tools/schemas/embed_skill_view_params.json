@@ -1,0 +1,14 @@
+{
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Skill name to view"
+    },
+    "file_path": {
+      "type": "string",
+      "description": "Optional linked file path within skill (e.g., 'references/api.md')"
+    }
+  },
+  "required": ["name"]
+}

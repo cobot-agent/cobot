@@ -547,7 +547,7 @@ func TestACPSubAgent_Stream_ReadsFromCorrectEndpoint(t *testing.T) {
 	handler := func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			t.Errorf("expected POST, got %s", r.Method)
-			http.Error(w, "method not allowed", 405)
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 		if r.URL.Path != "/rpc" {
