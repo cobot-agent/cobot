@@ -145,6 +145,35 @@ func ConfigureAgentForWorkspace(a *agent.Agent, ws *workspace.Workspace, registr
 	configureCronTool(a, ws, registry)
 	configureSkillSyncer(a, store, ws, agentCfg)
 
+	// Set sessions dir and start session archival background loop.
+	sessionsDir := ws.SessionsDir()
+	a.SetSessionsDir(sessionsDir)
+	sm.SetSessionsDir(sessionsDir)
+
+	retentionDays := 30
+	if agentCfg != nil && agentCfg.SessionRetentionDays > 0 {
+		retentionDays = agentCfg.SessionRetentionDays
+	}
+
+	done := a.AddBackgroundWork()
+	go func() {
+		defer done()
+		// Run once on start, then every 30 days.
+		ticker := time.NewTicker(30 * 24 * time.Hour)
+		defer ticker.Stop()
+
+		sm.ArchiveInactiveSessions(a.Context(), retentionDays)
+
+		for {
+			select {
+			case <-a.Context().Done():
+				return
+			case <-ticker.C:
+				sm.ArchiveInactiveSessions(a.Context(), retentionDays)
+			}
+		}
+	}()
+
 	return nil
 }
 

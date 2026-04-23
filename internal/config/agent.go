@@ -33,6 +33,10 @@ type AgentConfig struct {
 	// When a new session starts, older sessions beyond this limit are pruned.
 	// Zero defaults to 5000.
 	SessionHistoryLimit int `yaml:"session_history_limit,omitempty"`
+	// SessionRetentionDays is the number of days of inactivity after which
+	// an inactive session is archived (summarized to LTM and deleted).
+	// Zero defaults to 30.
+	SessionRetentionDays int `yaml:"session_retention_days,omitempty"`
 }
 
 func LoadAgentConfig(path string) (*AgentConfig, error) {
@@ -51,6 +55,9 @@ func LoadAgentConfig(path string) (*AgentConfig, error) {
 	}
 	if cfg.SessionHistoryLimit == 0 {
 		cfg.SessionHistoryLimit = 5000
+	}
+	if cfg.SessionRetentionDays == 0 {
+		cfg.SessionRetentionDays = 30
 	}
 
 	return cfg, nil

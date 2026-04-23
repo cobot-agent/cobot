@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"io/fs"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -36,6 +38,10 @@ type SessionManager struct {
 	sysPromptMu  sync.RWMutex
 
 	sessionConfig cobot.SessionConfig
+
+	// sessionsDir is the path to the per-session STM databases directory.
+	// It is set by the bootstrap code that creates the memory store.
+	sessionsDir string
 }
 
 func NewSessionManager() *SessionManager {
@@ -122,6 +128,16 @@ func (sm *SessionManager) MemoryStore() cobot.MemoryStore {
 
 func (sm *SessionManager) SetMemoryRecall(r cobot.MemoryRecall) {
 	sm.memoryRecall = r
+}
+
+// SetSessionsDir sets the sessions directory for the session manager.
+func (sm *SessionManager) SetSessionsDir(dir string) {
+	sm.sessionsDir = dir
+}
+
+// SessionsDir returns the sessions directory path.
+func (sm *SessionManager) SessionsDir() string {
+	return sm.sessionsDir
 }
 
 func (sm *SessionManager) MemoryRecall() cobot.MemoryRecall {
@@ -242,4 +258,98 @@ func (sm *SessionManager) getSTMContext(ctx context.Context) string {
 		return ""
 	}
 	return recalled
+}
+
+// ArchiveInactiveSessions archives sessions that have been inactive for longer
+// than retentionDays. It promotes sessions with content to LTM before deleting
+// their STM files.
+func (sm *SessionManager) ArchiveInactiveSessions(ctx context.Context, retentionDays int) {
+	if sm.sessionsDir == "" || retentionDays <= 0 {
+		return
+	}
+
+	entries, err := os.ReadDir(sm.sessionsDir)
+	if err != nil {
+		slog.Warn("archive inactive sessions: failed to read sessions dir", "err", err)
+		return
+	}
+
+	cutoff := time.Now().Add(-24 * time.Hour * time.Duration(retentionDays)).UnixNano()
+	stm, isSTM := sm.memoryStore.(cobot.ShortTermMemory)
+	if !isSTM {
+		return
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".db") {
+			continue
+		}
+		sessionID := strings.TrimSuffix(entry.Name(), ".db")
+		// Skip the current active session.
+		if sessionID == sm.sessionID {
+			continue
+		}
+
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		if info.ModTime().UnixNano() > cutoff {
+			continue
+		}
+
+		// Session is inactive. Check if it has content in history/context.
+		hasContent, checkErr := sm.sessionHasContent(sessionID)
+		if checkErr != nil {
+			slog.Warn("archive: failed to check session content", "session", sessionID, "err", checkErr)
+			continue
+		}
+
+		if hasContent {
+			// Promote to LTM before deleting.
+			if promoteErr := stm.SummarizeAndPromoteSTM(ctx, sessionID); promoteErr != nil {
+				slog.Warn("archive: failed to promote session to LTM", "session", sessionID, "err", promoteErr)
+			}
+		}
+
+		// Delete session files: .db, .wal, .shm.
+		sm.deleteSessionFiles(sessionID)
+	}
+}
+
+// sessionHasContent checks whether the session DB has any drawers in the
+// history or context rooms.
+func (sm *SessionManager) sessionHasContent(sessionID string) (bool, error) {
+	dbPath := filepath.Join(sm.sessionsDir, sessionID+".db")
+	db, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		return false, err
+	}
+	defer db.Close()
+
+	// Count drawers in history and context rooms.
+	// The wing is named "session" and rooms are named "history" and "context".
+	query := `
+		SELECT COUNT(*)
+		FROM drawers d
+		JOIN rooms r ON d.room_id = r.id
+		JOIN wings w ON r.wing_id = w.id
+		WHERE w.name = 'session' AND r.name IN ('history', 'context')
+	`
+	var count int
+	if err := db.QueryRowContext(context.Background(), query).Scan(&count); err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+// deleteSessionFiles removes all files associated with a session (db, wal, shm).
+func (sm *SessionManager) deleteSessionFiles(sessionID string) {
+	exts := []string{".db", ".wal", ".shm"}
+	for _, ext := range exts {
+		path := filepath.Join(sm.sessionsDir, sessionID+ext)
+		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			slog.Warn("archive: failed to remove session file", "path", path, "err", err)
+		}
+	}
 }
