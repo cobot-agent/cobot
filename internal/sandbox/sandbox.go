@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 type rewrittenError struct {
@@ -66,6 +68,110 @@ type SandboxConfig struct {
 	ReadonlyPaths   []string `yaml:"readonly_paths,omitempty"`
 	AllowNetwork    bool     `yaml:"allow_network"`
 	BlockedCommands []string `yaml:"blocked_commands,omitempty"`
+
+	allowNetworkSet bool `yaml:"-"`
+}
+
+func cloneStrings(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	return append([]string(nil), values...)
+}
+
+func (s SandboxConfig) Clone() SandboxConfig {
+	cloned := s
+	cloned.AllowPaths = cloneStrings(s.AllowPaths)
+	cloned.ReadonlyPaths = cloneStrings(s.ReadonlyPaths)
+	cloned.BlockedCommands = cloneStrings(s.BlockedCommands)
+	return cloned
+}
+
+func (s *SandboxConfig) SetAllowNetwork(allow bool) {
+	if s == nil {
+		return
+	}
+	s.AllowNetwork = allow
+	s.allowNetworkSet = true
+}
+
+func (s *SandboxConfig) HasAllowNetworkOverride() bool {
+	return s != nil && s.allowNetworkSet
+}
+
+func MergeConfigs(base, override *SandboxConfig) SandboxConfig {
+	var merged SandboxConfig
+	if base != nil {
+		merged = base.Clone()
+	}
+	if override == nil {
+		return merged
+	}
+	if override.Root != "" {
+		merged.Root = override.Root
+	}
+	if override.VirtualRoot != "" {
+		merged.VirtualRoot = override.VirtualRoot
+	}
+	if len(override.AllowPaths) > 0 {
+		merged.AllowPaths = cloneStrings(override.AllowPaths)
+	}
+	if len(override.ReadonlyPaths) > 0 {
+		merged.ReadonlyPaths = cloneStrings(override.ReadonlyPaths)
+	}
+	if len(override.BlockedCommands) > 0 {
+		merged.BlockedCommands = cloneStrings(override.BlockedCommands)
+	}
+	if override.HasAllowNetworkOverride() {
+		merged.SetAllowNetwork(override.AllowNetwork)
+	}
+	return merged
+}
+
+func (s *SandboxConfig) UnmarshalYAML(value *yaml.Node) error {
+	type raw SandboxConfig
+	var decoded raw
+	if err := value.Decode(&decoded); err != nil {
+		return err
+	}
+	*s = SandboxConfig(decoded)
+	s.allowNetworkSet = yamlMappingHasKey(value, "allow_network")
+	return nil
+}
+
+func (s SandboxConfig) MarshalYAML() (any, error) {
+	type raw struct {
+		VirtualRoot     string   `yaml:"virtual_root,omitempty"`
+		Root            string   `yaml:"root"`
+		AllowPaths      []string `yaml:"allow_paths,omitempty"`
+		ReadonlyPaths   []string `yaml:"readonly_paths,omitempty"`
+		AllowNetwork    *bool    `yaml:"allow_network,omitempty"`
+		BlockedCommands []string `yaml:"blocked_commands,omitempty"`
+	}
+	encoded := raw{
+		VirtualRoot:     s.VirtualRoot,
+		Root:            s.Root,
+		AllowPaths:      cloneStrings(s.AllowPaths),
+		ReadonlyPaths:   cloneStrings(s.ReadonlyPaths),
+		BlockedCommands: cloneStrings(s.BlockedCommands),
+	}
+	if s.AllowNetwork || s.allowNetworkSet {
+		allow := s.AllowNetwork
+		encoded.AllowNetwork = &allow
+	}
+	return encoded, nil
+}
+
+func yamlMappingHasKey(node *yaml.Node, key string) bool {
+	if node == nil || node.Kind != yaml.MappingNode {
+		return false
+	}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if node.Content[i].Value == key {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *SandboxConfig) IsAllowed(path string, write bool) bool {

@@ -55,6 +55,8 @@ func (t *WorkspaceConfigUpdateTool) Execute(ctx context.Context, args json.RawMe
 		EnabledSkills   *[]string `json:"enabled_skills"`
 		SandboxRoot     *string   `json:"sandbox_root"`
 		AllowPaths      *[]string `json:"allow_paths"`
+		ReadonlyPaths   *[]string `json:"readonly_paths"`
+		AllowNetwork    *bool     `json:"allow_network"`
 		BlockedCommands *[]string `json:"blocked_commands"`
 	}
 	if err := decodeArgs(args, &params); err != nil {
@@ -79,6 +81,15 @@ func (t *WorkspaceConfigUpdateTool) Execute(ctx context.Context, args json.RawMe
 			return "", fmt.Errorf("cannot modify allow_paths while sandbox is active")
 		}
 		cfg.Sandbox.AllowPaths = *params.AllowPaths
+	}
+	if params.ReadonlyPaths != nil {
+		if t.sandbox != nil {
+			return "", fmt.Errorf("cannot modify readonly_paths while sandbox is active")
+		}
+		cfg.Sandbox.ReadonlyPaths = *params.ReadonlyPaths
+	}
+	if params.AllowNetwork != nil {
+		cfg.Sandbox.SetAllowNetwork(*params.AllowNetwork)
 	}
 	if params.BlockedCommands != nil {
 		cfg.Sandbox.BlockedCommands = *params.BlockedCommands

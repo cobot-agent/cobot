@@ -307,19 +307,14 @@ func configureSandboxTools(a *agent.Agent, ws *workspace.Workspace, agentCfg *co
 	a.RegisterTool(tools.NewSearchFilesTool(sandbox))
 	a.RegisterTool(tools.NewGrepFilesTool(sandbox))
 
-	shellSandbox := *sandbox
-	if agentCfg != nil && agentCfg.Sandbox != nil {
-		shellSandbox.AllowNetwork = agentCfg.Sandbox.AllowNetwork
-	}
-
-	sandboxRoot := resolveSandboxRoot(ws)
-	if agentSandbox != nil && agentSandbox.Root != "" {
-		sandboxRoot = agentSandbox.Root
+	sandboxRoot := sandbox.Root
+	if sandboxRoot == "" {
+		sandboxRoot = ws.SpaceDir()
 	}
 
 	a.RegisterTool(tools.NewShellExecTool(
 		tools.WithShellWorkdir(sandboxRoot),
-		tools.WithShellSandboxConfig(&shellSandbox),
+		tools.WithShellSandboxConfig(sandbox),
 	))
 
 	tools.RegisterWorkspaceTools(a.ToolRegistry(), ws, sandbox)
@@ -396,18 +391,6 @@ func configureSkillSyncer(a *agent.Agent, store *memory.Store, ws *workspace.Wor
 	syncer := agent.NewBackgroundSkillSyncer(analyzer, interval)
 	a.SetSkillSyncer(syncer)
 	syncer.Start()
-}
-
-// --- private helpers (moved from cmd/cobot/helpers.go) ---
-
-func resolveSandboxRoot(ws *workspace.Workspace) string {
-	if ws.Config.Sandbox.Root != "" {
-		return ws.Config.Sandbox.Root
-	}
-	if ws.Definition.Root != "" {
-		return ws.Definition.Root
-	}
-	return ws.SpaceDir()
 }
 
 func resolveSystemPrompt(value string, ws *workspace.Workspace) string {

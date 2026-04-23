@@ -348,6 +348,51 @@ func TestEffectiveSandbox_AgentOverrideWins(t *testing.T) {
 	}
 }
 
+func TestEffectiveSandbox_MergesPolicyFields(t *testing.T) {
+	ws := &Workspace{
+		Definition: &WorkspaceDefinition{Name: "myproject", Type: WorkspaceTypeProject, Root: "/project/root"},
+		Config: &WorkspaceConfig{
+			Name: "myproject",
+			Type: WorkspaceTypeProject,
+			Sandbox: sandbox.SandboxConfig{
+				Root:            "/workspace/root",
+				AllowPaths:      []string{"/workspace/allow"},
+				ReadonlyPaths:   []string{"/workspace/readonly"},
+				BlockedCommands: []string{"rm -rf"},
+			},
+		},
+	}
+	ws.Config.Sandbox.SetAllowNetwork(true)
+
+	agentSandbox := &sandbox.SandboxConfig{
+		ReadonlyPaths: []string{"/agent/readonly"},
+	}
+	agentSandbox.SetAllowNetwork(false)
+
+	effective := ws.EffectiveSandbox(agentSandbox)
+	if effective.Root != "/workspace/root" {
+		t.Fatalf("effective.Root = %q, want /workspace/root", effective.Root)
+	}
+	if len(effective.AllowPaths) != 1 || effective.AllowPaths[0] != "/workspace/allow" {
+		t.Fatalf("effective.AllowPaths = %v, want [/workspace/allow]", effective.AllowPaths)
+	}
+	if len(effective.ReadonlyPaths) != 1 || effective.ReadonlyPaths[0] != "/agent/readonly" {
+		t.Fatalf("effective.ReadonlyPaths = %v, want [/agent/readonly]", effective.ReadonlyPaths)
+	}
+	if len(effective.BlockedCommands) != 1 || effective.BlockedCommands[0] != "rm -rf" {
+		t.Fatalf("effective.BlockedCommands = %v, want [rm -rf]", effective.BlockedCommands)
+	}
+	if effective.AllowNetwork {
+		t.Fatal("effective.AllowNetwork = true, want false")
+	}
+	if !effective.HasAllowNetworkOverride() {
+		t.Fatal("expected effective sandbox to track allow_network override")
+	}
+	if effective.VirtualRoot == "" {
+		t.Fatal("effective.VirtualRoot should not be empty")
+	}
+}
+
 func TestEffectiveSandbox_NoRootAtAll(t *testing.T) {
 	// Default workspace with no root anywhere — sandbox should be inactive.
 	ws := &Workspace{

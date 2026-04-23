@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -81,6 +82,8 @@ func TestWorkspaceConfigUpdateTool_Sandbox(t *testing.T) {
 	args, _ := json.Marshal(map[string]interface{}{
 		"sandbox_root":     "/tmp/sandbox",
 		"allow_paths":      []string{"/usr/local"},
+		"readonly_paths":   []string{"/etc/ssl"},
+		"allow_network":    false,
 		"blocked_commands": []string{"rm -rf"},
 	})
 	result, err := tool.Execute(context.Background(), args)
@@ -97,8 +100,29 @@ func TestWorkspaceConfigUpdateTool_Sandbox(t *testing.T) {
 	if len(ws.Config.Sandbox.AllowPaths) != 1 || ws.Config.Sandbox.AllowPaths[0] != "/usr/local" {
 		t.Fatalf("unexpected allow_paths: %v", ws.Config.Sandbox.AllowPaths)
 	}
+	if len(ws.Config.Sandbox.ReadonlyPaths) != 1 || ws.Config.Sandbox.ReadonlyPaths[0] != "/etc/ssl" {
+		t.Fatalf("unexpected readonly_paths: %v", ws.Config.Sandbox.ReadonlyPaths)
+	}
+	if ws.Config.Sandbox.AllowNetwork {
+		t.Fatal("expected allow_network=false")
+	}
+	if !ws.Config.Sandbox.HasAllowNetworkOverride() {
+		t.Fatal("expected allow_network override to be tracked")
+	}
 	if len(ws.Config.Sandbox.BlockedCommands) != 1 || ws.Config.Sandbox.BlockedCommands[0] != "rm -rf" {
 		t.Fatalf("unexpected blocked_commands: %v", ws.Config.Sandbox.BlockedCommands)
+	}
+
+	data, err := os.ReadFile(ws.ConfigPath())
+	if err != nil {
+		t.Fatalf("read saved config: %v", err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "allow_network: false") {
+		t.Fatalf("saved config missing allow_network=false: %s", text)
+	}
+	if !strings.Contains(text, "readonly_paths:") {
+		t.Fatalf("saved config missing readonly_paths: %s", text)
 	}
 }
 
@@ -240,5 +264,24 @@ func TestWorkspaceConfigUpdateTool_SandboxRejectOutsidePath(t *testing.T) {
 	_, err := tool.Execute(context.Background(), args)
 	if err == nil {
 		t.Error("expected error for sandbox_root outside virtual root")
+	}
+}
+
+func TestWorkspaceConfigUpdateTool_ReadonlyPathsBlockedWhenSandboxActive(t *testing.T) {
+	ws := newTestWorkspace(t)
+	tool := &WorkspaceConfigUpdateTool{
+		workspace: ws,
+		sandbox:   &sandbox.SandboxConfig{VirtualRoot: sandbox.VirtualHome("test"), Root: "/tmp/real"},
+	}
+
+	args, _ := json.Marshal(map[string]interface{}{
+		"readonly_paths": []string{"/etc"},
+	})
+	_, err := tool.Execute(context.Background(), args)
+	if err == nil {
+		t.Fatal("expected readonly_paths update to fail while sandbox is active")
+	}
+	if err != nil && err.Error() != "cannot modify readonly_paths while sandbox is active" {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
