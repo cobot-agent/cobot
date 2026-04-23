@@ -200,6 +200,71 @@ func TestValidateWritePaths_NilConfig(t *testing.T) {
 	}
 }
 
+func TestValidateWritePaths_InactiveSandboxPolicy_AllowsWrites(t *testing.T) {
+	cfg := &sandboxpkg.SandboxConfig{
+		VirtualRoot: sandboxpkg.VirtualHome("ws"),
+	}
+	if err := validateWritePaths(cfg, "echo hello > /tmp/out.txt"); err != nil {
+		t.Errorf("inactive sandbox policy should not block writes, got: %v", err)
+	}
+}
+
+func TestValidateWritePaths_RelativeRedirectUsesCommandDir(t *testing.T) {
+	root := t.TempDir()
+	commandDir := filepath.Join(root, "subdir")
+	if err := os.MkdirAll(filepath.Join(commandDir, "nested"), 0755); err != nil {
+		t.Fatalf("mkdir command dir: %v", err)
+	}
+	cfg := &sandboxpkg.SandboxConfig{
+		Root:        root,
+		VirtualRoot: sandboxpkg.VirtualHome("ws"),
+	}
+	if err := validateWritePaths(cfg, "echo hello > nested/out.txt", commandDir); err != nil {
+		t.Errorf("relative redirect should resolve from command dir, got: %v", err)
+	}
+}
+
+func TestValidateWritePaths_RejectsCommonRedirectWriteSyntaxes(t *testing.T) {
+	root := t.TempDir()
+	readonlyDir := filepath.Join(root, "readonly")
+	if err := os.MkdirAll(readonlyDir, 0755); err != nil {
+		t.Fatalf("mkdir readonly dir: %v", err)
+	}
+	readonlyDir, _ = filepath.EvalSymlinks(readonlyDir)
+	cfg := &sandboxpkg.SandboxConfig{
+		Root:          root,
+		VirtualRoot:   sandboxpkg.VirtualHome("ws"),
+		ReadonlyPaths: []string{readonlyDir},
+	}
+
+	tests := []struct {
+		name string
+		cmd  string
+	}{
+		{name: "space_after_operator", cmd: "echo hello > readonly/out.txt"},
+		{name: "no_space_after_operator", cmd: "echo hello >readonly/out.txt"},
+		{name: "append_with_space", cmd: "echo hello >> readonly/out.txt"},
+		{name: "append_without_space", cmd: "echo hello >>readonly/out.txt"},
+		{name: "stderr_without_space", cmd: "echo hello 2>readonly/err.txt"},
+		{name: "fd3_without_space", cmd: "echo hello 3>readonly/fd3.txt"},
+		{name: "fd9_append_without_space", cmd: "echo hello 9>>readonly/fd9.txt"},
+		{name: "clobber_without_space", cmd: "echo hello >|readonly/forced.txt"},
+		{name: "clobber_with_space", cmd: "echo hello >| readonly/forced.txt"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateWritePaths(cfg, tt.cmd, root)
+			if err == nil {
+				t.Fatalf("expected %q to be rejected", tt.cmd)
+			}
+			if !strings.Contains(err.Error(), "readonly") {
+				t.Fatalf("expected readonly error for %q, got: %v", tt.cmd, err)
+			}
+		})
+	}
+}
+
 // --- ShellExecTool integration tests ---
 
 func TestShellExecTool_NoSandbox(t *testing.T) {
@@ -480,6 +545,78 @@ func TestShellExecTool_TeeAllowed(t *testing.T) {
 	}
 	if strings.TrimSpace(string(data)) != "tee_test" {
 		t.Errorf("tee file content mismatch, got: %q", string(data))
+	}
+}
+
+func TestShellExecTool_RelativeRedirectUsesEffectiveDir(t *testing.T) {
+	root := t.TempDir()
+	commandDir := filepath.Join(root, "subdir")
+	if err := os.MkdirAll(filepath.Join(commandDir, "nested"), 0755); err != nil {
+		t.Fatalf("mkdir command dir: %v", err)
+	}
+	vr := sandboxpkg.VirtualHome("myws")
+	cfg := &sandboxpkg.SandboxConfig{
+		VirtualRoot:  vr,
+		Root:         root,
+		AllowNetwork: false,
+	}
+
+	tool := NewShellExecTool(
+		WithShellWorkdir(root),
+		WithShellSandboxConfig(cfg),
+	)
+	args, _ := json.Marshal(map[string]any{"command": "echo redirect_test > nested/out.txt", "dir": "subdir"})
+	result, err := tool.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatalf("relative redirect should be allowed, got: %v", err)
+	}
+	if strings.Contains(result, root) {
+		t.Fatalf("result should not expose real path %q, got: %q", root, result)
+	}
+	data, err := os.ReadFile(filepath.Join(commandDir, "nested", "out.txt"))
+	if err != nil {
+		t.Fatalf("relative redirect output file should exist: %v", err)
+	}
+	if strings.TrimSpace(string(data)) != "redirect_test" {
+		t.Fatalf("relative redirect file content mismatch, got: %q", string(data))
+	}
+}
+
+func TestShellExecTool_TeeAppendUsesEffectiveDir(t *testing.T) {
+	root := t.TempDir()
+	commandDir := filepath.Join(root, "subdir")
+	if err := os.MkdirAll(commandDir, 0755); err != nil {
+		t.Fatalf("mkdir command dir: %v", err)
+	}
+	teePath := filepath.Join(commandDir, "tee_out.txt")
+	if err := os.WriteFile(teePath, []byte("first\n"), 0644); err != nil {
+		t.Fatalf("seed tee file: %v", err)
+	}
+	vr := sandboxpkg.VirtualHome("myws")
+	cfg := &sandboxpkg.SandboxConfig{
+		VirtualRoot:  vr,
+		Root:         root,
+		AllowNetwork: false,
+	}
+
+	tool := NewShellExecTool(
+		WithShellWorkdir(root),
+		WithShellSandboxConfig(cfg),
+	)
+	args, _ := json.Marshal(map[string]any{"command": "printf 'second\\n' | tee -a tee_out.txt", "dir": "subdir"})
+	result, err := tool.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatalf("tee -a relative write should be allowed, got: %v", err)
+	}
+	if !strings.Contains(result, "second") {
+		t.Fatalf("tee output should contain appended text, got: %q", result)
+	}
+	data, err := os.ReadFile(teePath)
+	if err != nil {
+		t.Fatalf("tee output file should exist: %v", err)
+	}
+	if string(data) != "first\nsecond\n" {
+		t.Fatalf("tee append file content mismatch, got: %q", string(data))
 	}
 }
 

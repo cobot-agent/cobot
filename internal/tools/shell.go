@@ -5,8 +5,8 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -119,10 +119,14 @@ func (t *ShellExecTool) Execute(ctx context.Context, args json.RawMessage) (stri
 			return "", err
 		}
 	}
+	cmdDir, err := resolveShellExecDir(t.config, t.workdir, a.Dir)
+	if err != nil {
+		return "", err
+	}
 
 	// Validate write targets are not in readonly paths.
 	if t.config != nil {
-		if err := validateWritePaths(t.config, cmdStr); err != nil {
+		if err := validateWritePaths(t.config, cmdStr, cmdDir); err != nil {
 			return "", err
 		}
 	}
@@ -138,40 +142,6 @@ func (t *ShellExecTool) Execute(ctx context.Context, args json.RawMessage) (stri
 	shell, shellFlag := "sh", "-c"
 	if runtime.GOOS == "windows" {
 		shell, shellFlag = "cmd", "/C"
-	}
-	cmdDir := ""
-	if a.Dir != "" {
-		if t.config != nil && t.config.VirtualRoot != "" {
-			// Sandbox mode: sandboxResolvePath already resolved and validated
-			// a.Dir to a real absolute path via AutoResolvePath + ValidatePath.
-			cmdDir = a.Dir
-		} else if t.workdir != "" {
-			// Non-sandbox mode: validate that dir is within workdir boundaries.
-			originalDir := a.Dir
-			absWorkdir, err := filepath.Abs(t.workdir)
-			if err != nil {
-				return "", fmt.Errorf("resolve workdir: %w", err)
-			}
-			absDir := absWorkdir
-			if filepath.IsAbs(a.Dir) {
-				absDir = a.Dir
-			} else {
-				absDir = filepath.Join(absWorkdir, a.Dir)
-				if absDir, err = filepath.Abs(absDir); err != nil {
-					return "", fmt.Errorf("resolve dir: %w", err)
-				}
-			}
-			absDir = sandbox.EvalSymlinks(absDir)
-			absWorkdir = sandbox.EvalSymlinks(absWorkdir)
-			if !sandbox.IsSubpath(absDir, absWorkdir) {
-				return "", fmt.Errorf("dir %q is outside workspace boundaries", originalDir)
-			}
-			cmdDir = absDir
-		} else {
-			cmdDir = a.Dir
-		}
-	} else if t.workdir != "" {
-		cmdDir = t.workdir
 	}
 	var launchConfig *sandbox.SandboxConfig
 	if t.config != nil {
@@ -228,59 +198,285 @@ func isNetworkCommandUsed(cmdStr, nc string) bool {
 	return false
 }
 
-// redirectPathRE matches output redirection operators and captures the file path.
-// Handles: > file, >> file, 2> file, 2>> file, n> file, n>> file, >| file.
-var redirectPathRE = regexp.MustCompile(`\s+(\d+)?(>)(>?)\s+(\S+)`)
+func resolveShellExecDir(cfg *sandbox.SandboxConfig, workdir, dir string) (string, error) {
+	if dir != "" {
+		if cfg != nil && cfg.VirtualRoot != "" {
+			// Sandbox mode: sandboxResolvePath already resolved and validated
+			// dir to a real absolute path via AutoResolvePath + ValidatePath.
+			return dir, nil
+		}
+		if workdir != "" {
+			// Non-sandbox mode: validate that dir is within workdir boundaries.
+			originalDir := dir
+			absWorkdir, err := filepath.Abs(workdir)
+			if err != nil {
+				return "", fmt.Errorf("resolve workdir: %w", err)
+			}
+			absDir := absWorkdir
+			if filepath.IsAbs(dir) {
+				absDir = dir
+			} else {
+				absDir = filepath.Join(absWorkdir, dir)
+				if absDir, err = filepath.Abs(absDir); err != nil {
+					return "", fmt.Errorf("resolve dir: %w", err)
+				}
+			}
+			absDir = sandbox.EvalSymlinks(absDir)
+			absWorkdir = sandbox.EvalSymlinks(absWorkdir)
+			if !sandbox.IsSubpath(absDir, absWorkdir) {
+				return "", fmt.Errorf("dir %q is outside workspace boundaries", originalDir)
+			}
+			return absDir, nil
+		}
+		return dir, nil
+	}
+	if workdir != "" {
+		return workdir, nil
+	}
+	return "", nil
+}
+
+func hasActiveWritePolicy(cfg *sandbox.SandboxConfig) bool {
+	return cfg != nil && (cfg.Root != "" || len(cfg.AllowPaths) > 0 || len(cfg.ReadonlyPaths) > 0)
+}
+
+type shellWriteTarget struct {
+	path   string
+	append bool
+}
+
+func isShellSpace(ch byte) bool {
+	switch ch {
+	case ' ', '\t', '\n', '\r':
+		return true
+	default:
+		return false
+	}
+}
+
+func nextShellWord(segment string, start int) (string, int) {
+	var builder strings.Builder
+	quote := byte(0)
+	escaped := false
+
+	for i := start; i < len(segment); i++ {
+		ch := segment[i]
+		if quote == 0 && !escaped && isShellSpace(ch) {
+			return builder.String(), i
+		}
+		if escaped {
+			builder.WriteByte(ch)
+			escaped = false
+			continue
+		}
+		switch ch {
+		case '\\':
+			escaped = true
+		case '\'', '"':
+			if quote == 0 {
+				quote = ch
+			} else if quote == ch {
+				quote = 0
+			} else {
+				builder.WriteByte(ch)
+			}
+		default:
+			builder.WriteByte(ch)
+		}
+	}
+	if escaped {
+		builder.WriteByte('\\')
+	}
+	return builder.String(), len(segment)
+}
+
+func splitShellWords(segment string) []string {
+	words := make([]string, 0)
+	for i := 0; i < len(segment); {
+		for i < len(segment) && isShellSpace(segment[i]) {
+			i++
+		}
+		if i >= len(segment) {
+			break
+		}
+		word, next := nextShellWord(segment, i)
+		if word == "" && next <= i {
+			break
+		}
+		if word != "" {
+			words = append(words, word)
+		}
+		i = next
+	}
+	return words
+}
+
+func extractTeeWriteTargets(segment string) []shellWriteTarget {
+	words := splitShellWords(segment)
+	if len(words) == 0 || filepath.Base(words[0]) != "tee" {
+		return nil
+	}
+
+	appendMode := false
+	parsingOptions := true
+	targets := make([]shellWriteTarget, 0)
+	for _, word := range words[1:] {
+		if parsingOptions {
+			switch {
+			case word == "--":
+				parsingOptions = false
+				continue
+			case strings.HasPrefix(word, "--"):
+				if word == "--append" {
+					appendMode = true
+				}
+				continue
+			case strings.HasPrefix(word, "-") && word != "-":
+				if strings.Contains(word[1:], "a") {
+					appendMode = true
+				}
+				continue
+			default:
+				parsingOptions = false
+			}
+		}
+		targets = append(targets, shellWriteTarget{path: word, append: appendMode})
+	}
+	return targets
+}
+
+func extractRedirectWriteTargets(segment string) []shellWriteTarget {
+	targets := make([]shellWriteTarget, 0)
+	quote := byte(0)
+	escaped := false
+
+	for i := 0; i < len(segment); i++ {
+		ch := segment[i]
+		if quote != 0 {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if ch == '\\' && quote == '"' {
+				escaped = true
+				continue
+			}
+			if ch == quote {
+				quote = 0
+			}
+			continue
+		}
+		if escaped {
+			escaped = false
+			continue
+		}
+		switch ch {
+		case '\\':
+			escaped = true
+			continue
+		case '\'', '"':
+			quote = ch
+			continue
+		case '>':
+		default:
+			continue
+		}
+
+		appendMode := false
+		if i+1 < len(segment) {
+			switch segment[i+1] {
+			case '>':
+				appendMode = true
+				i++
+			case '|':
+				i++
+			}
+		}
+
+		start := i + 1
+		for start < len(segment) && isShellSpace(segment[start]) {
+			start++
+		}
+		if start >= len(segment) || segment[start] == '&' || segment[start] == '>' || segment[start] == '<' {
+			continue
+		}
+
+		path, next := nextShellWord(segment, start)
+		if path == "" {
+			continue
+		}
+		targets = append(targets, shellWriteTarget{path: path, append: appendMode})
+		i = next - 1
+	}
+
+	return targets
+}
+
+func resolveWriteTargetPath(path, commandDir string) (string, error) {
+	resolvedPath := path
+	if !filepath.IsAbs(resolvedPath) {
+		baseDir := commandDir
+		if baseDir == "" {
+			var err error
+			baseDir, err = os.Getwd()
+			if err != nil {
+				return "", err
+			}
+		}
+		resolvedPath = filepath.Join(baseDir, resolvedPath)
+	}
+	return filepath.Abs(resolvedPath)
+}
+
+func shellWriteValidationSegments(cmd string) []string {
+	const clobberPlaceholder = "__COBOT_SHELL_CLOBBER__"
+	replacer := strings.NewReplacer(
+		"\r\n", "\n",
+		">|", clobberPlaceholder,
+		"&&", "\n",
+		"||", "\n",
+		"&", "\n",
+		";", "\n",
+		"|", "\n",
+		"$(", "\n",
+		"`", "\n",
+	)
+	segments := strings.Split(replacer.Replace(cmd), "\n")
+	for i := range segments {
+		segments[i] = strings.ReplaceAll(segments[i], clobberPlaceholder, ">|")
+	}
+	return segments
+}
 
 // validateWritePaths checks that any file paths the command writes to are not readonly.
-func validateWritePaths(cfg *sandbox.SandboxConfig, cmdStr string) error {
-	for _, segment := range sandbox.ShellCommandSegments(cmdStr) {
+func validateWritePaths(cfg *sandbox.SandboxConfig, cmdStr string, commandDir ...string) error {
+	if !hasActiveWritePolicy(cfg) {
+		return nil
+	}
+
+	resolvedCommandDir := ""
+	if len(commandDir) > 0 {
+		resolvedCommandDir = commandDir[0]
+	}
+
+	for _, segment := range shellWriteValidationSegments(cmdStr) {
 		trimmed := strings.TrimSpace(segment)
 		if trimmed == "" {
 			continue
 		}
 
-		// Check for | tee and | tee -a variants.
-		if strings.HasPrefix(trimmed, "tee ") || strings.HasPrefix(trimmed, "tee -a") {
-			teePart := strings.TrimPrefix(trimmed, "tee")
-			if strings.HasPrefix(teePart, "-a") {
-				teePart = strings.TrimPrefix(teePart, "-a")
-			}
-			teePart = strings.TrimLeft(teePart, " \t")
-			if teePart != "" {
-				filePath := strings.Fields(teePart)[0]
-				absPath, err := filepath.Abs(filePath)
-				if err == nil && !cfg.IsAllowed(absPath, true) {
-					return fmt.Errorf("write target %q is readonly or outside sandbox", filePath)
-				}
-			}
-		}
-
-		// Check for >, >>, 2>, etc. redirections in the segment.
-		matches := redirectPathRE.FindAllStringSubmatch(trimmed, -1)
-		for _, match := range matches {
-			if len(match) < 5 {
+		writeTargets := append(extractTeeWriteTargets(trimmed), extractRedirectWriteTargets(trimmed)...)
+		for _, target := range writeTargets {
+			absPath, err := resolveWriteTargetPath(target.path, resolvedCommandDir)
+			if err != nil {
 				continue
 			}
-			fd := match[1]
-			isAppend := match[3] != ""
-			path := match[4]
-			if path == "" {
-				continue
-			}
-			// Only validate write redirections (> or >>), not input (<).
-			if fd == "" || fd == "1" || fd == "2" {
-				absPath, err := filepath.Abs(path)
-				if err != nil {
-					continue
+			if !cfg.IsAllowed(absPath, true) {
+				op := "write"
+				if target.append {
+					op = "append"
 				}
-				if !cfg.IsAllowed(absPath, true) {
-					op := "write"
-					if isAppend {
-						op = "append"
-					}
-					return fmt.Errorf("%s target %q is readonly or outside sandbox", op, path)
-				}
+				return fmt.Errorf("%s target %q is readonly or outside sandbox", op, target.path)
 			}
 		}
 	}
