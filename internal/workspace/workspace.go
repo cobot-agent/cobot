@@ -132,8 +132,14 @@ func (w *Workspace) EffectiveSandbox(agentSandbox *sandbox.SandboxConfig) *sandb
 		if agentSandbox.Root != "" {
 			cfg.Root = agentSandbox.Root
 		}
+		if agentSandbox.VirtualRoot != "" {
+			cfg.VirtualRoot = agentSandbox.VirtualRoot
+		}
 		if len(agentSandbox.AllowPaths) > 0 {
 			cfg.AllowPaths = agentSandbox.AllowPaths
+		}
+		if len(agentSandbox.ReadonlyPaths) > 0 {
+			cfg.ReadonlyPaths = agentSandbox.ReadonlyPaths
 		}
 		if len(agentSandbox.BlockedCommands) > 0 {
 			cfg.BlockedCommands = agentSandbox.BlockedCommands

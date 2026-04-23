@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -114,6 +115,13 @@ func (t *ShellExecTool) Execute(ctx context.Context, args json.RawMessage) (stri
 		}
 	}
 
+	// Validate write targets are not in readonly paths.
+	if t.config != nil {
+		if err := validateWritePaths(t.config, cmdStr); err != nil {
+			return "", err
+		}
+	}
+
 	if t.timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, t.timeout)
@@ -126,9 +134,8 @@ func (t *ShellExecTool) Execute(ctx context.Context, args json.RawMessage) (stri
 	cmd := exec.CommandContext(ctx, shell, shellFlag, a.Command)
 	if a.Dir != "" {
 		if t.config != nil && t.config.VirtualRoot != "" {
-			// Sandbox mode: AutoResolvePath already resolved a.Dir to a real
-			// absolute path within the sandbox root. No additional workdir-based
-			// validation is needed — ValidatePath was handled by AutoResolvePath.
+			// Sandbox mode: sandboxResolvePath already resolved and validated
+			// a.Dir to a real absolute path via AutoResolvePath + ValidatePath.
 			cmd.Dir = a.Dir
 		} else if t.workdir != "" {
 			// Non-sandbox mode: validate that dir is within workdir boundaries.
@@ -200,6 +207,72 @@ func isNetworkCommandUsed(cmdStr, nc string) bool {
 		}
 	}
 	return false
+}
+
+// redirectPathRE matches output redirection operators and captures the file path.
+// Handles: > file, >> file, 2> file, 2>> file, n> file, n>> file, >| file
+var redirectPathRE = regexp.MustCompile(`(?m)(?:^|\s)(?:(\d+)?(?:>)(>?))(\S+)`)
+
+// validateWritePaths checks that any file paths the command writes to are not readonly.
+func validateWritePaths(cfg *sandbox.SandboxConfig, cmdStr string) error {
+	for _, segment := range sandbox.ShellCommandSegments(cmdStr) {
+		trimmed := strings.TrimSpace(segment)
+		if trimmed == "" {
+			continue
+		}
+
+		// Check for | tee and | tee -a variants.
+		if strings.Contains(trimmed, "| tee") || strings.Contains(trimmed, "| tee -a") {
+			parts := strings.SplitN(trimmed, "|", 2)
+			if len(parts) == 2 {
+				teePart := strings.TrimSpace(parts[1])
+				// Strip "tee" and any flags to get the file path.
+				teeArgs := strings.TrimPrefix(teePart, "tee")
+				teeArgs = strings.TrimLeft(teeArgs, " \t")
+				if strings.HasPrefix(teeArgs, "-a") {
+					teeArgs = strings.TrimPrefix(teeArgs, "-a")
+				}
+				teeArgs = strings.TrimLeft(teeArgs, " \t")
+				if teeArgs != "" {
+					filePath := strings.Fields(teeArgs)[0]
+					absPath, err := filepath.Abs(filePath)
+					if err == nil && !cfg.IsAllowed(absPath, true) {
+						return fmt.Errorf("write target %q is readonly or outside sandbox", filePath)
+					}
+				}
+			}
+		}
+
+		// Check for >, >>, 2>, etc. redirections in the segment.
+		matches := redirectPathRE.FindAllStringSubmatch(trimmed, -1)
+		for _, match := range matches {
+			if len(match) < 4 {
+				continue
+			}
+			// match[1] = fd (e.g. "2"), match[2] = > or >>, match[3] = path.
+			fd := match[1]
+			isAppend := strings.HasPrefix(match[2], ">>")
+			path := match[3]
+			if path == "" {
+				continue
+			}
+			// Only validate write redirections (> or >>), not input (<).
+			if fd == "" || fd == "1" || fd == "2" {
+				absPath, err := filepath.Abs(path)
+				if err != nil {
+					continue
+				}
+				if !cfg.IsAllowed(absPath, true) {
+					op := "write"
+					if isAppend {
+						op = "append"
+					}
+					return fmt.Errorf("%s target %q is readonly or outside sandbox", op, path)
+				}
+			}
+		}
+	}
+	return nil
 }
 
 var _ cobot.Tool = (*ShellExecTool)(nil)
