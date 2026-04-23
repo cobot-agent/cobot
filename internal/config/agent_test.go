@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/cobot-agent/cobot/internal/sandbox"
 )
 
 func TestLoadAgentConfig(t *testing.T) {
@@ -57,6 +59,53 @@ sandbox:
 	}
 	if cfg.Sandbox.Root != "/workspace" {
 		t.Errorf("Sandbox.Root = %q, want %q", cfg.Sandbox.Root, "/workspace")
+	}
+	if len(cfg.Sandbox.AllowPaths) != 1 || cfg.Sandbox.AllowPaths[0] != "/tmp" {
+		t.Errorf("Sandbox.AllowPaths = %v, want [/tmp]", cfg.Sandbox.AllowPaths)
+	}
+	if len(cfg.Sandbox.BlockedCommands) != 1 || cfg.Sandbox.BlockedCommands[0] != "rm -rf" {
+		t.Errorf("Sandbox.BlockedCommands = %v, want [rm -rf]", cfg.Sandbox.BlockedCommands)
+	}
+}
+
+func TestLoadAgentConfig_SandboxAllowNetworkFalseTracked(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "assistant.yaml")
+
+	content := []byte(`model: gpt-4
+sandbox:
+  root: /workspace
+  allow_network: false
+  readonly_paths:
+    - /etc
+`)
+	if err := os.WriteFile(cfgPath, content, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := LoadAgentConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("LoadAgentConfig: %v", err)
+	}
+	if cfg.Sandbox == nil {
+		t.Fatal("Sandbox is nil")
+	}
+	if cfg.Sandbox.AllowNetwork {
+		t.Fatal("Sandbox.AllowNetwork = true, want false")
+	}
+	if !cfg.Sandbox.HasAllowNetworkOverride() {
+		t.Fatal("expected allow_network override to be tracked")
+	}
+	if len(cfg.Sandbox.ReadonlyPaths) != 1 || cfg.Sandbox.ReadonlyPaths[0] != "/etc" {
+		t.Fatalf("Sandbox.ReadonlyPaths = %v, want [/etc]", cfg.Sandbox.ReadonlyPaths)
+	}
+
+	merged := sandbox.MergeConfigs(&sandbox.SandboxConfig{}, cfg.Sandbox)
+	if merged.AllowNetwork {
+		t.Fatal("merged.AllowNetwork = true, want false")
+	}
+	if !merged.HasAllowNetworkOverride() {
+		t.Fatal("expected merged sandbox to keep allow_network override")
 	}
 }
 

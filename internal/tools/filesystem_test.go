@@ -294,9 +294,11 @@ func TestShellExecTool_BlocksConfiguredCommandAfterAndAnd(t *testing.T) {
 }
 
 func TestShellExecTool_BlocksNetworkCommandAfterAndAnd(t *testing.T) {
+	cfg := &sandpkg.SandboxConfig{}
+	cfg.SetAllowNetwork(false)
 	tool := NewShellExecTool(
 		WithShellWorkdir(t.TempDir()),
-		WithShellSandboxConfig(&sandpkg.SandboxConfig{AllowNetwork: false}),
+		WithShellSandboxConfig(cfg),
 	)
 
 	args, _ := json.Marshal(map[string]string{"command": "true&&curl --version"})

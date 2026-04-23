@@ -136,41 +136,24 @@ func (w *Workspace) ExternalAgent(name string) (*cobot.ExternalAgentConfig, bool
 // resolveSandboxRoot for the shell tool — so that filesystem tools correctly
 // resolve relative paths inside the workspace directory.
 func (w *Workspace) EffectiveSandbox(agentSandbox *sandbox.SandboxConfig) *sandbox.SandboxConfig {
-	cfg := w.Config.Sandbox
-	if agentSandbox != nil {
-		if agentSandbox.Root != "" {
-			cfg.Root = agentSandbox.Root
-		}
-		if len(agentSandbox.AllowPaths) > 0 {
-			cfg.AllowPaths = agentSandbox.AllowPaths
-		}
-		if len(agentSandbox.BlockedCommands) > 0 {
-			cfg.BlockedCommands = agentSandbox.BlockedCommands
-		}
-	}
+	merged := sandbox.MergeConfigs(&w.Config.Sandbox, agentSandbox)
 
 	// Fall back to workspace root when no explicit sandbox root is set,
 	// keeping filesystem tools consistent with the shell tool's behavior.
-	if cfg.Root == "" {
+	if merged.Root == "" {
 		if w.Config.Root != "" {
-			cfg.Root = w.Config.Root
+			merged.Root = w.Config.Root
 		} else if w.Definition.Root != "" {
-			cfg.Root = w.Definition.Root
+			merged.Root = w.Definition.Root
 		}
 	}
 
-	var virtualRoot string
-	if cfg.Root != "" {
-		virtualRoot = sandbox.VirtualHome(w.Config.Name)
+	if merged.Root != "" && merged.VirtualRoot == "" {
+		merged.VirtualRoot = sandbox.VirtualHome(w.Config.Name)
 	}
 
-	return &sandbox.SandboxConfig{
-		VirtualRoot:     virtualRoot,
-		Root:            cfg.Root,
-		AllowPaths:      cfg.AllowPaths,
-		ReadonlyPaths:   cfg.ReadonlyPaths,
-		BlockedCommands: cfg.BlockedCommands,
-	}
+	result := merged.Clone()
+	return &result
 }
 
 func (w *Workspace) EnsureDirs() error {

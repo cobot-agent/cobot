@@ -20,6 +20,15 @@
       "items": { "type": "string" },
       "description": "Additional allowed paths"
     },
+    "readonly_paths": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Additional readable but not writable paths"
+    },
+    "allow_network": {
+      "type": "boolean",
+      "description": "Whether shell_exec may use network-capable commands"
+    },
     "blocked_commands": {
       "type": "array",
       "items": { "type": "string" },
