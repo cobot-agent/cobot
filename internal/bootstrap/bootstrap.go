@@ -95,9 +95,6 @@ func InitAgent(cfg *cobot.Config, requireProvider bool) (*Result, error) {
 		sm.SetSessionConfig(sc)
 	}
 
-	sessionStore := agent.NewSessionStore(ws.SessionsDir())
-	sm.SetSessionStore(sessionStore)
-
 	// Create LLM registry for multi-provider model switching.
 	registry := llm.NewRegistry(cfg)
 	a.SetRegistry(registry)

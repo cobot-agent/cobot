@@ -29,6 +29,10 @@ type AgentConfig struct {
 	// SkillSyncInterval is the background LTM→skill sync interval in minutes.
 	// Zero defaults to 60 minutes.
 	SkillSyncInterval int `yaml:"skill_sync_interval,omitempty"`
+	// SessionHistoryLimit is the maximum number of old session STM files to retain.
+	// When a new session starts, older sessions beyond this limit are pruned.
+	// Zero defaults to 5000.
+	SessionHistoryLimit int `yaml:"session_history_limit,omitempty"`
 }
 
 func LoadAgentConfig(path string) (*AgentConfig, error) {
@@ -44,6 +48,9 @@ func LoadAgentConfig(path string) (*AgentConfig, error) {
 
 	if cfg.MaxTurns == 0 {
 		cfg.MaxTurns = cobot.DefaultMaxTurns
+	}
+	if cfg.SessionHistoryLimit == 0 {
+		cfg.SessionHistoryLimit = 5000
 	}
 
 	return cfg, nil
