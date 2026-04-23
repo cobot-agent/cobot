@@ -11,6 +11,7 @@ import (
 
 	"github.com/cobot-agent/cobot/internal/config"
 	"github.com/cobot-agent/cobot/internal/sandbox"
+	"github.com/cobot-agent/cobot/internal/skills"
 	"github.com/cobot-agent/cobot/internal/workspace"
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
@@ -168,8 +169,8 @@ func (t *AgentConfigUpdateTool) Execute(ctx context.Context, args json.RawMessag
 	if err := decodeArgs(args, &params); err != nil {
 		return "", err
 	}
-	if err := validateName(params.Agent); err != nil {
-		return "", err
+	if params.Agent == "" || !skills.IsPathTraversalSafe(params.Agent) {
+		return "", fmt.Errorf("invalid agent name: %q", params.Agent)
 	}
 
 	path := filepath.Join(t.workspace.AgentsDir(), params.Agent+".yaml")

@@ -14,13 +14,6 @@ const SkillFile = "SKILL.md"
 // frontmatterDelimiter is the YAML frontmatter boundary marker.
 const frontmatterDelimiter = "---"
 
-// yamlSkill is the on-disk representation for .yaml skill files (legacy compat).
-type yamlSkill struct {
-	Name        string `yaml:"name"`
-	Description string `yaml:"description"`
-	Content     string `yaml:"content"`
-}
-
 // Skill represents a loaded skill with full metadata.
 type Skill struct {
 	Name        string            // from frontmatter
