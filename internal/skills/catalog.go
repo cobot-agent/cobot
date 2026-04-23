@@ -72,7 +72,7 @@ func LoadFull(ctx context.Context, dirs []string, name string) (*Skill, error) {
 	if found != nil {
 		return found, nil
 	}
-	// Fallback: scan for categorized or legacy skills.
+	// Fallback: scan all dirs and category subdirs for the skill.
 	if err := scanAllDirs(ctx, dirs, func(sk Skill) {
 		if sk.Name == name {
 			// For new-format skills found in fallback, reload to get full content.
@@ -123,7 +123,7 @@ func LoadOne(ctx context.Context, dirs []string, name string) (*Skill, error) {
 	if found != nil {
 		return found, nil
 	}
-	// Fallback: scan for categorized or legacy skills (also last-match-wins)
+	// Fallback: scan all dirs and category subdirs for the skill (last-match-wins).
 	if err := scanAllDirs(ctx, dirs, func(sk Skill) {
 		if sk.Name == name {
 			// For new-format skills found in fallback, reload to get full content.
