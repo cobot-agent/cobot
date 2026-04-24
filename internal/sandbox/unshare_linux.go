@@ -51,7 +51,7 @@ func (unshareBackend) Launch(ctx context.Context, req *LaunchRequest) ([]byte, e
 	if nc.MountProc {
 		args = append(args, "--mount-proc")
 	}
-	if req.Config != nil && req.Config.VirtualRoot != "" {
+	if req.Config != nil && req.Config.VirtualRoot != "" && req.Config.Root != "" {
 		args = append(args, "--chroot", req.Config.VirtualRoot, req.Config.Root)
 	}
 	args = append(args, "--")
@@ -69,13 +69,14 @@ func (unshareBackend) Launch(ctx context.Context, req *LaunchRequest) ([]byte, e
 // namespace isolation via unshare(2). It attempts a lightweight test
 // unshare and checks for permission errors.
 func probeUnshareWorks() bool {
-	// Test with CLONE_NEWIPC (lightweight, no need to re-exec).
-	if err := unix.Unshare(unix.CLONE_NEWIPC); err != nil {
+	// Test with CLONE_NEWUSER (creates a new user namespace, which
+	// unprivileged processes can usually do) combined with CLONE_NEWIPC.
+	// If we can't even create a user namespace, unshare is definitely
+	// not going to work for the real sandbox flags.
+	flags := unix.CLONE_NEWUSER | unix.CLONE_NEWIPC
+	if err := unix.Unshare(flags); err != nil {
 		return false
 	}
-	// We successfully created a new IPC namespace. This process is now
-	// in it, but that doesn't affect anything meaningful for our use.
-	// No need to re-exec; just return true.
 	return true
 }
 

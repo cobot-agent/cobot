@@ -10,9 +10,19 @@ import (
 
 	"github.com/cobot-agent/cobot/internal/config"
 	"github.com/cobot-agent/cobot/internal/debuglog"
+	"github.com/cobot-agent/cobot/internal/sandbox"
 	"github.com/cobot-agent/cobot/internal/workspace"
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
+
+func init() {
+	// Handle sandbox child mode early, before any other initialization.
+	// If this process was re-executed by the unshare backend, enter
+	// namespaces and exec the target command.
+	if sandbox.HandleSandboxChildMode() {
+		os.Exit(0)
+	}
+}
 
 var (
 	cfgPath       string

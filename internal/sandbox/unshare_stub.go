@@ -7,3 +7,8 @@ package sandbox
 func isUnshareAvailable() bool {
 	return false
 }
+
+// HandleSandboxChildMode is a no-op on non-Linux platforms.
+func HandleSandboxChildMode() bool {
+	return false
+}
