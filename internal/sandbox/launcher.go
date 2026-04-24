@@ -27,6 +27,11 @@ type Launcher struct {
 	sandboxConfig *SandboxConfig
 }
 
+// defaultBackend returns the best available backend for the current platform.
+func defaultBackend() Backend {
+	return hostBackend{}
+}
+
 // LauncherOption configures a Launcher.
 type LauncherOption func(*Launcher)
 
@@ -48,7 +53,7 @@ func WithSandboxConfig(cfg *SandboxConfig) LauncherOption {
 
 // NewLauncher creates a Launcher with the given options.
 func NewLauncher(opts ...LauncherOption) *Launcher {
-	launcher := &Launcher{backend: hostBackend{}}
+	launcher := &Launcher{backend: defaultBackend()}
 	for _, opt := range opts {
 		opt(launcher)
 	}
