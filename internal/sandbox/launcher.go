@@ -56,6 +56,10 @@ func (l *Launcher) Launch(ctx context.Context, req *LaunchRequest) ([]byte, erro
 	if l == nil {
 		l = NewLauncher()
 	}
+	// Merge launcher-level config as default when request has no config.
+	if req.Config == nil && l.sandboxConfig != nil {
+		req.Config = l.sandboxConfig
+	}
 	if l.launchFunc != nil {
 		return l.launchFunc(ctx, req)
 	}

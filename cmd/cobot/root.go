@@ -17,8 +17,9 @@ import (
 
 func init() {
 	// Handle sandbox child mode early, before any other initialization.
-	// If this process was re-executed by the unshare backend, enter
-	// namespaces and exec the target command.
+	// If this process was re-executed in Landlock child mode, detect the
+	// child-mode sentinel, apply the Landlock policy, and complete the
+	// child execution path before normal CLI setup continues.
 	if sandbox.HandleSandboxChildMode() {
 		os.Exit(0)
 	}

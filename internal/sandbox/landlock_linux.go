@@ -145,8 +145,9 @@ func applyLandlock(root string, allowPaths, roPaths []string, noNetwork bool) {
 
 	var rules []landlock.Rule
 
-	// System paths are always readable (binaries, libraries, configs).
-	rules = append(rules, landlock.RODirs("/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc"))
+	// System paths are always readable (binaries, libraries, configs,
+	// and minimal pseudo-filesystems commonly needed by shells and utilities).
+	rules = append(rules, landlock.RODirs("/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc", "/dev", "/proc"))
 
 	// Writable paths from sandbox config.
 	if root != "" {
