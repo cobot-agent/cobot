@@ -4,21 +4,37 @@ package sandbox
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
-// TestLandlockApplyRestrictsWrite verifies that Landlock blocks writes
-// outside the allowed directory.
-func TestLandlockApplyRestrictsWrite(t *testing.T) {
-	if os.Getuid() == 0 {
-		t.Skip("running as root, Landlock restrictions do not apply")
+// TestLandlockForked runs Landlock restriction tests in a subprocess so that
+// the restrictions don't poison the parent test process.
+func TestLandlockForked(t *testing.T) {
+	// Run ourselves as a subprocess with a magic env var.
+	cmd := exec.Command(os.Args[0], "-test.run=TestLandlockHelper")
+	cmd.Env = append(os.Environ(), "COBOT_LANDLOCK_TEST=1")
+	cmd.Dir = t.TempDir()
+	out, err := cmd.CombinedOutput()
+	t.Logf("helper output:\n%s", out)
+	if err != nil {
+		t.Fatalf("landlock helper failed: %v", err)
+	}
+}
+
+// TestLandlockHelper is the subprocess that actually applies Landlock.
+// It only runs when COBOT_LANDLOCK_TEST is set.
+func TestLandlockHelper(t *testing.T) {
+	if os.Getenv("COBOT_LANDLOCK_TEST") != "1" {
+		t.Skip("skipping — only runs as subprocess of TestLandlockForked")
 	}
 
 	allowed := t.TempDir()
 	blocked := t.TempDir()
 
-	// Apply Landlock: only `allowed` is writable, everything else is read-only.
+	// Apply Landlock: only `allowed` is writable.
 	applyLandlock(allowed, nil, nil, false)
 
 	// Writing inside the allowed dir should succeed.
@@ -27,20 +43,36 @@ func TestLandlockApplyRestrictsWrite(t *testing.T) {
 		t.Fatalf("should be able to write inside allowed dir: %v", err)
 	}
 
-	// Writing inside the blocked dir should fail with EPERM/EACCES.
+	// Writing inside the blocked dir should fail.
 	blockedFile := filepath.Join(blocked, "blocked.txt")
 	err := os.WriteFile(blockedFile, []byte("nope"), 0644)
 	if err == nil {
-		// BestEffort may silently skip on kernels without Landlock.
 		t.Log("WARNING: write outside allowed dir succeeded — Landlock may not be enforced on this kernel")
 	} else {
-		t.Logf("expected Landlock denial: %v", err)
+		t.Logf("Landlock blocked write: %v (expected)", err)
 	}
 }
 
-// TestLandlockApplyGracefulDegradation verifies that applyLandlock does not
-// crash even with empty/nil arguments.
-func TestLandlockApplyGracefulDegradation(t *testing.T) {
+// TestLandlockGracefulDegradation verifies applyLandlock doesn't crash
+// with various inputs. Run in subprocess to avoid polluting the parent.
+func TestLandlockGracefulDegradation(t *testing.T) {
+	cmd := exec.Command(os.Args[0], "-test.run=TestLandlockGracefulHelper")
+	cmd.Env = append(os.Environ(), "COBOT_LANDLOCK_GRACEFUL=1")
+	cmd.Dir = t.TempDir()
+	out, err := cmd.CombinedOutput()
+	t.Logf("helper output:\n%s", out)
+	if err != nil {
+		t.Fatalf("graceful helper failed: %v", err)
+	}
+}
+
+// TestLandlockGracefulHelper is the subprocess for degradation tests.
+func TestLandlockGracefulHelper(t *testing.T) {
+	if os.Getenv("COBOT_LANDLOCK_GRACEFUL") != "1" {
+		t.Skip("skipping")
+	}
+
+	// None of these should panic.
 	applyLandlock("", nil, nil, false)
 	applyLandlock("", nil, nil, true)
 	applyLandlock("/nonexistent", nil, nil, false)
@@ -48,28 +80,8 @@ func TestLandlockApplyGracefulDegradation(t *testing.T) {
 	applyLandlock("", nil, []string{"/etc"}, true)
 }
 
-// TestLandlockLaunchExecutesCommand verifies the launch function runs
-// a command and captures output. For test binaries, landlockLaunch falls
-// back to hostExec (skips re-exec).
-func TestLandlockLaunchExecutesCommand(t *testing.T) {
-	req := &LaunchRequest{
-		Shell:     "/bin/sh",
-		ShellFlag: "-c",
-		Command:   "echo hello-landlock",
-		Config:    &SandboxConfig{Root: "/tmp"},
-	}
-
-	out, err := landlockLaunch(t.Context(), req)
-	if err != nil {
-		t.Fatalf("landlockLaunch: %v", err)
-	}
-	got := string(out)
-	if !contains(got, "hello-landlock") {
-		t.Fatalf("expected 'hello-landlock', got %q", got)
-	}
-}
-
 // TestHostExecBasic verifies hostExec runs a command directly.
+// This does NOT apply Landlock, so it's safe to run in-process.
 func TestHostExecBasic(t *testing.T) {
 	req := &LaunchRequest{
 		Shell:     "/bin/sh",
@@ -81,13 +93,31 @@ func TestHostExecBasic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("hostExec: %v", err)
 	}
-	if !contains(string(out), "host-ok") {
+	if !strings.Contains(string(out), "host-ok") {
 		t.Fatalf("expected 'host-ok', got %q", string(out))
 	}
 }
 
-// TestPlatformLaunchOnLinux verifies that platformLaunch works end-to-end.
-// On Linux it calls landlockLaunch which falls back to hostExec for test binaries.
+// TestLandlockLaunchInTestBinary verifies that landlockLaunch falls back
+// to hostExec for test binaries (detects .test suffix).
+func TestLandlockLaunchInTestBinary(t *testing.T) {
+	req := &LaunchRequest{
+		Shell:     "/bin/sh",
+		ShellFlag: "-c",
+		Command:   "echo test-fallback",
+		Config:    &SandboxConfig{Root: "/tmp"},
+	}
+
+	out, err := landlockLaunch(t.Context(), req)
+	if err != nil {
+		t.Fatalf("landlockLaunch: %v", err)
+	}
+	if !strings.Contains(string(out), "test-fallback") {
+		t.Fatalf("expected 'test-fallback', got %q", string(out))
+	}
+}
+
+// TestPlatformLaunchOnLinux verifies platformLaunch works end-to-end.
 func TestPlatformLaunchOnLinux(t *testing.T) {
 	req := &LaunchRequest{
 		Shell:     "/bin/sh",
@@ -100,16 +130,7 @@ func TestPlatformLaunchOnLinux(t *testing.T) {
 	if err != nil {
 		t.Fatalf("platformLaunch: %v", err)
 	}
-	if !contains(string(out), "platform-ok") {
+	if !strings.Contains(string(out), "platform-ok") {
 		t.Fatalf("expected 'platform-ok', got %q", string(out))
 	}
-}
-
-func contains(s, substr string) bool {
-	for i := 0; i+len(substr) <= len(s); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }
