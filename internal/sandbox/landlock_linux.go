@@ -138,7 +138,7 @@ func HandleSandboxChildMode() bool {
 // Landlock LSM. BestEffort mode gracefully degrades on kernels without Landlock
 // support (older kernels, custom builds without CONFIG_LANDLOCK).
 func applyLandlock(root string, allowPaths, roPaths []string, noNetwork bool) {
-	cfg := landlock.V4.BestEffort()
+	cfg := landlock.V8.BestEffort()
 
 	var rules []landlock.Rule
 
