@@ -3,10 +3,16 @@ package sandbox
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
-	"runtime"
 )
 
+// Backend is the interface for sandbox execution backends.
+type Backend interface {
+	Launch(context.Context, *LaunchRequest) ([]byte, error)
+}
+
+// LaunchRequest contains the parameters for launching a sandboxed command.
 type LaunchRequest struct {
 	Shell     string
 	ShellFlag string
@@ -15,17 +21,16 @@ type LaunchRequest struct {
 	Config    *SandboxConfig
 }
 
-type Backend interface {
-	Launch(context.Context, *LaunchRequest) ([]byte, error)
-}
-
+// Launcher selects and uses a Backend to run commands in a sandbox.
 type Launcher struct {
-	backend        Backend
-	sandboxConfig  *SandboxConfig
+	backend       Backend
+	sandboxConfig *SandboxConfig
 }
 
+// LauncherOption configures a Launcher.
 type LauncherOption func(*Launcher)
 
+// WithBackend sets the backend used by a Launcher.
 func WithBackend(backend Backend) LauncherOption {
 	return func(l *Launcher) {
 		if backend != nil {
@@ -34,12 +39,14 @@ func WithBackend(backend Backend) LauncherOption {
 	}
 }
 
+// WithSandboxConfig sets the sandbox configuration for a Launcher.
 func WithSandboxConfig(cfg *SandboxConfig) LauncherOption {
 	return func(l *Launcher) {
 		l.sandboxConfig = cfg
 	}
 }
 
+// NewLauncher creates a Launcher with the given options.
 func NewLauncher(opts ...LauncherOption) *Launcher {
 	launcher := &Launcher{backend: hostBackend{}}
 	for _, opt := range opts {
@@ -51,6 +58,7 @@ func NewLauncher(opts ...LauncherOption) *Launcher {
 	return launcher
 }
 
+// Launch runs a command using the configured backend.
 func (l *Launcher) Launch(ctx context.Context, req *LaunchRequest) ([]byte, error) {
 	if req == nil {
 		return nil, fmt.Errorf("launch request is required")
@@ -59,22 +67,15 @@ func (l *Launcher) Launch(ctx context.Context, req *LaunchRequest) ([]byte, erro
 		l = NewLauncher()
 	}
 
-	// Select backend: bwrap on Linux when sandbox is active and bwrap is available.
-	// bwrap internally probes --unshare-net support and falls back gracefully
-	// in environments (e.g. rootless CI) that lack CAP_NET_ADMIN.
 	backend := l.backend
 	if backend == nil {
 		backend = hostBackend{}
-	}
-	if l.sandboxConfig != nil && l.sandboxConfig.VirtualRoot != "" && runtime.GOOS == "linux" {
-		if path, err := exec.LookPath("bwrap"); err == nil && path != "" {
-			backend = BwrapBackend{}
-		}
 	}
 
 	return backend.Launch(ctx, req)
 }
 
+// hostBackend runs commands directly on the host.
 type hostBackend struct{}
 
 func (hostBackend) Launch(ctx context.Context, req *LaunchRequest) ([]byte, error) {
@@ -86,4 +87,9 @@ func (hostBackend) Launch(ctx context.Context, req *LaunchRequest) ([]byte, erro
 		cmd.Dir = req.Dir
 	}
 	return cmd.CombinedOutput()
+}
+
+// isCI reports whether the process appears to be running in a CI environment.
+func isCI() bool {
+	return os.Getenv("CI") == "true"
 }
