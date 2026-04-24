@@ -5,7 +5,10 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 )
+
+const probeTimeout = 2 * time.Second
 
 // BwrapArgs builds a bwrap command-line from a LaunchRequest and NamespaceConfig.
 // bwrap must be installed on the system.
@@ -81,6 +84,14 @@ func (BwrapBackend) Launch(ctx context.Context, req *LaunchRequest) ([]byte, err
 		nc.UnshareNet = !req.Config.AllowNetwork
 	}
 
+	// Probe whether --unshare-net works in this environment.
+	// Rootless CI (and some container setups) lack CAP_NET_ADMIN for network
+	// namespace isolation; if the probe fails we skip --unshare-net but still
+	// use bwrap for the other namespace isolations.
+	if nc.UnshareNet && !probeUnshareNet() {
+		nc.UnshareNet = false
+	}
+
 	bwrapArgs, err := BwrapArgs(req, nc)
 	if err != nil {
 		return nil, err
@@ -91,6 +102,22 @@ func (BwrapBackend) Launch(ctx context.Context, req *LaunchRequest) ([]byte, err
 	}
 
 	return exec.CommandContext(ctx, "bwrap", bwrapArgs...).CombinedOutput()
+}
+
+// probeUnshareNet checks whether bwrap can create a network namespace.
+// It runs a minimal bwrap command that tries --unshare-net and reports
+// whether it succeeds. A failure means the environment (e.g. rootless CI)
+// does not support network namespace isolation with bwrap.
+func probeUnshareNet() bool {
+	ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "bwrap", "--unshare-net", "--die-with-parent", "true")
+	err := cmd.Start()
+	if err != nil {
+		return false
+	}
+	err = cmd.Wait()
+	return err == nil
 }
 
 // checkBwrapAvailable returns an error if bwrap is not in PATH.
