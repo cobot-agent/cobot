@@ -48,6 +48,7 @@ func NewLauncher(opts ...LauncherOption) *Launcher {
 
 // Launch runs a command in a sandboxed subprocess.
 // On Linux, this uses Landlock for filesystem and network isolation.
+// On macOS, this uses sandbox-exec (Seatbelt) for isolation.
 // On other platforms, it falls back to direct command execution.
 func (l *Launcher) Launch(ctx context.Context, req *LaunchRequest) ([]byte, error) {
 	if req == nil {
