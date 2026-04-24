@@ -175,7 +175,7 @@ func yamlMappingHasKey(node *yaml.Node, key string) bool {
 }
 
 func (s *SandboxConfig) IsAllowed(path string, write bool) bool {
-	if s == nil || (s.Root == "" && len(s.AllowPaths) == 0 && len(s.ReadonlyPaths) == 0) {
+	if s == nil {
 		return true
 	}
 

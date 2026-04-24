@@ -394,7 +394,7 @@ func TestEffectiveSandbox_MergesPolicyFields(t *testing.T) {
 }
 
 func TestEffectiveSandbox_NoRootAtAll(t *testing.T) {
-	// Default workspace with no root anywhere — sandbox should be inactive.
+	// Default workspace with no root anywhere — sandbox should default to SpaceDir().
 	ws := &Workspace{
 		Definition: &WorkspaceDefinition{
 			Name: "default",
@@ -404,13 +404,15 @@ func TestEffectiveSandbox_NoRootAtAll(t *testing.T) {
 			Name: "default",
 			Type: WorkspaceTypeDefault,
 		},
+		DataDir: "/data/workspaces/default",
 	}
 
-	sandbox := ws.EffectiveSandbox(nil)
-	if sandbox.Root != "" {
-		t.Errorf("sandbox.Root = %q, want empty", sandbox.Root)
+	sb := ws.EffectiveSandbox(nil)
+	wantRoot := filepath.Join("/data/workspaces/default", "space")
+	if sb.Root != wantRoot {
+		t.Errorf("sandbox.Root = %q, want %q", sb.Root, wantRoot)
 	}
-	if sandbox.VirtualRoot != "" {
-		t.Errorf("sandbox.VirtualRoot = %q, want empty", sandbox.VirtualRoot)
+	if sb.VirtualRoot == "" {
+		t.Error("sandbox.VirtualRoot should not be empty")
 	}
 }

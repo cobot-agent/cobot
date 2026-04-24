@@ -307,13 +307,8 @@ func configureSandboxTools(a *agent.Agent, ws *workspace.Workspace, agentCfg *co
 	a.RegisterTool(tools.NewSearchFilesTool(sandbox))
 	a.RegisterTool(tools.NewGrepFilesTool(sandbox))
 
-	sandboxRoot := sandbox.Root
-	if sandboxRoot == "" {
-		sandboxRoot = ws.SpaceDir()
-	}
-
 	a.RegisterTool(tools.NewShellExecTool(
-		tools.WithShellWorkdir(sandboxRoot),
+		tools.WithShellWorkdir(sandbox.Root),
 		tools.WithShellSandboxConfig(sandbox),
 	))
 

@@ -131,15 +131,13 @@ func (w *Workspace) ExternalAgent(name string) (*cobot.ExternalAgentConfig, bool
 
 // EffectiveSandbox returns the final SandboxConfig by merging workspace config
 // with optional agent-level overrides.
-// When no explicit sandbox root is configured, it falls back to the workspace
-// definition root or the workspace config root — matching the logic used by
-// resolveSandboxRoot for the shell tool — so that filesystem tools correctly
-// resolve relative paths inside the workspace directory.
+// When no explicit sandbox root is configured, it defaults to the workspace
+// space directory — this ensures sandbox is always active, restricting writes
+// to workspace/<name>/space for both filesystem and shell_exec tools.
 func (w *Workspace) EffectiveSandbox(agentSandbox *sandbox.SandboxConfig) *sandbox.SandboxConfig {
 	merged := sandbox.MergeConfigs(&w.Config.Sandbox, agentSandbox)
 
-	// Fall back to workspace root when no explicit sandbox root is set,
-	// keeping filesystem tools consistent with the shell tool's behavior.
+	// Fall back to workspace root when no explicit sandbox root is set.
 	if merged.Root == "" {
 		if w.Config.Root != "" {
 			merged.Root = w.Config.Root
@@ -148,7 +146,12 @@ func (w *Workspace) EffectiveSandbox(agentSandbox *sandbox.SandboxConfig) *sandb
 		}
 	}
 
-	if merged.Root != "" && merged.VirtualRoot == "" {
+	// Default: sandbox restricts writes to the workspace space directory.
+	if merged.Root == "" {
+		merged.Root = w.SpaceDir()
+	}
+
+	if merged.VirtualRoot == "" {
 		merged.VirtualRoot = sandbox.VirtualHome(w.Config.Name)
 	}
 
