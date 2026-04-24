@@ -13,10 +13,17 @@ import (
 // TestLandlockForked runs Landlock restriction tests in a subprocess so that
 // the restrictions don't poison the parent test process.
 func TestLandlockForked(t *testing.T) {
-	// Run ourselves as a subprocess with a magic env var.
+	// Create temp dirs BEFORE spawning the subprocess, so the subprocess
+	// doesn't need t.TempDir() (which tries to cleanup after Landlock locks /tmp).
+	allowed := t.TempDir()
+	blocked := t.TempDir()
+
 	cmd := exec.Command(os.Args[0], "-test.run=TestLandlockHelper")
-	cmd.Env = append(os.Environ(), "COBOT_LANDLOCK_TEST=1")
-	cmd.Dir = t.TempDir()
+	cmd.Env = append(os.Environ(),
+		"COBOT_LANDLOCK_TEST=1",
+		"COBOT_LANDLOCK_ALLOWED="+allowed,
+		"COBOT_LANDLOCK_BLOCKED="+blocked,
+	)
 	out, err := cmd.CombinedOutput()
 	t.Logf("helper output:\n%s", out)
 	if err != nil {
@@ -25,14 +32,16 @@ func TestLandlockForked(t *testing.T) {
 }
 
 // TestLandlockHelper is the subprocess that actually applies Landlock.
-// It only runs when COBOT_LANDLOCK_TEST is set.
 func TestLandlockHelper(t *testing.T) {
 	if os.Getenv("COBOT_LANDLOCK_TEST") != "1" {
 		t.Skip("skipping — only runs as subprocess of TestLandlockForked")
 	}
 
-	allowed := t.TempDir()
-	blocked := t.TempDir()
+	allowed := os.Getenv("COBOT_LANDLOCK_ALLOWED")
+	blocked := os.Getenv("COBOT_LANDLOCK_BLOCKED")
+	if allowed == "" || blocked == "" {
+		t.Fatal("missing env vars")
+	}
 
 	// Apply Landlock: only `allowed` is writable.
 	applyLandlock(allowed, nil, nil, false)
@@ -51,14 +60,21 @@ func TestLandlockHelper(t *testing.T) {
 	} else {
 		t.Logf("Landlock blocked write: %v (expected)", err)
 	}
+
+	// Do NOT use t.TempDir() — Landlock prevents cleanup of /tmp.
+	// Exit explicitly to skip cleanup.
+	os.Exit(0)
 }
 
 // TestLandlockGracefulDegradation verifies applyLandlock doesn't crash
 // with various inputs. Run in subprocess to avoid polluting the parent.
 func TestLandlockGracefulDegradation(t *testing.T) {
+	tmp := t.TempDir()
 	cmd := exec.Command(os.Args[0], "-test.run=TestLandlockGracefulHelper")
-	cmd.Env = append(os.Environ(), "COBOT_LANDLOCK_GRACEFUL=1")
-	cmd.Dir = t.TempDir()
+	cmd.Env = append(os.Environ(),
+		"COBOT_LANDLOCK_GRACEFUL=1",
+		"COBOT_LANDLOCK_TMP="+tmp,
+	)
 	out, err := cmd.CombinedOutput()
 	t.Logf("helper output:\n%s", out)
 	if err != nil {
@@ -72,16 +88,22 @@ func TestLandlockGracefulHelper(t *testing.T) {
 		t.Skip("skipping")
 	}
 
+	tmp := os.Getenv("COBOT_LANDLOCK_TMP")
+
 	// None of these should panic.
 	applyLandlock("", nil, nil, false)
 	applyLandlock("", nil, nil, true)
 	applyLandlock("/nonexistent", nil, nil, false)
-	applyLandlock("", []string{"/tmp"}, nil, false)
+	applyLandlock(tmp, nil, nil, false)
+	applyLandlock("", []string{tmp}, nil, false)
 	applyLandlock("", nil, []string{"/etc"}, true)
+
+	// Skip cleanup — Landlock may prevent it.
+	os.Exit(0)
 }
 
 // TestHostExecBasic verifies hostExec runs a command directly.
-// This does NOT apply Landlock, so it's safe to run in-process.
+// Safe to run in-process — no Landlock applied.
 func TestHostExecBasic(t *testing.T) {
 	req := &LaunchRequest{
 		Shell:     "/bin/sh",
