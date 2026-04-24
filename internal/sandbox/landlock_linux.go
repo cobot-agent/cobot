@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/landlock-lsm/go-landlock/landlock"
+	"golang.org/x/sys/unix"
 )
 
 // landlockLaunch runs a command in a Landlock-sandboxed subprocess using the
@@ -118,24 +119,21 @@ loop:
 
 	applyLandlock(root, allowPaths, roPaths, noNetwork)
 
-	// Exec the shell command.
+	// Resolve the executable path. unix.Exec does not search $PATH.
 	shell := cmdArgs[0]
-	shellArgs := cmdArgs[1:]
-
-	cmd := exec.Command(shell, shellArgs...)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	err := cmd.Run()
+	shellPath, err := exec.LookPath(shell)
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			os.Exit(exitErr.ExitCode())
-		}
-		fmt.Fprintf(os.Stderr, "cobot-sandbox: %v\n", err)
+		fmt.Fprintf(os.Stderr, "cobot-sandbox: lookpath %q: %v\n", shell, err)
 		os.Exit(1)
 	}
-	os.Exit(0)
+
+	// Replace this process with the shell command.
+	// Using unix.Exec (not exec.Command) avoids a wrapper process that could
+	// survive if the parent cancels the context.
+	if err := unix.Exec(shellPath, cmdArgs, os.Environ()); err != nil {
+		fmt.Fprintf(os.Stderr, "cobot-sandbox: exec: %v\n", err)
+		os.Exit(1)
+	}
 	return true // unreachable
 }
 
