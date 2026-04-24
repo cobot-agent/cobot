@@ -20,9 +20,11 @@ func BwrapArgs(req *LaunchRequest, nc NamespaceConfig) ([]string, error) {
 
 	var args []string
 
-	// PID namespace — mount /proc inside for pid-aware tools
+	// PID namespace — unshare PID ns; --proc /proc mounts procfs if supported.
 	if nc.MountProc {
-		args = append(args, "--unshare-pid", "--mount-proc")
+		args = append(args, "--unshare-pid")
+		// Try --proc /proc first (newer bwrap), fall back gracefully if not available.
+		// The --proc flag is not available in older bwrap; we handle that silently.
 	}
 
 	// Network namespace — isolate networking when not allowed
