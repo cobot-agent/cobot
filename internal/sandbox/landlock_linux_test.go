@@ -56,10 +56,9 @@ func TestLandlockHelper(t *testing.T) {
 	blockedFile := filepath.Join(blocked, "blocked.txt")
 	err := os.WriteFile(blockedFile, []byte("nope"), 0644)
 	if err == nil {
-		t.Log("WARNING: write outside allowed dir succeeded — Landlock may not be enforced on this kernel")
-	} else {
-		t.Logf("Landlock blocked write: %v (expected)", err)
+		t.Fatal("Landlock should have blocked write outside allowed dir, but it succeeded")
 	}
+	t.Logf("Landlock blocked write: %v (expected)", err)
 
 	// Do NOT use t.TempDir() — Landlock prevents cleanup of /tmp.
 	// Exit explicitly to skip cleanup.

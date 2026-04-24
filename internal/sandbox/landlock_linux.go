@@ -41,6 +41,9 @@ func landlockLaunch(ctx context.Context, req *LaunchRequest) ([]byte, error) {
 		if !req.Config.AllowNetwork {
 			args = append(args, "--no-network")
 		}
+	} else {
+		// No config means no sandbox policy — run directly on host.
+		return hostExec(ctx, req)
 	}
 	args = append(args, "--")
 	args = append(args, req.Shell, req.ShellFlag, req.Command)
@@ -82,6 +85,7 @@ func HandleSandboxChildMode() bool {
 		cmdArgs    []string
 	)
 
+loop:
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--root":
@@ -103,6 +107,7 @@ func HandleSandboxChildMode() bool {
 			noNetwork = true
 		case "--":
 			cmdArgs = args[i+1:]
+			break loop
 		}
 	}
 
