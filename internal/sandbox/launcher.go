@@ -60,14 +60,21 @@ func (l *Launcher) Launch(ctx context.Context, req *LaunchRequest) ([]byte, erro
 	}
 
 	// Select backend: bwrap on Linux when sandbox is active and bwrap is available.
-	// Fall back to hostBackend if bwrap is not installed (allows CI without bwrap).
+	// Fall back to hostBackend if bwrap fails (e.g. insufficient permissions in CI).
 	backend := l.backend
 	if backend == nil {
 		backend = hostBackend{}
 	}
 	if l.sandboxConfig != nil && l.sandboxConfig.VirtualRoot != "" && runtime.GOOS == "linux" {
-		if _, err := exec.LookPath("bwrap"); err == nil {
-			backend = BwrapBackend{}
+		if path, err := exec.LookPath("bwrap"); err == nil && path != "" {
+			bw := BwrapBackend{}
+			out, err := bw.Launch(ctx, req)
+			if err == nil {
+				return out, nil
+			}
+			// bwrap failed — fall back to hostBackend (e.g. CI rootless environment
+			// may not have permissions for network namespace). Log and continue.
+			backend = hostBackend{}
 		}
 	}
 
