@@ -34,3 +34,27 @@ jobs:
 
       - name: Test
         run: go test -race -count=1 ./...
+
+  bwrap-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Install bwrap
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test -race -count=1 ./...
