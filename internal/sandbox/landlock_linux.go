@@ -56,16 +56,6 @@ func landlockLaunch(ctx context.Context, req *LaunchRequest) ([]byte, error) {
 	return cmd.CombinedOutput()
 }
 
-// hostExec runs a command directly on the host (fallback when Landlock re-exec
-// is unavailable).
-func hostExec(ctx context.Context, req *LaunchRequest) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, req.Shell, req.ShellFlag, req.Command)
-	if req.Dir != "" {
-		cmd.Dir = req.Dir
-	}
-	return cmd.CombinedOutput()
-}
-
 // HandleSandboxChildMode checks if this process was invoked as a sandbox child
 // (via re-exec from landlockLaunch). If so, it applies Landlock restrictions
 // and execs the target command. Returns true if child mode was handled (caller
