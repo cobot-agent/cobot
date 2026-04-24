@@ -3,7 +3,6 @@ package sandbox
 import (
 	"context"
 	"fmt"
-	"os/exec"
 )
 
 // LaunchRequest contains the parameters for launching a sandboxed command.
@@ -40,14 +39,16 @@ func WithLaunchFunc(fn func(ctx context.Context, req *LaunchRequest) ([]byte, er
 
 // NewLauncher creates a Launcher with the given options.
 func NewLauncher(opts ...LauncherOption) *Launcher {
-	launcher := &Launcher{}
+	launcher := &Launcher{launchFunc: platformLaunch}
 	for _, opt := range opts {
 		opt(launcher)
 	}
 	return launcher
 }
 
-// Launch runs a command in a subprocess.
+// Launch runs a command in a sandboxed subprocess.
+// On Linux, this uses Landlock for filesystem and network isolation.
+// On other platforms, it falls back to direct command execution.
 func (l *Launcher) Launch(ctx context.Context, req *LaunchRequest) ([]byte, error) {
 	if req == nil {
 		return nil, fmt.Errorf("launch request is required")
@@ -55,14 +56,8 @@ func (l *Launcher) Launch(ctx context.Context, req *LaunchRequest) ([]byte, erro
 	if l == nil {
 		l = NewLauncher()
 	}
-
 	if l.launchFunc != nil {
 		return l.launchFunc(ctx, req)
 	}
-
-	cmd := exec.CommandContext(ctx, req.Shell, req.ShellFlag, req.Command)
-	if req.Dir != "" {
-		cmd.Dir = req.Dir
-	}
-	return cmd.CombinedOutput()
+	return platformLaunch(ctx, req)
 }
