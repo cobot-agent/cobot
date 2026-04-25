@@ -155,6 +155,16 @@ func (w *Workspace) EffectiveSandbox(agentSandbox *sandbox.SandboxConfig) *sandb
 		merged.VirtualRoot = sandbox.VirtualHome(w.Config.Name)
 	}
 
+	// Allow writes to the system temp directory by default.
+	// Resolved via EvalSymlinks because macOS /tmp → /private/tmp.
+	// Only added when no explicit AllowPaths are configured, so user overrides
+	// take precedence.
+	if len(merged.AllowPaths) == 0 {
+		if tmpDir := sandbox.EvalSymlinks(os.TempDir()); tmpDir != "" {
+			merged.AllowPaths = []string{tmpDir}
+		}
+	}
+
 	result := merged.Clone()
 	return &result
 }

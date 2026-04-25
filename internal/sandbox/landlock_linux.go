@@ -154,11 +154,6 @@ func applyLandlock(root string, allowPaths, roPaths []string, noNetwork bool) {
 		rules = append(rules, landlock.RODirs(p))
 	}
 
-	// Default: allow writing to /tmp if nothing else is writable.
-	if root == "" && len(allowPaths) == 0 {
-		rules = append(rules, landlock.RWDirs("/tmp"))
-	}
-
 	if err := cfg.RestrictPaths(rules...); err != nil {
 		// BestEffort should never hard-fail, but log if it does.
 		fmt.Fprintf(os.Stderr, "cobot-sandbox: landlock: %v\n", err)
