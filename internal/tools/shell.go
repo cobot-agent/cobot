@@ -48,6 +48,10 @@ var networkCommands = []string{
 	"telnet", "ftp", "rsync", "ping", "nslookup", "dig", "host",
 }
 
+func sandboxHasOSLevelEnforcement() bool {
+	return runtime.GOOS == "linux" || runtime.GOOS == "darwin"
+}
+
 func NewShellExecTool(opts ...ShellExecToolOption) *ShellExecTool {
 	t := &ShellExecTool{
 		timeout: defaultShellTimeout,
@@ -87,12 +91,14 @@ func (t *ShellExecTool) Execute(ctx context.Context, args json.RawMessage) (stri
 			}
 		}
 	}
-	// Security model:
-	//   The shell executes with cmd.Dir set to the sandbox root (or a resolved
-	//   subdirectory). The process runs as the OS user and can only access what
-	//   the OS user can access — the sandbox is about path visibility to the
-	//   LLM, not OS-level isolation. Command output is sanitized via
-	//   RewriteOutputPaths before being returned to the LLM.
+	// Security model (dual layer):
+	//   1. Virtual path layer: the LLM sees virtual paths (e.g. /home/<workspace>/...),
+	//      which are translated to real paths before execution. Output is sanitized to
+	//      hide real filesystem paths from the LLM.
+	//   2. OS-level enforcement: when a Sandbox is configured, commands run under
+	//      Seatbelt (macOS) or Landlock (Linux), which restrict filesystem writes and
+	//      network access at the kernel level. This prevents the LLM from bypassing
+	//      path restrictions via shell commands.
 
 	cmdStr := a.Command
 
@@ -101,12 +107,12 @@ func (t *ShellExecTool) Execute(ctx context.Context, args json.RawMessage) (stri
 		return "", fmt.Errorf("command is blocked by sandbox policy")
 	}
 
-	// Check network commands only when there is no OS-level sandbox enforcement.
-	// When a sandbox config exists (Seatbelt on macOS, Landlock on Linux), the
-	// OS-level network denial is comprehensive and cannot be bypassed. The
-	// application-level blacklist is incomplete (misses python/socat/nmap etc.)
-	// and produces misleading errors compared to the OS-level enforcement.
-	if t.sandbox == nil {
+	// Check network commands when there is no OS-level sandbox enforcement.
+	// Seatbelt (macOS) and Landlock (Linux) enforce network denial at the OS level,
+	// making the application-level blacklist redundant. On other platforms the OS-level
+	// enforcement is unavailable (falls back to hostExec), so we apply the blacklist
+	// as a best-effort fallback.
+	if t.sandbox == nil || !sandboxHasOSLevelEnforcement() {
 		if err := checkNetworkCommand(cmdStr); err != nil {
 			return "", err
 		}

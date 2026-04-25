@@ -10,7 +10,15 @@ import (
 	"testing"
 )
 
+func requireSandboxExec(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("sandbox-exec"); err != nil {
+		t.Skip("sandbox-exec not available")
+	}
+}
+
 func TestSeatbeltWriteBlocking(t *testing.T) {
+	requireSandboxExec(t)
 	allowed := t.TempDir()
 	blocked := t.TempDir()
 
@@ -39,6 +47,7 @@ func TestSeatbeltWriteBlocking(t *testing.T) {
 }
 
 func TestSeatbeltNetworkDeny(t *testing.T) {
+	requireSandboxExec(t)
 	cfg := &SandboxConfig{Root: "/private/tmp", AllowNetwork: false}
 	req := &LaunchRequest{
 		Shell: "/bin/sh", ShellFlag: "-c",
@@ -52,6 +61,7 @@ func TestSeatbeltNetworkDeny(t *testing.T) {
 }
 
 func TestSeatbeltNoConfigFallback(t *testing.T) {
+	requireSandboxExec(t)
 	req := &LaunchRequest{Shell: "/bin/sh", ShellFlag: "-c", Command: "echo ok"}
 	out, err := sandboxExecLaunch(t.Context(), req)
 	if err != nil {
@@ -78,6 +88,7 @@ func TestBuildSeatbeltProfile(t *testing.T) {
 }
 
 func TestSeatbeltSubprocess(t *testing.T) {
+	requireSandboxExec(t)
 	allowed := t.TempDir()
 	blocked := t.TempDir()
 

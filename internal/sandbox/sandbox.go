@@ -183,7 +183,7 @@ func (s *SandboxConfig) IsAllowed(path string, write bool) bool {
 
 	absPath, err := normalizePath(path)
 	if err != nil {
-		slog.Warn("sandbox: IsAllowed normalizePath failed", "path", path, "write", write, "error", err)
+		slog.Debug("sandbox: IsAllowed normalizePath failed", "path", path, "write", write, "error", err)
 		return false
 	}
 
@@ -196,7 +196,7 @@ func (s *SandboxConfig) IsAllowed(path string, write bool) bool {
 		if IsSubpath(absPath, absRP) {
 			readonlyMatched = true
 			if write {
-				slog.Warn("sandbox: IsAllowed denied — readonly path", "path", absPath, "readonly", absRP)
+				slog.Debug("sandbox: IsAllowed denied — readonly path", "path", absPath, "readonly", absRP)
 				return false
 			}
 		}
@@ -218,12 +218,12 @@ func (s *SandboxConfig) IsAllowed(path string, write bool) bool {
 	if s.Root != "" {
 		absRoot, err := normalizePath(s.Root)
 		if err != nil {
-			slog.Warn("sandbox: IsAllowed normalizePath(root) failed", "root", s.Root, "error", err)
+			slog.Debug("sandbox: IsAllowed normalizePath(root) failed", "root", s.Root, "error", err)
 			return false
 		}
 		if IsSubpath(absPath, absRoot) {
 			if readonlyMatched && write {
-				slog.Warn("sandbox: IsAllowed denied — readonly match under root", "path", absPath, "root", absRoot)
+				slog.Debug("sandbox: IsAllowed denied — readonly match under root", "path", absPath, "root", absRoot)
 				return false
 			}
 			return true
@@ -231,7 +231,7 @@ func (s *SandboxConfig) IsAllowed(path string, write bool) bool {
 	}
 
 	resolvedRoot, _ := normalizePath(s.Root)
-	slog.Warn("sandbox: IsAllowed denied — path outside root", "path", absPath, "root", s.Root, "resolvedRoot", resolvedRoot, "write", write)
+	slog.Debug("sandbox: IsAllowed denied — path outside root", "path", absPath, "root", s.Root, "resolvedRoot", resolvedRoot, "write", write)
 	return false
 }
 
@@ -464,15 +464,15 @@ func (s *Sandbox) Resolve(path string, write bool) (string, error) {
 	originalPath := path
 	resolved, err := s.config.AutoResolvePath(path)
 	if err != nil {
-		slog.Warn("sandbox: AutoResolvePath failed", "path", originalPath, "write", write, "virtualRoot", s.config.VirtualRoot, "root", s.config.Root, "error", err)
+		slog.Debug("sandbox: AutoResolvePath failed", "path", originalPath, "write", write, "virtualRoot", s.config.VirtualRoot, "root", s.config.Root, "error", err)
 		return "", err
 	}
 	if err := s.config.ValidatePath(resolved); err != nil {
-		slog.Warn("sandbox: ValidatePath failed", "path", originalPath, "resolved", resolved, "write", write, "root", s.config.Root, "error", err)
+		slog.Debug("sandbox: ValidatePath failed", "path", originalPath, "resolved", resolved, "write", write, "root", s.config.Root, "error", err)
 		return "", fmt.Errorf("path %q is outside allowed workspace paths", originalPath)
 	}
 	if write && !s.config.IsAllowed(resolved, true) {
-		slog.Warn("sandbox: IsAllowed denied write", "path", originalPath, "resolved", resolved, "root", s.config.Root, "virtualRoot", s.config.VirtualRoot, "readonlyPaths", s.config.ReadonlyPaths, "allowPaths", s.config.AllowPaths)
+		slog.Debug("sandbox: IsAllowed denied write", "path", originalPath, "resolved", resolved, "root", s.config.Root, "virtualRoot", s.config.VirtualRoot, "readonlyPaths", s.config.ReadonlyPaths, "allowPaths", s.config.AllowPaths)
 		return "", fmt.Errorf("path %q is readonly or blocked by sandbox policy", originalPath)
 	}
 	return resolved, nil

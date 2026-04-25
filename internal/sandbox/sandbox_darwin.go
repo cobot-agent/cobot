@@ -19,8 +19,14 @@ func sandboxExecLaunch(ctx context.Context, req *LaunchRequest) ([]byte, error) 
 		return hostExec(ctx, req)
 	}
 
+	sandboxExecPath, err := exec.LookPath("sandbox-exec")
+	if err != nil {
+		slog.Warn("sandbox: sandbox-exec not found, falling back to unsandboxed execution", "error", err)
+		return hostExec(ctx, req)
+	}
+
 	profile := buildSeatbeltProfile(req.Config)
-	cmd := exec.CommandContext(ctx, "sandbox-exec", "-p", profile, "--", req.Shell, req.ShellFlag, req.Command)
+	cmd := exec.CommandContext(ctx, sandboxExecPath, "-p", profile, "--", req.Shell, req.ShellFlag, req.Command)
 	if req.Dir != "" {
 		cmd.Dir = req.Dir
 	}
@@ -41,9 +47,7 @@ func buildSeatbeltProfile(cfg *SandboxConfig) string {
 	}
 	writePaths = append(writePaths, cfg.AllowPaths...)
 
-	if len(writePaths) == 0 {
-		b.WriteString("(allow file-write* (subpath \"/private/tmp\"))\n")
-	}
+	// No write paths configured: all writes remain denied by the blanket deny above.
 	for _, p := range writePaths {
 		if resolved, err := normalizePath(p); err == nil {
 			fmt.Fprintf(&b, "(allow file-write* (subpath %q))\n", resolved)
@@ -53,6 +57,15 @@ func buildSeatbeltProfile(cfg *SandboxConfig) string {
 	for _, p := range cfg.ReadonlyPaths {
 		if resolved, err := normalizePath(p); err == nil {
 			fmt.Fprintf(&b, "(allow file-read* (subpath %q))\n", resolved)
+		}
+	}
+
+	// Explicitly deny writes to readonly paths, taking precedence over any
+	// broader write-allow rules (e.g. Root subpath) due to Seatbelt's
+	// last-matching-wins semantics.
+	for _, p := range cfg.ReadonlyPaths {
+		if resolved, err := normalizePath(p); err == nil {
+			fmt.Fprintf(&b, "(deny file-write* (subpath %q))\n", resolved)
 		}
 	}
 
