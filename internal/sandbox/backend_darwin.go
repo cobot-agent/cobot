@@ -1,9 +1,9 @@
-//go:build !linux && !darwin
+//go:build darwin
 
 package sandbox
 
 import "context"
 
 func platformLaunch(ctx context.Context, req *LaunchRequest) ([]byte, error) {
-	return hostExec(ctx, req)
+	return sandboxExecLaunch(ctx, req)
 }

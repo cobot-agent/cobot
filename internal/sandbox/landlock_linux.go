@@ -5,6 +5,7 @@ package sandbox
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"strings"
@@ -44,22 +45,13 @@ func landlockLaunch(ctx context.Context, req *LaunchRequest) ([]byte, error) {
 		}
 	} else {
 		// No config means no sandbox policy — run directly on host.
+		slog.Warn("sandbox: no config provided, running command without Landlock enforcement", "command", req.Command)
 		return hostExec(ctx, req)
 	}
 	args = append(args, "--")
 	args = append(args, req.Shell, req.ShellFlag, req.Command)
 
 	cmd := exec.CommandContext(ctx, exe, args...)
-	if req.Dir != "" {
-		cmd.Dir = req.Dir
-	}
-	return cmd.CombinedOutput()
-}
-
-// hostExec runs a command directly on the host (fallback when Landlock re-exec
-// is unavailable).
-func hostExec(ctx context.Context, req *LaunchRequest) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, req.Shell, req.ShellFlag, req.Command)
 	if req.Dir != "" {
 		cmd.Dir = req.Dir
 	}
@@ -160,11 +152,6 @@ func applyLandlock(root string, allowPaths, roPaths []string, noNetwork bool) {
 	// Explicitly read-only paths.
 	for _, p := range roPaths {
 		rules = append(rules, landlock.RODirs(p))
-	}
-
-	// Default: allow writing to /tmp if nothing else is writable.
-	if root == "" && len(allowPaths) == 0 {
-		rules = append(rules, landlock.RWDirs("/tmp"))
 	}
 
 	if err := cfg.RestrictPaths(rules...); err != nil {

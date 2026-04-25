@@ -26,24 +26,21 @@ type shellExecArgs struct {
 const defaultShellTimeout = 2 * time.Minute
 
 type ShellExecTool struct {
-	workdir  string
-	config   *sandbox.SandboxConfig
-	launcher *sandbox.Launcher
-	timeout  time.Duration
+	sandbox    *sandbox.Sandbox
+	timeout    time.Duration
+	launchFunc func(ctx context.Context, req *sandbox.LaunchRequest) ([]byte, error)
 }
 
 type ShellExecToolOption func(*ShellExecTool)
 
-func WithShellWorkdir(workdir string) ShellExecToolOption {
-	return func(t *ShellExecTool) { t.workdir = workdir }
+func WithShellSandbox(sb *sandbox.Sandbox) ShellExecToolOption {
+	return func(t *ShellExecTool) { t.sandbox = sb }
 }
 
-func WithShellSandboxConfig(config *sandbox.SandboxConfig) ShellExecToolOption {
-	return func(t *ShellExecTool) { t.config = config }
-}
-
-func WithShellLauncher(launcher *sandbox.Launcher) ShellExecToolOption {
-	return func(t *ShellExecTool) { t.launcher = launcher }
+// WithShellLaunchFunc sets a custom launch function for testing.
+// When set, it is used instead of sandbox.Launch or the default launcher.
+func WithShellLaunchFunc(fn func(ctx context.Context, req *sandbox.LaunchRequest) ([]byte, error)) ShellExecToolOption {
+	return func(t *ShellExecTool) { t.launchFunc = fn }
 }
 
 var networkCommands = []string{
@@ -58,15 +55,6 @@ func NewShellExecTool(opts ...ShellExecToolOption) *ShellExecTool {
 	for _, opt := range opts {
 		opt(t)
 	}
-	// Only create a sandbox-aware launcher if the user didn't supply one explicitly.
-	// WithShellLauncher takes precedence so tests can inject a stub backend.
-	if t.launcher == nil {
-		if t.config != nil {
-			t.launcher = sandbox.NewLauncher(sandbox.WithSandboxConfig(t.config))
-		} else {
-			t.launcher = sandbox.NewLauncher()
-		}
-	}
 	return t
 }
 
@@ -75,13 +63,7 @@ func (t *ShellExecTool) Name() string {
 }
 
 func (t *ShellExecTool) Description() string {
-	desc := "Execute a shell command and return its output."
-	if t.config != nil && t.config.VirtualRoot != "" {
-		desc += fmt.Sprintf(` Sandbox is active. All file paths are automatically resolved under "%s" — provide paths starting with "%s" for best results. Relative paths and other absolute paths are auto-mapped into the sandbox.`, t.config.VirtualRoot, t.config.VirtualRoot)
-	} else if t.workdir != "" {
-		desc += fmt.Sprintf(" Working directory: %s — all relative paths resolve from here.", t.workdir)
-	}
-	return desc
+	return t.sandbox.Describe("Execute a shell command and return its output.")
 }
 
 func (t *ShellExecTool) Parameters() json.RawMessage {
@@ -95,48 +77,54 @@ func (t *ShellExecTool) Execute(ctx context.Context, args json.RawMessage) (stri
 	}
 
 	// Sandbox: rewrite virtual paths in command and dir to real filesystem paths.
-	if t.config != nil && t.config.VirtualRoot != "" {
-		a.Command = t.config.RewritePaths(a.Command)
+	if t.sandbox.Active() {
+		a.Command = t.sandbox.RewriteCommand(a.Command)
 		if a.Dir != "" {
-			if resolved, err := sandboxResolvePath(t.config, a.Dir, false); err != nil {
+			if resolved, err := t.sandbox.Resolve(a.Dir, false); err != nil {
 				return "", err
 			} else {
 				a.Dir = resolved
 			}
 		}
 	}
-	// Security model:
-	//   The shell executes with cmd.Dir set to the sandbox root (or a resolved
-	//   subdirectory). The process runs as the OS user and can only access what
-	//   the OS user can access — the sandbox is about path visibility to the
-	//   LLM, not OS-level isolation. Command output is sanitized via
-	//   RewriteOutputPaths before being returned to the LLM.
+	// Security model (dual layer):
+	//   1. Virtual path layer: the LLM sees virtual paths (e.g. /home/<workspace>/...),
+	//      which are translated to real paths before execution. Output is sanitized to
+	//      hide real filesystem paths from the LLM.
+	//   2. OS-level enforcement: when a Sandbox is configured, commands run under
+	//      Seatbelt (macOS) or Landlock (Linux), which restrict filesystem writes and
+	//      network access at the kernel level. This prevents the LLM from bypassing
+	//      path restrictions via shell commands.
 
 	cmdStr := a.Command
 
-	// Check blocked commands via SandboxConfig.IsBlockedCommand if available.
-	if t.config != nil && len(t.config.BlockedCommands) > 0 {
-		if t.config.IsBlockedCommand(cmdStr) {
-			return "", fmt.Errorf("command is blocked by sandbox policy")
-		}
+	// Check blocked commands via Sandbox.IsBlockedCommand.
+	if t.sandbox.IsBlockedCommand(cmdStr) {
+		return "", fmt.Errorf("command is blocked by sandbox policy")
 	}
 
-	// Check network commands if network is not allowed.
-	if t.config == nil || !t.config.AllowNetwork {
+	// Apply app-layer network command blacklist when:
+	//  1. No sandbox is configured at all (defense in depth), OR
+	//  2. Sandbox exists but OS-level enforcement is unavailable (e.g. Windows),
+	//     so the incomplete blacklist is the only network restriction available.
+	// On Linux/macOS the kernel-level enforcement (Seatbelt/Landlock) is
+	// comprehensive and the app-layer blacklist is skipped to avoid misleading
+	// errors and false positives from the incomplete command list.
+	needAppBlacklist := (t.sandbox == nil || !t.sandbox.AllowNetwork()) &&
+		(t.sandbox == nil || !t.sandbox.HasOSLevelEnforcement())
+	if needAppBlacklist {
 		if err := checkNetworkCommand(cmdStr); err != nil {
 			return "", err
 		}
 	}
-	cmdDir, err := resolveShellExecDir(t.config, t.workdir, a.Dir)
+	cmdDir, err := resolveShellExecDir(t.sandbox, a.Dir)
 	if err != nil {
 		return "", err
 	}
 
 	// Validate write targets are not in readonly paths.
-	if t.config != nil {
-		if err := validateWritePaths(t.config, cmdStr, cmdDir); err != nil {
-			return "", err
-		}
+	if err := validateWritePaths(t.sandbox, cmdStr, cmdDir); err != nil {
+		return "", err
 	}
 
 	if t.timeout > 0 {
@@ -144,40 +132,40 @@ func (t *ShellExecTool) Execute(ctx context.Context, args json.RawMessage) (stri
 		ctx, cancel = context.WithTimeout(ctx, t.timeout)
 		defer cancel()
 	}
-	if t.launcher == nil {
-		t.launcher = sandbox.NewLauncher()
-	}
 	shell, shellFlag := "sh", "-c"
 	if runtime.GOOS == "windows" {
 		shell, shellFlag = "cmd", "/C"
 	}
-	var launchConfig *sandbox.SandboxConfig
-	if t.config != nil {
-		cfg := t.config.Clone()
-		launchConfig = &cfg
+
+	var out []byte
+	if t.launchFunc != nil {
+		req := &sandbox.LaunchRequest{
+			Shell: shell, ShellFlag: shellFlag,
+			Command: a.Command, Dir: cmdDir,
+		}
+		if t.sandbox != nil {
+			cfg := t.sandbox.CloneConfig()
+			req.Config = &cfg
+		}
+		out, err = t.launchFunc(ctx, req)
+	} else if t.sandbox != nil {
+		out, err = t.sandbox.Launch(ctx, shell, shellFlag, a.Command, cmdDir)
+	} else {
+		out, err = sandbox.NewLauncher().Launch(ctx, &sandbox.LaunchRequest{
+			Shell: shell, ShellFlag: shellFlag,
+			Command: a.Command, Dir: cmdDir,
+		})
 	}
-	out, err := t.launcher.Launch(ctx, &sandbox.LaunchRequest{
-		Shell:     shell,
-		ShellFlag: shellFlag,
-		Command:   a.Command,
-		Dir:       cmdDir,
-		Config:    launchConfig,
-	})
 	output := string(out)
 
 	// Rewrite real filesystem paths in output back to virtual paths for LLM.
-	if t.config != nil && t.config.VirtualRoot != "" {
-		output = t.config.RewriteOutputPaths(output)
-	}
+	output = t.sandbox.RewriteOutput(output)
 
 	if ctx.Err() == context.DeadlineExceeded {
 		return output, fmt.Errorf("shell command timed out after %s", t.timeout)
 	}
 	if err != nil {
-		if t.config != nil && t.config.VirtualRoot != "" {
-			return output, fmt.Errorf("%s", t.config.RewriteOutputPaths(err.Error()))
-		}
-		return output, err
+		return output, fmt.Errorf("%s", t.sandbox.RewriteOutput(err.Error()))
 	}
 	return output, nil
 }
@@ -206,12 +194,16 @@ func isNetworkCommandUsed(cmdStr, nc string) bool {
 	return false
 }
 
-func resolveShellExecDir(cfg *sandbox.SandboxConfig, workdir, dir string) (string, error) {
+func resolveShellExecDir(sb *sandbox.Sandbox, dir string) (string, error) {
 	if dir != "" {
-		if cfg != nil && cfg.VirtualRoot != "" {
-			// Sandbox mode: sandboxResolvePath already resolved and validated
-			// dir to a real absolute path via AutoResolvePath + ValidatePath.
+		if sb != nil && sb.Active() {
+			// Sandbox mode: Sandbox.Resolve already resolved and validated
+			// dir to a real absolute path.
 			return dir, nil
+		}
+		workdir := ""
+		if sb != nil {
+			workdir = sb.Root()
 		}
 		if workdir != "" {
 			// Non-sandbox mode: validate that dir is within workdir boundaries.
@@ -238,14 +230,14 @@ func resolveShellExecDir(cfg *sandbox.SandboxConfig, workdir, dir string) (strin
 		}
 		return dir, nil
 	}
-	if workdir != "" {
-		return workdir, nil
+	if sb != nil {
+		return sb.Root(), nil
 	}
 	return "", nil
 }
 
-func hasActiveWritePolicy(cfg *sandbox.SandboxConfig) bool {
-	return cfg != nil && (cfg.Root != "" || len(cfg.AllowPaths) > 0 || len(cfg.ReadonlyPaths) > 0)
+func hasActiveWritePolicy(sb *sandbox.Sandbox) bool {
+	return sb.HasWritePolicy()
 }
 
 type shellWriteTarget struct {
@@ -483,8 +475,8 @@ func shellWriteValidationSegments(cmd string) []string {
 }
 
 // validateWritePaths checks that any file paths the command writes to are not readonly.
-func validateWritePaths(cfg *sandbox.SandboxConfig, cmdStr string, commandDir ...string) error {
-	if !hasActiveWritePolicy(cfg) {
+func validateWritePaths(sb *sandbox.Sandbox, cmdStr string, commandDir ...string) error {
+	if !hasActiveWritePolicy(sb) {
 		return nil
 	}
 
@@ -505,7 +497,7 @@ func validateWritePaths(cfg *sandbox.SandboxConfig, cmdStr string, commandDir ..
 			if err != nil {
 				continue
 			}
-			if !cfg.IsAllowed(absPath, true) {
+			if !sb.IsWriteAllowed(absPath) {
 				op := "write"
 				if target.append {
 					op = "append"

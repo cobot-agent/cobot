@@ -139,9 +139,19 @@ func ConfigureAgentForWorkspace(a *agent.Agent, ws *workspace.Workspace, registr
 	if store != nil && agentCfg != nil && agentCfg.MemoryPromoteThreshold > 0 {
 		store.SetSTMPromoteThreshold(agentCfg.MemoryPromoteThreshold)
 	}
-	sandbox := configureSandboxTools(a, ws, agentCfg, sm)
-	configureMemoryTools(a, store, sandbox)
-	configureDelegateTool(a, ws, registry, sandbox)
+
+	// Compute sandbox configuration once — shared by all sandbox-aware components.
+	var agentSandbox *sandbox.SandboxConfig
+	if agentCfg != nil {
+		agentSandbox = agentCfg.Sandbox
+	}
+	sandboxConfig := ws.EffectiveSandbox(agentSandbox)
+
+	// Sandbox tools use the unified *sandbox.Sandbox for virtual path translation.
+	// Memory tools still accept *sandbox.SandboxConfig until they are migrated.
+	sb := configureSandboxTools(a, ws, agentCfg, sm, sandboxConfig)
+	configureMemoryTools(a, store, sandboxConfig)
+	configureDelegateTool(a, ws, registry, sb)
 	configureCronTool(a, ws, registry)
 	configureSkillSyncer(a, store, ws, agentCfg)
 
@@ -294,37 +304,28 @@ func configureMemory(sm *agent.SessionManager, ws *workspace.Workspace, provider
 	return store
 }
 
-func configureSandboxTools(a *agent.Agent, ws *workspace.Workspace, agentCfg *config.AgentConfig, sm *agent.SessionManager) *sandbox.SandboxConfig {
-	var agentSandbox *sandbox.SandboxConfig
-	if agentCfg != nil {
-		agentSandbox = agentCfg.Sandbox
-	}
-	sandbox := ws.EffectiveSandbox(agentSandbox)
+// configureSandboxTools creates the unified Sandbox and registers all sandbox-scoped tools.
+// All filesystem and shell tools receive the same *sandbox.Sandbox, ensuring consistent
+// virtual path translation between filesystem_write and shell_exec.
+func configureSandboxTools(a *agent.Agent, ws *workspace.Workspace, agentCfg *config.AgentConfig, sm *agent.SessionManager, cfg *sandbox.SandboxConfig) *sandbox.Sandbox {
+	sb := sandbox.NewSandbox(*cfg)
 
-	a.RegisterTool(tools.NewReadFileTool(sandbox))
-	a.RegisterTool(tools.NewWriteFileTool(sandbox))
-	a.RegisterTool(tools.NewListDirTool(sandbox))
-	a.RegisterTool(tools.NewSearchFilesTool(sandbox))
-	a.RegisterTool(tools.NewGrepFilesTool(sandbox))
+	a.RegisterTool(tools.NewReadFileTool(sb))
+	a.RegisterTool(tools.NewWriteFileTool(sb))
+	a.RegisterTool(tools.NewListDirTool(sb))
+	a.RegisterTool(tools.NewSearchFilesTool(sb))
+	a.RegisterTool(tools.NewGrepFilesTool(sb))
 
-	sandboxRoot := sandbox.Root
-	if sandboxRoot == "" {
-		sandboxRoot = ws.SpaceDir()
-	}
+	a.RegisterTool(tools.NewShellExecTool(tools.WithShellSandbox(sb)))
 
-	a.RegisterTool(tools.NewShellExecTool(
-		tools.WithShellWorkdir(sandboxRoot),
-		tools.WithShellSandboxConfig(sandbox),
-	))
-
-	tools.RegisterWorkspaceTools(a.ToolRegistry(), ws, sandbox)
+	tools.RegisterWorkspaceTools(a.ToolRegistry(), ws, sb)
 	var enabledSkills []string
 	if agentCfg != nil {
 		enabledSkills = agentCfg.EnabledSkills
 	}
 	refresher := &skillsRefresher{sm: sm, ws: ws, filter: enabledSkills}
 	tools.RegisterSkillsTools(a.ToolRegistry(), ws, refresher)
-	return sandbox
+	return sb
 }
 
 func configureMemoryTools(a *agent.Agent, store *memory.Store, sandbox *sandbox.SandboxConfig) {
@@ -335,11 +336,11 @@ func configureMemoryTools(a *agent.Agent, store *memory.Store, sandbox *sandbox.
 	}
 }
 
-func configureDelegateTool(a *agent.Agent, ws *workspace.Workspace, registry cobot.ModelResolver, sandbox *sandbox.SandboxConfig) {
+func configureDelegateTool(a *agent.Agent, ws *workspace.Workspace, registry cobot.ModelResolver, sb *sandbox.Sandbox) {
 	a.RegisterTool(tools.NewDelegateTool(func() cobot.SubAgent {
 		filtered := a.ToolRegistry().Clone().Without("delegate_task", "memory_store", "memory_search", "l3_deep_search")
 		return newSubAgent(a, registry, filtered)
-	}, tools.WithDelegateWorkdir(ws.SpaceDir()), tools.WithDelegateAgentLookup(ws), tools.WithDelegateSandbox(sandbox)))
+	}, tools.WithDelegateWorkdir(ws.SpaceDir()), tools.WithDelegateAgentLookup(ws), tools.WithDelegateSandbox(sb)))
 }
 
 func configureCronTool(a *agent.Agent, ws *workspace.Workspace, registry cobot.ModelResolver) {

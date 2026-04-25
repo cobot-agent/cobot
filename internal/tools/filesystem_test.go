@@ -85,11 +85,11 @@ func TestShellExecToolMultiArg(t *testing.T) {
 func TestReadFileTool_SandboxResolve(t *testing.T) {
 	dir := t.TempDir()
 	vr := sandpkg.VirtualHome("test")
-	sandbox := &sandpkg.SandboxConfig{VirtualRoot: vr, Root: dir}
+	sb := sandpkg.NewSandbox(sandpkg.SandboxConfig{VirtualRoot: vr, Root: dir})
 	os.MkdirAll(filepath.Join(dir, "src"), 0755)
 	os.WriteFile(filepath.Join(dir, "src", "main.go"), []byte("package main"), 0644)
 
-	tool := NewReadFileTool(sandbox)
+	tool := NewReadFileTool(sb)
 
 	// Virtual path resolves correctly
 	vp := sandpkg.PathJoinVirtual(vr, "src/main.go")
@@ -106,9 +106,9 @@ func TestReadFileTool_SandboxResolve(t *testing.T) {
 
 func TestReadFileTool_SandboxRejectOutside(t *testing.T) {
 	dir := t.TempDir()
-	sandbox := &sandpkg.SandboxConfig{VirtualRoot: sandpkg.VirtualHome("test"), Root: dir}
+	sb := sandpkg.NewSandbox(sandpkg.SandboxConfig{VirtualRoot: sandpkg.VirtualHome("test"), Root: dir})
 
-	tool := NewReadFileTool(sandbox)
+	tool := NewReadFileTool(sb)
 
 	args, _ := json.Marshal(map[string]string{"path": "/etc/passwd"})
 	_, err := tool.Execute(context.Background(), args)
@@ -120,11 +120,11 @@ func TestReadFileTool_SandboxRejectOutside(t *testing.T) {
 func TestReadFileTool_SandboxRejectRelative(t *testing.T) {
 	dir := t.TempDir()
 	vr := sandpkg.VirtualHome("test")
-	sandbox := &sandpkg.SandboxConfig{VirtualRoot: vr, Root: dir}
+	sb := sandpkg.NewSandbox(sandpkg.SandboxConfig{VirtualRoot: vr, Root: dir})
 	os.MkdirAll(filepath.Join(dir, "src"), 0755)
 	os.WriteFile(filepath.Join(dir, "src", "main.go"), []byte("package main"), 0644)
 
-	tool := NewReadFileTool(sandbox)
+	tool := NewReadFileTool(sb)
 
 	// Relative paths are now auto-resolved under VirtualRoot, so this should succeed
 	args, _ := json.Marshal(map[string]string{"path": "src/main.go"})
@@ -141,9 +141,9 @@ func TestReadFileTool_SandboxRejectRelative(t *testing.T) {
 func TestWriteFileTool_SandboxResolve(t *testing.T) {
 	dir := t.TempDir()
 	vr := sandpkg.VirtualHome("test")
-	sandbox := &sandpkg.SandboxConfig{VirtualRoot: vr, Root: dir}
+	sb := sandpkg.NewSandbox(sandpkg.SandboxConfig{VirtualRoot: vr, Root: dir})
 
-	tool := NewWriteFileTool(sandbox)
+	tool := NewWriteFileTool(sb)
 
 	vp := sandpkg.PathJoinVirtual(vr, "output.txt")
 	args, _ := json.Marshal(map[string]string{"path": vp, "content": "hello"})
@@ -165,9 +165,9 @@ func TestWriteFileTool_SandboxResolve(t *testing.T) {
 func TestWriteFileTool_SandboxRejectOutside(t *testing.T) {
 	dir := t.TempDir()
 	vr := sandpkg.VirtualHome("test")
-	sandbox := &sandpkg.SandboxConfig{VirtualRoot: vr, Root: dir}
+	sb := sandpkg.NewSandbox(sandpkg.SandboxConfig{VirtualRoot: vr, Root: dir})
 
-	tool := NewWriteFileTool(sandbox)
+	tool := NewWriteFileTool(sb)
 
 	// /tmp/evil.txt is auto-resolved to dir/tmp/evil.txt inside the sandbox,
 	// so it succeeds (the path is safely contained within the sandbox).
@@ -199,13 +199,13 @@ func TestWriteFileTool_SandboxRejectReadonlyPath(t *testing.T) {
 	}
 
 	vr := sandpkg.VirtualHome("test")
-	sandbox := &sandpkg.SandboxConfig{
+	sb := sandpkg.NewSandbox(sandpkg.SandboxConfig{
 		VirtualRoot:   vr,
 		Root:          dir,
 		ReadonlyPaths: []string{readonlyDir},
-	}
+	})
 
-	tool := NewWriteFileTool(sandbox)
+	tool := NewWriteFileTool(sb)
 	vp := sandpkg.PathJoinVirtual(vr, "readonly/output.txt")
 	args, _ := json.Marshal(map[string]string{"path": vp, "content": "blocked"})
 
@@ -222,16 +222,13 @@ func TestShellExecTool_SandboxRewriteCommand(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "hello.txt"), []byte("world"), 0644)
 
 	vr := sandpkg.VirtualHome("test")
-	sandbox := &sandpkg.SandboxConfig{
+	sb := sandpkg.NewSandbox(sandpkg.SandboxConfig{
 		VirtualRoot:     vr,
 		Root:            dir,
 		AllowNetwork:    true,
 		BlockedCommands: nil,
-	}
-	tool := NewShellExecTool(
-		WithShellWorkdir(dir),
-		WithShellSandboxConfig(sandbox),
-	)
+	})
+	tool := NewShellExecTool(WithShellSandbox(sb))
 
 	// The LLM sends a command using the virtual path; the tool should rewrite it.
 	vp := sandpkg.PathJoinVirtual(vr, "hello.txt")
@@ -252,16 +249,13 @@ func TestShellExecTool_SandboxRewriteDir(t *testing.T) {
 	os.MkdirAll(sub, 0755)
 
 	vr := sandpkg.VirtualHome("test")
-	sandbox := &sandpkg.SandboxConfig{
+	sb := sandpkg.NewSandbox(sandpkg.SandboxConfig{
 		VirtualRoot:     vr,
 		Root:            dir,
 		AllowNetwork:    true,
 		BlockedCommands: nil,
-	}
-	tool := NewShellExecTool(
-		WithShellWorkdir(dir),
-		WithShellSandboxConfig(sandbox),
-	)
+	})
+	tool := NewShellExecTool(WithShellSandbox(sb))
 
 	cmd := "pwd"
 	if runtime.GOOS == "windows" {
@@ -282,10 +276,8 @@ func TestShellExecTool_SandboxRewriteDir(t *testing.T) {
 }
 
 func TestShellExecTool_BlocksConfiguredCommandAfterAndAnd(t *testing.T) {
-	tool := NewShellExecTool(
-		WithShellWorkdir(t.TempDir()),
-		WithShellSandboxConfig(&sandpkg.SandboxConfig{BlockedCommands: []string{"echo blocked"}}),
-	)
+	sb := sandpkg.NewSandbox(sandpkg.SandboxConfig{BlockedCommands: []string{"echo blocked"}})
+	tool := NewShellExecTool(WithShellSandbox(sb))
 
 	args, _ := json.Marshal(map[string]string{"command": "true&&echo blocked"})
 	if _, err := tool.Execute(context.Background(), args); err == nil {
@@ -294,12 +286,9 @@ func TestShellExecTool_BlocksConfiguredCommandAfterAndAnd(t *testing.T) {
 }
 
 func TestShellExecTool_BlocksNetworkCommandAfterAndAnd(t *testing.T) {
-	cfg := &sandpkg.SandboxConfig{}
-	cfg.SetAllowNetwork(false)
-	tool := NewShellExecTool(
-		WithShellWorkdir(t.TempDir()),
-		WithShellSandboxConfig(cfg),
-	)
+	// When no sandbox config exists, the application-level network command
+	// blacklist is the only defense. Verify it blocks curl after &&.
+	tool := NewShellExecTool()
 
 	args, _ := json.Marshal(map[string]string{"command": "true&&curl --version"})
 	if _, err := tool.Execute(context.Background(), args); err == nil {
@@ -310,16 +299,13 @@ func TestShellExecTool_BlocksNetworkCommandAfterAndAnd(t *testing.T) {
 func TestShellExecTool_SandboxRejectDirOutside(t *testing.T) {
 	dir := t.TempDir()
 
-	sandbox := &sandpkg.SandboxConfig{
+	sb := sandpkg.NewSandbox(sandpkg.SandboxConfig{
 		VirtualRoot:     sandpkg.VirtualHome("test"),
 		Root:            dir,
 		AllowNetwork:    true,
 		BlockedCommands: nil,
-	}
-	tool := NewShellExecTool(
-		WithShellWorkdir(dir),
-		WithShellSandboxConfig(sandbox),
-	)
+	})
+	tool := NewShellExecTool(WithShellSandbox(sb))
 
 	args, _ := json.Marshal(map[string]string{"command": "pwd", "dir": "/etc"})
 	_, err := tool.Execute(context.Background(), args)
@@ -343,8 +329,8 @@ func TestShellExecTool_NoSandboxUnchanged(t *testing.T) {
 
 func TestShellExecTool_Description_Sandbox(t *testing.T) {
 	vr := sandpkg.VirtualHome("ws")
-	sandbox := &sandpkg.SandboxConfig{VirtualRoot: vr, Root: "/tmp/real"}
-	tool := NewShellExecTool(WithShellSandboxConfig(sandbox))
+	sb := sandpkg.NewSandbox(sandpkg.SandboxConfig{VirtualRoot: vr, Root: "/tmp/real"})
+	tool := NewShellExecTool(WithShellSandbox(sb))
 	desc := tool.Description()
 	if !strings.Contains(desc, vr) {
 		t.Errorf("description should mention VirtualRoot, got %q", desc)
@@ -352,9 +338,9 @@ func TestShellExecTool_Description_Sandbox(t *testing.T) {
 }
 
 func TestShellExecTool_Description_NoSandbox(t *testing.T) {
-	tool := NewShellExecTool(WithShellWorkdir("/some/dir"))
+	tool := NewShellExecTool()
 	desc := tool.Description()
-	if !strings.Contains(desc, "/some/dir") {
-		t.Errorf("description should mention workdir, got %q", desc)
+	if strings.Contains(desc, "Sandbox is active") {
+		t.Errorf("non-sandbox description should not mention sandbox, got %q", desc)
 	}
 }

@@ -198,9 +198,10 @@ func TestLogResponseWritesToFile(t *testing.T) {
 	t.Fatal("session log file not found")
 }
 
-func TestLogSSENilCtx(t *testing.T) {
+func TestLogSSENoSessionCtx(t *testing.T) {
 	defer resetGlobal(t)
-	LogSSE(nil, "openai", []byte(`data: {"done":true}`))
+	// Context without a session ID — getOrCreateLogger returns nil, should not panic.
+	LogSSE(context.Background(), "openai", []byte(`data: {"done":true}`))
 }
 
 func TestLogSSEWritesToFile(t *testing.T) {

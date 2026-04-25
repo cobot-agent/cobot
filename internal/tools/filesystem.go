@@ -28,9 +28,9 @@ type readFileArgs struct {
 
 type ReadFileTool struct{ BasicTool }
 
-func NewReadFileTool(sandbox *sandbox.SandboxConfig) *ReadFileTool {
+func NewReadFileTool(sb *sandbox.Sandbox) *ReadFileTool {
 	return &ReadFileTool{BasicTool{
-		sandboxTool: sandboxTool{sandbox: sandbox},
+		sandboxTool: sandboxTool{sandbox: sb},
 		name:        "filesystem_read",
 		desc:        "Read the contents of a file at the given path.",
 		params:      filesystemReadParamsJSON,
@@ -51,8 +51,8 @@ func (t *ReadFileTool) Execute(ctx context.Context, args json.RawMessage) (strin
 	if err != nil {
 		return "", sandboxRewriteErr(t.sandbox, err)
 	}
-	if t.sandbox != nil && t.sandbox.VirtualRoot != "" {
-		virtualPath := t.sandbox.RealToVirtual(a.Path)
+	if t.sandbox.Active() {
+		virtualPath := t.sandbox.VirtualPath(a.Path)
 		return fmt.Sprintf("# %s\n%s", virtualPath, string(data)), nil
 	}
 	return string(data), nil
@@ -65,9 +65,9 @@ type writeFileArgs struct {
 
 type WriteFileTool struct{ BasicTool }
 
-func NewWriteFileTool(sandbox *sandbox.SandboxConfig) *WriteFileTool {
+func NewWriteFileTool(sb *sandbox.Sandbox) *WriteFileTool {
 	return &WriteFileTool{BasicTool{
-		sandboxTool: sandboxTool{sandbox: sandbox},
+		sandboxTool: sandboxTool{sandbox: sb},
 		name:        "filesystem_write",
 		desc:        "Write content to a file at the given path.",
 		params:      filesystemWriteParamsJSON,
@@ -92,8 +92,8 @@ func (t *WriteFileTool) Execute(ctx context.Context, args json.RawMessage) (stri
 	if err := os.WriteFile(a.Path, []byte(a.Content), 0644); err != nil {
 		return "", sandboxRewriteErr(t.sandbox, err)
 	}
-	if t.sandbox != nil && t.sandbox.VirtualRoot != "" {
-		virtualPath := t.sandbox.RealToVirtual(a.Path)
+	if t.sandbox.Active() {
+		virtualPath := t.sandbox.VirtualPath(a.Path)
 		return fmt.Sprintf("wrote %s", virtualPath), nil
 	}
 	return "ok", nil
@@ -106,9 +106,9 @@ type listDirArgs struct {
 
 type ListDirTool struct{ BasicTool }
 
-func NewListDirTool(sandbox *sandbox.SandboxConfig) *ListDirTool {
+func NewListDirTool(sb *sandbox.Sandbox) *ListDirTool {
 	return &ListDirTool{BasicTool{
-		sandboxTool: sandboxTool{sandbox: sandbox},
+		sandboxTool: sandboxTool{sandbox: sb},
 		name:        "filesystem_list",
 		desc:        "List files and directories at the given path.",
 		params:      filesystemListParamsJSON,
@@ -132,8 +132,8 @@ func (t *ListDirTool) Execute(ctx context.Context, args json.RawMessage) (string
 	}
 
 	virtualPrefix := ""
-	if t.sandbox != nil && t.sandbox.VirtualRoot != "" {
-		virtualPrefix = t.sandbox.RealToVirtual(a.Path)
+	if t.sandbox.Active() {
+		virtualPrefix = t.sandbox.VirtualPath(a.Path)
 	}
 
 	var lines []string

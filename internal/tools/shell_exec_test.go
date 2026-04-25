@@ -27,12 +27,12 @@ func (s *stubLauncher) Launch(_ context.Context, req *sandboxpkg.LaunchRequest) 
 // --- validateWritePaths unit tests ---
 
 func TestValidateWritePaths_AllowsReadOnlyCmd(t *testing.T) {
-	cfg := &sandboxpkg.SandboxConfig{
+	sb := sandboxpkg.NewSandbox(sandboxpkg.SandboxConfig{
 		Root:          t.TempDir(),
 		VirtualRoot:   sandboxpkg.VirtualHome("ws"),
 		ReadonlyPaths: []string{t.TempDir() + "/readonly"},
-	}
-	err := validateWritePaths(cfg, "cat /etc/hostname")
+	})
+	err := validateWritePaths(sb, "cat /etc/hostname")
 	if err != nil {
 		t.Errorf("read-only command should be allowed, got: %v", err)
 	}
@@ -41,12 +41,12 @@ func TestValidateWritePaths_AllowsReadOnlyCmd(t *testing.T) {
 func TestValidateWritePaths_AllowsAllowedPath(t *testing.T) {
 	dir := t.TempDir()
 	os.MkdirAll(filepath.Join(dir, "allowed"), 0755)
-	cfg := &sandboxpkg.SandboxConfig{
+	sb := sandboxpkg.NewSandbox(sandboxpkg.SandboxConfig{
 		Root:        dir,
 		AllowPaths:  []string{dir + "/allowed"},
 		VirtualRoot: sandboxpkg.VirtualHome("ws"),
-	}
-	err := validateWritePaths(cfg, "echo hello > "+dir+"/allowed/out.txt")
+	})
+	err := validateWritePaths(sb, "echo hello > "+dir+"/allowed/out.txt")
 	if err != nil {
 		t.Errorf("write to allowed path should be allowed, got: %v", err)
 	}
@@ -54,11 +54,11 @@ func TestValidateWritePaths_AllowsAllowedPath(t *testing.T) {
 
 func TestValidateWritePaths_AllowsRootPath(t *testing.T) {
 	dir := t.TempDir()
-	cfg := &sandboxpkg.SandboxConfig{
+	sb := sandboxpkg.NewSandbox(sandboxpkg.SandboxConfig{
 		Root:        dir,
 		VirtualRoot: sandboxpkg.VirtualHome("ws"),
-	}
-	err := validateWritePaths(cfg, "echo hello > "+dir+"/out.txt")
+	})
+	err := validateWritePaths(sb, "echo hello > "+dir+"/out.txt")
 	if err != nil {
 		t.Errorf("write to root path should be allowed, got: %v", err)
 	}
@@ -71,12 +71,12 @@ func TestValidateWritePaths_RejectsReadonlyPath(t *testing.T) {
 	// Resolve symlinks so the stored path matches what IsAllowed computes internally
 	// (IsAllowed calls EvalSymlinks on both the checked path and the pattern).
 	readonlyDir, _ = filepath.EvalSymlinks(readonlyDir)
-	cfg := &sandboxpkg.SandboxConfig{
+	sb := sandboxpkg.NewSandbox(sandboxpkg.SandboxConfig{
 		Root:          dir,
 		VirtualRoot:   sandboxpkg.VirtualHome("ws"),
 		ReadonlyPaths: []string{readonlyDir},
-	}
-	err := validateWritePaths(cfg, "echo hello > "+readonlyDir+"/out.txt")
+	})
+	err := validateWritePaths(sb, "echo hello > "+readonlyDir+"/out.txt")
 	if err == nil {
 		t.Error("write to readonly path should be rejected")
 	}
@@ -87,11 +87,11 @@ func TestValidateWritePaths_RejectsReadonlyPath(t *testing.T) {
 
 func TestValidateWritePaths_RejectsOutsideSandbox(t *testing.T) {
 	dir := t.TempDir()
-	cfg := &sandboxpkg.SandboxConfig{
+	sb := sandboxpkg.NewSandbox(sandboxpkg.SandboxConfig{
 		Root:        dir,
 		VirtualRoot: sandboxpkg.VirtualHome("ws"),
-	}
-	err := validateWritePaths(cfg, "echo hello > /tmp/outside.txt")
+	})
+	err := validateWritePaths(sb, "echo hello > /tmp/outside.txt")
 	if err == nil {
 		t.Error("write outside sandbox should be rejected")
 	}
@@ -102,39 +102,44 @@ func TestValidateWritePaths_RejectsOutsideSandbox(t *testing.T) {
 
 func TestValidateWritePaths_AllowsAppend(t *testing.T) {
 	dir := t.TempDir()
-	cfg := &sandboxpkg.SandboxConfig{
+	sb := sandboxpkg.NewSandbox(sandboxpkg.SandboxConfig{
 		Root:        dir,
 		VirtualRoot: sandboxpkg.VirtualHome("ws"),
-	}
-	err := validateWritePaths(cfg, "echo hello >> "+dir+"/out.txt")
+	})
+	err := validateWritePaths(sb, "echo hello >> "+dir+"/out.txt")
 	if err != nil {
-		t.Errorf("append to root path should be allowed, got: %v", err)
+		t.Errorf("append to allowed path should be allowed, got: %v", err)
 	}
 }
 
 func TestValidateWritePaths_RejectsReadonlyAppend(t *testing.T) {
 	dir := t.TempDir()
-	os.MkdirAll(filepath.Join(dir, "readonly"), 0755)
-	cfg := &sandboxpkg.SandboxConfig{
+	readonlyDir := filepath.Join(dir, "readonly")
+	os.MkdirAll(readonlyDir, 0755)
+	readonlyDir, _ = filepath.EvalSymlinks(readonlyDir)
+	sb := sandboxpkg.NewSandbox(sandboxpkg.SandboxConfig{
 		Root:          dir,
 		VirtualRoot:   sandboxpkg.VirtualHome("ws"),
-		ReadonlyPaths: []string{dir + "/readonly"},
-	}
-	err := validateWritePaths(cfg, "echo hello >> "+dir+"/readonly/out.txt")
+		ReadonlyPaths: []string{readonlyDir},
+	})
+	err := validateWritePaths(sb, "echo hello >> "+readonlyDir+"/out.txt")
 	if err == nil {
 		t.Error("append to readonly path should be rejected")
+	}
+	if !strings.Contains(err.Error(), "readonly") {
+		t.Errorf("error should mention readonly, got: %v", err)
 	}
 }
 
 func TestValidateWritePaths_HandlesTee(t *testing.T) {
 	dir := t.TempDir()
-	cfg := &sandboxpkg.SandboxConfig{
+	sb := sandboxpkg.NewSandbox(sandboxpkg.SandboxConfig{
 		Root:        dir,
 		VirtualRoot: sandboxpkg.VirtualHome("ws"),
-	}
-	err := validateWritePaths(cfg, "echo hello | tee "+dir+"/out.txt")
+	})
+	err := validateWritePaths(sb, "echo hello | tee "+dir+"/out.txt")
 	if err != nil {
-		t.Errorf("tee to root path should be allowed, got: %v", err)
+		t.Errorf("tee to allowed path should be allowed, got: %v", err)
 	}
 }
 
@@ -143,54 +148,63 @@ func TestValidateWritePaths_RejectsTeeToReadonly(t *testing.T) {
 	readonlyDir := filepath.Join(dir, "readonly")
 	os.MkdirAll(readonlyDir, 0755)
 	readonlyDir, _ = filepath.EvalSymlinks(readonlyDir)
-	cfg := &sandboxpkg.SandboxConfig{
+	sb := sandboxpkg.NewSandbox(sandboxpkg.SandboxConfig{
 		Root:          dir,
 		VirtualRoot:   sandboxpkg.VirtualHome("ws"),
 		ReadonlyPaths: []string{readonlyDir},
-	}
-	err := validateWritePaths(cfg, "echo hello | tee "+readonlyDir+"/out.txt")
+	})
+	err := validateWritePaths(sb, "echo hello | tee "+readonlyDir+"/out.txt")
 	if err == nil {
 		t.Error("tee to readonly path should be rejected")
+	}
+	if !strings.Contains(err.Error(), "readonly") {
+		t.Errorf("error should mention readonly, got: %v", err)
 	}
 }
 
 func TestValidateWritePaths_IgnoresInputRedirection(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "in.txt"), []byte("input"), 0644)
-	cfg := &sandboxpkg.SandboxConfig{
-		Root:        dir,
-		VirtualRoot: sandboxpkg.VirtualHome("ws"),
-	}
-	// Input redirection < should not be treated as a write.
-	err := validateWritePaths(cfg, "cat < "+dir+"/in.txt")
+	readonlyDir := filepath.Join(dir, "readonly")
+	os.MkdirAll(readonlyDir, 0755)
+	sb := sandboxpkg.NewSandbox(sandboxpkg.SandboxConfig{
+		Root:          dir,
+		VirtualRoot:   sandboxpkg.VirtualHome("ws"),
+		ReadonlyPaths: []string{readonlyDir},
+	})
+	err := validateWritePaths(sb, "cat "+readonlyDir+"/input.txt")
 	if err != nil {
-		t.Errorf("input redirection should not be treated as write, got: %v", err)
+		t.Errorf("input redirection should be allowed, got: %v", err)
 	}
 }
 
 func TestValidateWritePaths_HandlesStderrRedirection(t *testing.T) {
 	dir := t.TempDir()
-	cfg := &sandboxpkg.SandboxConfig{
+	sb := sandboxpkg.NewSandbox(sandboxpkg.SandboxConfig{
 		Root:        dir,
 		VirtualRoot: sandboxpkg.VirtualHome("ws"),
-	}
-	err := validateWritePaths(cfg, "cat /nonexistent 2> "+dir+"/err.txt")
+	})
+	err := validateWritePaths(sb, "echo hello 2>"+dir+"/err.txt")
 	if err != nil {
-		t.Errorf("stderr redirection should be allowed, got: %v", err)
+		t.Errorf("stderr redirect to allowed path should be allowed, got: %v", err)
 	}
 }
 
 func TestValidateWritePaths_RejectsStderrToReadonly(t *testing.T) {
 	dir := t.TempDir()
-	os.MkdirAll(filepath.Join(dir, "readonly"), 0755)
-	cfg := &sandboxpkg.SandboxConfig{
+	readonlyDir := filepath.Join(dir, "readonly")
+	os.MkdirAll(readonlyDir, 0755)
+	readonlyDir, _ = filepath.EvalSymlinks(readonlyDir)
+	sb := sandboxpkg.NewSandbox(sandboxpkg.SandboxConfig{
 		Root:          dir,
 		VirtualRoot:   sandboxpkg.VirtualHome("ws"),
-		ReadonlyPaths: []string{dir + "/readonly"},
-	}
-	err := validateWritePaths(cfg, "cat /nonexistent 2> "+dir+"/readonly/err.txt")
+		ReadonlyPaths: []string{readonlyDir},
+	})
+	err := validateWritePaths(sb, "echo hello 2>"+readonlyDir+"/err.txt")
 	if err == nil {
-		t.Error("stderr write to readonly path should be rejected")
+		t.Error("stderr redirect to readonly path should be rejected")
+	}
+	if !strings.Contains(err.Error(), "readonly") {
+		t.Errorf("error should mention readonly, got: %v", err)
 	}
 }
 
@@ -202,10 +216,10 @@ func TestValidateWritePaths_NilConfig(t *testing.T) {
 }
 
 func TestValidateWritePaths_InactiveSandboxPolicy_AllowsWrites(t *testing.T) {
-	cfg := &sandboxpkg.SandboxConfig{
+	sb := sandboxpkg.NewSandbox(sandboxpkg.SandboxConfig{
 		VirtualRoot: sandboxpkg.VirtualHome("ws"),
-	}
-	if err := validateWritePaths(cfg, "echo hello > /tmp/out.txt"); err != nil {
+	})
+	if err := validateWritePaths(sb, "echo hello > /tmp/out.txt"); err != nil {
 		t.Errorf("inactive sandbox policy should not block writes, got: %v", err)
 	}
 }
@@ -216,11 +230,11 @@ func TestValidateWritePaths_RelativeRedirectUsesCommandDir(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(commandDir, "nested"), 0755); err != nil {
 		t.Fatalf("mkdir command dir: %v", err)
 	}
-	cfg := &sandboxpkg.SandboxConfig{
+	sb := sandboxpkg.NewSandbox(sandboxpkg.SandboxConfig{
 		Root:        root,
 		VirtualRoot: sandboxpkg.VirtualHome("ws"),
-	}
-	if err := validateWritePaths(cfg, "echo hello > nested/out.txt", commandDir); err != nil {
+	})
+	if err := validateWritePaths(sb, "echo hello > nested/out.txt", commandDir); err != nil {
 		t.Errorf("relative redirect should resolve from command dir, got: %v", err)
 	}
 }
@@ -232,11 +246,11 @@ func TestValidateWritePaths_RejectsCommonRedirectWriteSyntaxes(t *testing.T) {
 		t.Fatalf("mkdir readonly dir: %v", err)
 	}
 	readonlyDir, _ = filepath.EvalSymlinks(readonlyDir)
-	cfg := &sandboxpkg.SandboxConfig{
+	sb := sandboxpkg.NewSandbox(sandboxpkg.SandboxConfig{
 		Root:          root,
 		VirtualRoot:   sandboxpkg.VirtualHome("ws"),
 		ReadonlyPaths: []string{readonlyDir},
-	}
+	})
 
 	tests := []struct {
 		name string
@@ -255,7 +269,7 @@ func TestValidateWritePaths_RejectsCommonRedirectWriteSyntaxes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validateWritePaths(cfg, tt.cmd, root)
+			err := validateWritePaths(sb, tt.cmd, root)
 			if err == nil {
 				t.Fatalf("expected %q to be rejected", tt.cmd)
 			}
@@ -307,7 +321,8 @@ func TestShellExecTool_NoSandbox(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "in.txt"), []byte("hello world"), 0644)
 
-	tool := NewShellExecTool(WithShellWorkdir(dir))
+	sb := sandboxpkg.NewSandbox(sandboxpkg.SandboxConfig{Root: dir})
+	tool := NewShellExecTool(WithShellSandbox(sb))
 	args, _ := json.Marshal(map[string]any{"command": "cat in.txt"})
 	result, err := tool.Execute(context.Background(), args)
 	if err != nil {
@@ -322,9 +337,9 @@ func TestShellExecTool_SandboxVirtualRootRewrite(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "hello.txt"), []byte("sandbox content"), 0644)
 	vr := sandboxpkg.VirtualHome("myws")
-	cfg := &sandboxpkg.SandboxConfig{VirtualRoot: vr, Root: dir}
+	sb := sandboxpkg.NewSandbox(sandboxpkg.SandboxConfig{VirtualRoot: vr, Root: dir})
 
-	tool := NewShellExecTool(WithShellSandboxConfig(cfg))
+	tool := NewShellExecTool(WithShellSandbox(sb))
 	// LLM uses the virtual path; command should be rewritten to real path before execution.
 	vp := sandboxpkg.PathJoinVirtual(vr, "hello.txt")
 	args, _ := json.Marshal(map[string]any{"command": "cat " + vp})
@@ -341,9 +356,9 @@ func TestShellExecTool_SandboxOutputRewrite(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "hello.txt"), []byte("content"), 0644)
 	vr := sandboxpkg.VirtualHome("myws")
-	cfg := &sandboxpkg.SandboxConfig{VirtualRoot: vr, Root: dir}
+	sb := sandboxpkg.NewSandbox(sandboxpkg.SandboxConfig{VirtualRoot: vr, Root: dir})
 
-	tool := NewShellExecTool(WithShellSandboxConfig(cfg))
+	tool := NewShellExecTool(WithShellSandbox(sb))
 	// LLM uses the virtual path; command should be rewritten to real path before execution.
 	vp := sandboxpkg.PathJoinVirtual(vr, "hello.txt")
 	args, _ := json.Marshal(map[string]any{"command": "cat " + vp})
@@ -364,13 +379,13 @@ func TestShellExecTool_SandboxOutputRewrite(t *testing.T) {
 func TestShellExecTool_SandboxBlockedCommand(t *testing.T) {
 	dir := t.TempDir()
 	vr := sandboxpkg.VirtualHome("myws")
-	cfg := &sandboxpkg.SandboxConfig{
+	sb := sandboxpkg.NewSandbox(sandboxpkg.SandboxConfig{
 		VirtualRoot:     vr,
 		Root:            dir,
 		BlockedCommands: []string{"rm -rf /"},
-	}
+	})
 
-	tool := NewShellExecTool(WithShellSandboxConfig(cfg))
+	tool := NewShellExecTool(WithShellSandbox(sb))
 	args, _ := json.Marshal(map[string]any{"command": "rm -rf /"})
 	_, err := tool.Execute(context.Background(), args)
 	if err == nil {
@@ -382,19 +397,13 @@ func TestShellExecTool_SandboxBlockedCommand(t *testing.T) {
 }
 
 func TestShellExecTool_NetworkBlocked(t *testing.T) {
-	dir := t.TempDir()
-	vr := sandboxpkg.VirtualHome("myws")
-	cfg := &sandboxpkg.SandboxConfig{
-		VirtualRoot:  vr,
-		Root:         dir,
-		AllowNetwork: false,
-	}
-
-	tool := NewShellExecTool(WithShellSandboxConfig(cfg))
+	// When no sandbox config exists, the application-level network command
+	// blacklist is the only defense. Verify it blocks curl.
+	tool := NewShellExecTool()
 	args, _ := json.Marshal(map[string]any{"command": "curl https://example.com"})
 	_, err := tool.Execute(context.Background(), args)
 	if err == nil {
-		t.Error("network command should be blocked when AllowNetwork=false")
+		t.Error("network command should be blocked without sandbox config")
 	}
 	if !strings.Contains(err.Error(), "network") {
 		t.Errorf("error should mention 'network', got: %v", err)
@@ -404,13 +413,13 @@ func TestShellExecTool_NetworkBlocked(t *testing.T) {
 func TestShellExecTool_NetworkAllowed(t *testing.T) {
 	dir := t.TempDir()
 	vr := sandboxpkg.VirtualHome("myws")
-	cfg := &sandboxpkg.SandboxConfig{
+	sb := sandboxpkg.NewSandbox(sandboxpkg.SandboxConfig{
 		VirtualRoot:  vr,
 		Root:         dir,
 		AllowNetwork: true,
-	}
+	})
 
-	tool := NewShellExecTool(WithShellSandboxConfig(cfg))
+	tool := NewShellExecTool(WithShellSandbox(sb))
 	// curl will fail network-wise but should not be rejected by policy.
 	args, _ := json.Marshal(map[string]any{"command": "curl --max-time 1 https://127.0.0.1:1"})
 	_, err := tool.Execute(context.Background(), args)
@@ -420,19 +429,60 @@ func TestShellExecTool_NetworkAllowed(t *testing.T) {
 	}
 }
 
+func TestShellExecTool_NetworkNotBlockedByAppLayer(t *testing.T) {
+	// On Linux/macOS, when a sandbox config exists (even with AllowNetwork=false),
+	// the application-level network blacklist should NOT be applied — OS-level
+	// enforcement (Seatbelt/Landlock) handles it instead. Verify the command
+	// reaches the launcher unblocked.
+	// On Windows there is no OS-level enforcement, so the app-layer blacklist
+	// IS the enforcement — skip this test.
+	if runtime.GOOS == "windows" {
+		t.Skip("app-layer blacklist IS the enforcement on Windows (no OS-level sandbox)")
+	}
+	dir := t.TempDir()
+	vr := sandboxpkg.VirtualHome("myws")
+	sb := sandboxpkg.NewSandbox(sandboxpkg.SandboxConfig{
+		VirtualRoot:  vr,
+		Root:         dir,
+		AllowNetwork: false,
+	})
+
+	stub := &stubLauncher{output: []byte("done\n")}
+	tool := NewShellExecTool(
+		WithShellSandbox(sb),
+		WithShellLaunchFunc(stub.Launch),
+	)
+
+	args, _ := json.Marshal(map[string]any{"command": "curl https://example.com"})
+	result, err := tool.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatalf("command should reach the launcher without app-layer rejection, got: %v", err)
+	}
+	if stub.request == nil {
+		t.Fatal("expected command to reach the launcher")
+	}
+	// Verify the command was passed through (virtual paths rewritten).
+	if stub.request.Command != "curl https://example.com" {
+		t.Errorf("launcher received command %q, want %q", stub.request.Command, "curl https://example.com")
+	}
+	if !strings.Contains(result, "done") {
+		t.Errorf("expected launcher output, got %q", result)
+	}
+}
+
 func TestShellExecTool_WriteToReadonlyRejected(t *testing.T) {
 	dir := t.TempDir()
 	readonlyDir := filepath.Join(dir, "readonly")
 	os.MkdirAll(readonlyDir, 0755)
 	vr := sandboxpkg.VirtualHome("myws")
-	cfg := &sandboxpkg.SandboxConfig{
+	sb := sandboxpkg.NewSandbox(sandboxpkg.SandboxConfig{
 		VirtualRoot:   vr,
 		Root:          dir,
 		ReadonlyPaths: []string{readonlyDir}, // absolute path — must match how config is stored
 		AllowNetwork:  false,
-	}
+	})
 
-	tool := NewShellExecTool(WithShellSandboxConfig(cfg))
+	tool := NewShellExecTool(WithShellSandbox(sb))
 	args, _ := json.Marshal(map[string]any{"command": "echo test > " + readonlyDir + "/out.txt"})
 	_, err := tool.Execute(context.Background(), args)
 	if err == nil {
@@ -446,13 +496,13 @@ func TestShellExecTool_WriteToReadonlyRejected(t *testing.T) {
 func TestShellExecTool_WriteToOutsideSandboxRejected(t *testing.T) {
 	dir := t.TempDir()
 	vr := sandboxpkg.VirtualHome("myws")
-	cfg := &sandboxpkg.SandboxConfig{
+	sb := sandboxpkg.NewSandbox(sandboxpkg.SandboxConfig{
 		VirtualRoot:  vr,
 		Root:         dir,
 		AllowNetwork: false,
-	}
+	})
 
-	tool := NewShellExecTool(WithShellSandboxConfig(cfg))
+	tool := NewShellExecTool(WithShellSandbox(sb))
 	args, _ := json.Marshal(map[string]any{"command": "echo test > /tmp/outside_sandbox.txt"})
 	_, err := tool.Execute(context.Background(), args)
 	if err == nil {
@@ -463,13 +513,13 @@ func TestShellExecTool_WriteToOutsideSandboxRejected(t *testing.T) {
 func TestShellExecTool_ValidWriteAllowed(t *testing.T) {
 	dir := t.TempDir()
 	vr := sandboxpkg.VirtualHome("myws")
-	cfg := &sandboxpkg.SandboxConfig{
+	sb := sandboxpkg.NewSandbox(sandboxpkg.SandboxConfig{
 		VirtualRoot:  vr,
 		Root:         dir,
 		AllowNetwork: false,
-	}
+	})
 
-	tool := NewShellExecTool(WithShellSandboxConfig(cfg))
+	tool := NewShellExecTool(WithShellSandbox(sb))
 	args, _ := json.Marshal(map[string]any{"command": "echo valid > " + dir + "/out.txt"})
 	result, err := tool.Execute(context.Background(), args)
 	if err != nil {
@@ -491,20 +541,18 @@ func TestShellExecTool_ValidWriteAllowed(t *testing.T) {
 
 func TestShellExecTool_UsesLauncher(t *testing.T) {
 	dir := t.TempDir()
-	cfg := &sandboxpkg.SandboxConfig{
+	sb := sandboxpkg.NewSandbox(sandboxpkg.SandboxConfig{
 		VirtualRoot:     sandboxpkg.VirtualHome("myws"),
 		Root:            dir,
 		AllowPaths:      []string{"/allowed"},
 		ReadonlyPaths:   []string{"/readonly"},
 		BlockedCommands: []string{"rm -rf"},
-	}
-	cfg.SetAllowNetwork(false)
+	})
 
 	backend := &stubLauncher{output: []byte("launcher ok")}
 	tool := NewShellExecTool(
-		WithShellWorkdir(dir),
-		WithShellSandboxConfig(cfg),
-		WithShellLauncher(sandboxpkg.NewLauncher(sandboxpkg.WithLaunchFunc(backend.Launch))),
+		WithShellSandbox(sb),
+		WithShellLaunchFunc(backend.Launch),
 	)
 
 	args, _ := json.Marshal(map[string]any{"command": "echo ok"})
@@ -530,8 +578,8 @@ func TestShellExecTool_UsesLauncher(t *testing.T) {
 	if backend.request.Config.Root != dir {
 		t.Fatalf("config.Root = %q, want %q", backend.request.Config.Root, dir)
 	}
-	if backend.request.Config.VirtualRoot != cfg.VirtualRoot {
-		t.Fatalf("config.VirtualRoot = %q, want %q", backend.request.Config.VirtualRoot, cfg.VirtualRoot)
+	if backend.request.Config.VirtualRoot != sb.VirtualRoot() {
+		t.Fatalf("config.VirtualRoot = %q, want %q", backend.request.Config.VirtualRoot, sb.VirtualRoot())
 	}
 	if backend.request.Config.AllowNetwork {
 		t.Fatal("config.AllowNetwork = true, want false")
@@ -544,7 +592,7 @@ func TestShellExecTool_UsesLauncher(t *testing.T) {
 func TestShellExecTool_UsesLauncherError(t *testing.T) {
 	backend := &stubLauncher{err: errors.New("launcher failure")}
 	tool := NewShellExecTool(
-		WithShellLauncher(sandboxpkg.NewLauncher(sandboxpkg.WithLaunchFunc(backend.Launch))),
+		WithShellLaunchFunc(backend.Launch),
 	)
 
 	args, _ := json.Marshal(map[string]any{"command": "echo ok"})
@@ -560,13 +608,13 @@ func TestShellExecTool_UsesLauncherError(t *testing.T) {
 func TestShellExecTool_TeeAllowed(t *testing.T) {
 	dir := t.TempDir()
 	vr := sandboxpkg.VirtualHome("myws")
-	cfg := &sandboxpkg.SandboxConfig{
+	sb := sandboxpkg.NewSandbox(sandboxpkg.SandboxConfig{
 		VirtualRoot:  vr,
 		Root:         dir,
 		AllowNetwork: false,
-	}
+	})
 
-	tool := NewShellExecTool(WithShellSandboxConfig(cfg))
+	tool := NewShellExecTool(WithShellSandbox(sb))
 	args, _ := json.Marshal(map[string]any{"command": "echo tee_test | tee " + dir + "/tee_out.txt"})
 	result, err := tool.Execute(context.Background(), args)
 	if err != nil {
@@ -591,16 +639,13 @@ func TestShellExecTool_RelativeRedirectUsesEffectiveDir(t *testing.T) {
 		t.Fatalf("mkdir command dir: %v", err)
 	}
 	vr := sandboxpkg.VirtualHome("myws")
-	cfg := &sandboxpkg.SandboxConfig{
+	sb := sandboxpkg.NewSandbox(sandboxpkg.SandboxConfig{
 		VirtualRoot:  vr,
 		Root:         root,
 		AllowNetwork: false,
-	}
+	})
 
-	tool := NewShellExecTool(
-		WithShellWorkdir(root),
-		WithShellSandboxConfig(cfg),
-	)
+	tool := NewShellExecTool(WithShellSandbox(sb))
 	args, _ := json.Marshal(map[string]any{"command": "echo redirect_test > nested/out.txt", "dir": "subdir"})
 	result, err := tool.Execute(context.Background(), args)
 	if err != nil {
@@ -629,16 +674,13 @@ func TestShellExecTool_TeeAppendUsesEffectiveDir(t *testing.T) {
 		t.Fatalf("seed tee file: %v", err)
 	}
 	vr := sandboxpkg.VirtualHome("myws")
-	cfg := &sandboxpkg.SandboxConfig{
+	sb := sandboxpkg.NewSandbox(sandboxpkg.SandboxConfig{
 		VirtualRoot:  vr,
 		Root:         root,
 		AllowNetwork: false,
-	}
+	})
 
-	tool := NewShellExecTool(
-		WithShellWorkdir(root),
-		WithShellSandboxConfig(cfg),
-	)
+	tool := NewShellExecTool(WithShellSandbox(sb))
 	// Use OS-agnostic command: avoid single quotes which cmd doesn't strip.
 	cmdStr := `printf "second\n" | tee -a tee_out.txt`
 	if runtime.GOOS == "windows" {
@@ -668,13 +710,13 @@ func TestShellExecTool_TeeAppendUsesEffectiveDir(t *testing.T) {
 func TestShellExecTool_DirOutsideSandboxRejected(t *testing.T) {
 	dir := t.TempDir()
 	vr := sandboxpkg.VirtualHome("myws")
-	cfg := &sandboxpkg.SandboxConfig{
+	sb := sandboxpkg.NewSandbox(sandboxpkg.SandboxConfig{
 		VirtualRoot:  vr,
 		Root:         dir,
 		AllowNetwork: false,
-	}
+	})
 
-	tool := NewShellExecTool(WithShellSandboxConfig(cfg))
+	tool := NewShellExecTool(WithShellSandbox(sb))
 	// Trying to set Dir to outside the sandbox should be rejected.
 	// Use a path that does NOT start with the virtual root, so AutoResolvePath
 	// cannot map it into the sandbox.
@@ -689,7 +731,8 @@ func TestShellExecTool_DirDefaultToWorkdir(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "marker.txt"), []byte("workdir_test"), 0644)
 
-	tool := NewShellExecTool(WithShellWorkdir(dir))
+	sb := sandboxpkg.NewSandbox(sandboxpkg.SandboxConfig{Root: dir})
+	tool := NewShellExecTool(WithShellSandbox(sb))
 	args, _ := json.Marshal(map[string]any{"command": "cat marker.txt"})
 	result, err := tool.Execute(context.Background(), args)
 	if err != nil {

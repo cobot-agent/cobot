@@ -1,8 +1,11 @@
 package sandbox
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -175,12 +178,13 @@ func yamlMappingHasKey(node *yaml.Node, key string) bool {
 }
 
 func (s *SandboxConfig) IsAllowed(path string, write bool) bool {
-	if s == nil {
+	if s == nil || (s.Root == "" && len(s.AllowPaths) == 0 && len(s.ReadonlyPaths) == 0) {
 		return true
 	}
 
 	absPath, err := normalizePath(path)
 	if err != nil {
+		slog.Debug("sandbox: IsAllowed normalizePath failed", "path", path, "write", write, "error", err)
 		return false
 	}
 
@@ -193,6 +197,7 @@ func (s *SandboxConfig) IsAllowed(path string, write bool) bool {
 		if IsSubpath(absPath, absRP) {
 			readonlyMatched = true
 			if write {
+				slog.Debug("sandbox: IsAllowed denied — readonly path", "path", absPath, "readonly", absRP)
 				return false
 			}
 		}
@@ -214,16 +219,20 @@ func (s *SandboxConfig) IsAllowed(path string, write bool) bool {
 	if s.Root != "" {
 		absRoot, err := normalizePath(s.Root)
 		if err != nil {
+			slog.Debug("sandbox: IsAllowed normalizePath(root) failed", "root", s.Root, "error", err)
 			return false
 		}
 		if IsSubpath(absPath, absRoot) {
 			if readonlyMatched && write {
+				slog.Debug("sandbox: IsAllowed denied — readonly match under root", "path", absPath, "root", absRoot)
 				return false
 			}
 			return true
 		}
 	}
 
+	resolvedRoot, _ := normalizePath(s.Root)
+	slog.Debug("sandbox: IsAllowed denied — path outside root", "path", absPath, "root", s.Root, "resolvedRoot", resolvedRoot, "write", write)
 	return false
 }
 
@@ -376,4 +385,184 @@ func (s *SandboxConfig) IsBlockedCommand(cmd string) bool {
 		}
 	}
 	return false
+}
+
+// ---------------------------------------------------------------------------
+// Sandbox — unified interface for virtual path translation and OS-level isolation
+// ---------------------------------------------------------------------------
+
+// Sandbox provides unified virtual path translation and OS-level command isolation.
+// All tools (filesystem_read, filesystem_write, shell_exec, etc.) use Sandbox
+// for path resolution, validation, command rewriting, and output sanitization,
+// ensuring consistent behavior between filesystem operations and shell commands.
+//
+// The virtual path layer works at the upper level:
+//   - LLM always sees virtual paths (e.g. /home/<workspace>/...)
+//   - Resolve() translates virtual → real for local execution
+//   - RewriteOutput() translates real → virtual for LLM consumption
+//   - Launch() executes commands with OS-level enforcement (Seatbelt/Landlock)
+type Sandbox struct {
+	config   SandboxConfig
+	launcher *Launcher
+}
+
+// NewSandbox creates a Sandbox with the given configuration.
+func NewSandbox(config SandboxConfig) *Sandbox {
+	return &Sandbox{
+		config:   config,
+		launcher: NewLauncher(),
+	}
+}
+
+// CloneConfig returns a deep copy of the sandbox configuration.
+func (s *Sandbox) CloneConfig() SandboxConfig {
+	if s == nil {
+		return SandboxConfig{}
+	}
+	return s.config.Clone()
+}
+
+// Active reports whether virtual path sandboxing is enabled.
+// When active, all virtual↔real path translations are performed and real paths
+// are never exposed to the LLM.
+func (s *Sandbox) Active() bool {
+	return s != nil && s.config.VirtualRoot != ""
+}
+
+// Root returns the sandbox root directory (real filesystem path).
+func (s *Sandbox) Root() string {
+	if s == nil {
+		return ""
+	}
+	return s.config.Root
+}
+
+// VirtualRoot returns the virtual root path shown to the LLM.
+func (s *Sandbox) VirtualRoot() string {
+	if s == nil {
+		return ""
+	}
+	return s.config.VirtualRoot
+}
+
+// AllowNetwork reports whether network access is permitted.
+func (s *Sandbox) AllowNetwork() bool {
+	return s != nil && s.config.AllowNetwork
+}
+
+// HasWritePolicy reports whether the sandbox has any write restrictions configured.
+func (s *Sandbox) HasWritePolicy() bool {
+	return s != nil && (s.config.Root != "" || len(s.config.AllowPaths) > 0 || len(s.config.ReadonlyPaths) > 0)
+}
+
+// HasOSLevelEnforcement reports whether the current platform provides OS-level
+// sandbox enforcement (Landlock on Linux, Seatbelt on macOS). When false (e.g.
+// Windows, FreeBSD), the Launcher falls back to hostExec with no kernel-level
+// isolation, so application-level network command blocking may still be needed.
+func (s *Sandbox) HasOSLevelEnforcement() bool {
+	if s == nil {
+		return false
+	}
+	return runtime.GOOS == "linux" || runtime.GOOS == "darwin"
+}
+
+// Resolve translates a path (virtual, relative, or real) to a real filesystem path,
+// validates it is within sandbox boundaries, and optionally checks write permissions.
+// This is the single entry point for all path resolution in tools.
+func (s *Sandbox) Resolve(path string, write bool) (string, error) {
+	if s == nil {
+		return path, nil
+	}
+	originalPath := path
+	resolved, err := s.config.AutoResolvePath(path)
+	if err != nil {
+		slog.Debug("sandbox: AutoResolvePath failed", "path", originalPath, "write", write, "virtualRoot", s.config.VirtualRoot, "root", s.config.Root, "error", err)
+		return "", err
+	}
+	if err := s.config.ValidatePath(resolved); err != nil {
+		slog.Debug("sandbox: ValidatePath failed", "path", originalPath, "resolved", resolved, "write", write, "root", s.config.Root, "error", err)
+		return "", fmt.Errorf("path %q is outside allowed workspace paths", originalPath)
+	}
+	if write && !s.config.IsAllowed(resolved, true) {
+		slog.Debug("sandbox: IsAllowed denied write", "path", originalPath, "resolved", resolved, "root", s.config.Root, "virtualRoot", s.config.VirtualRoot, "readonlyPaths", s.config.ReadonlyPaths, "allowPaths", s.config.AllowPaths)
+		return "", fmt.Errorf("path %q is readonly or blocked by sandbox policy", originalPath)
+	}
+	return resolved, nil
+}
+
+// RewriteCommand rewrites virtual paths in a command string to real paths.
+// Used by shell_exec to translate LLM-visible paths before execution.
+func (s *Sandbox) RewriteCommand(cmd string) string {
+	if s == nil {
+		return cmd
+	}
+	return s.config.RewritePaths(cmd)
+}
+
+// RewriteOutput rewrites real filesystem paths in output back to virtual paths.
+// All tool output visible to the LLM must go through this.
+func (s *Sandbox) RewriteOutput(output string) string {
+	if s == nil {
+		return output
+	}
+	return s.config.RewriteOutputPaths(output)
+}
+
+// RewriteError rewrites real filesystem paths in an error back to virtual paths.
+func (s *Sandbox) RewriteError(err error) error {
+	if s == nil || err == nil {
+		return err
+	}
+	return s.config.RewriteError(err)
+}
+
+// VirtualPath converts a real filesystem path to a virtual path for LLM output.
+func (s *Sandbox) VirtualPath(realPath string) string {
+	if s == nil {
+		return realPath
+	}
+	return s.config.RealToVirtual(realPath)
+}
+
+// IsBlockedCommand checks if a command is blocked by sandbox policy.
+func (s *Sandbox) IsBlockedCommand(cmd string) bool {
+	if s == nil {
+		return false
+	}
+	return s.config.IsBlockedCommand(cmd)
+}
+
+// IsWriteAllowed checks if writing to the given real path is permitted.
+// Used by shell_exec to validate redirect/tee targets after path resolution.
+func (s *Sandbox) IsWriteAllowed(realPath string) bool {
+	if s == nil {
+		return true
+	}
+	return s.config.IsAllowed(realPath, true)
+}
+
+// Launch executes a command with OS-level sandbox enforcement.
+// On macOS this uses Seatbelt (sandbox-exec); on Linux this uses Landlock.
+// Paths in the command should already be rewritten to real paths via RewriteCommand.
+func (s *Sandbox) Launch(ctx context.Context, shell, shellFlag, command, dir string) ([]byte, error) {
+	if s == nil {
+		return nil, fmt.Errorf("sandbox: cannot launch without configuration")
+	}
+	cfg := s.config.Clone()
+	return s.launcher.Launch(ctx, &LaunchRequest{
+		Shell:     shell,
+		ShellFlag: shellFlag,
+		Command:   command,
+		Dir:       dir,
+		Config:    &cfg,
+	})
+}
+
+// Describe returns a description suffix explaining the active sandbox to the LLM.
+// Tools should append this to their base description so the LLM knows to use virtual paths.
+func (s *Sandbox) Describe(baseDesc string) string {
+	if s == nil || s.config.VirtualRoot == "" {
+		return baseDesc
+	}
+	return baseDesc + fmt.Sprintf(` Sandbox is active. All file paths are automatically resolved under "%s" — provide paths starting with "%s" for best results. Relative paths and other absolute paths are auto-mapped into the sandbox.`, s.config.VirtualRoot, s.config.VirtualRoot)
 }
