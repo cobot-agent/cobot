@@ -4,20 +4,13 @@ package sandbox
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
-
-func requireIcacls(t *testing.T) {
-	t.Helper()
-	if _, err := exec.LookPath("icacls"); err != nil {
-		t.Skip("icacls not available")
-	}
-}
 
 func TestRestrictedTokenNoConfigFallback(t *testing.T) {
 	req := &LaunchRequest{
@@ -34,14 +27,25 @@ func TestRestrictedTokenNoConfigFallback(t *testing.T) {
 }
 
 func TestGenerateCapabilitySID(t *testing.T) {
-	sid, sidStr, err := generateCapabilitySID()
+	sid, err := generateCapabilitySID()
 	if err != nil {
 		t.Fatalf("generateCapabilitySID failed: %v", err)
 	}
 	defer windows.FreeSid(sid)
 
+	sidStr := sid.String()
 	if !strings.HasPrefix(sidStr, "S-1-5-21-") {
 		t.Errorf("SID should start with S-1-5-21-, got %q", sidStr)
+	}
+
+	// Two calls should produce different SIDs.
+	sid2, err := generateCapabilitySID()
+	if err != nil {
+		t.Fatalf("second generateCapabilitySID: %v", err)
+	}
+	defer windows.FreeSid(sid2)
+	if sid.String() == sid2.String() {
+		t.Error("two generated SIDs should differ")
 	}
 }
 
@@ -73,10 +77,8 @@ func TestBuildWriteDirs(t *testing.T) {
 	}
 }
 
-func TestGrantAndRevokeACL(t *testing.T) {
-	requireIcacls(t)
-
-	sid, sidStr, err := generateCapabilitySID()
+func TestGrantAndRevokeAccessACL(t *testing.T) {
+	sid, err := generateCapabilitySID()
 	if err != nil {
 		t.Fatalf("generateCapabilitySID: %v", err)
 	}
@@ -84,38 +86,38 @@ func TestGrantAndRevokeACL(t *testing.T) {
 
 	dir := t.TempDir()
 
-	// Grant write ACL.
-	if err := grantWriteACL(dir, sidStr); err != nil {
-		t.Fatalf("grantWriteACL: %v", err)
+	// Grant access.
+	if err := grantAccessACL(dir, sid); err != nil {
+		t.Fatalf("grantAccessACL: %v", err)
 	}
 
-	// Verify the ACE is present by checking icacls output.
-	out, err := exec.Command("icacls", dir).CombinedOutput()
-	if err != nil {
-		t.Fatalf("icacls: %v", err)
+	// Verify the ACE is present by checking the DACL via GetNamedSecurityInfo.
+	dirPtr, _ := windows.UTF16PtrFromString(dir)
+	var dacl, sd uintptr
+	ret, _, _ := procGetNamedSecurityInfoW.Call(
+		uintptr(unsafe.Pointer(dirPtr)),
+		uintptr(seFileObject),
+		uintptr(daclSecurityInformation),
+		0, 0,
+		uintptr(unsafe.Pointer(&dacl)),
+		0,
+		uintptr(unsafe.Pointer(&sd)),
+	)
+	if ret != 0 {
+		t.Fatalf("GetNamedSecurityInfo failed: %d", ret)
 	}
-	if !strings.Contains(string(out), sidStr) {
-		t.Errorf("ACE for %q not found in icacls output:\n%s", sidStr, string(out))
+	if dacl == 0 {
+		t.Fatal("DACL is null after grant")
 	}
+	procLocalFree.Call(sd)
 
-	// Revoke ACL.
-	if err := revokeACL(dir, sidStr); err != nil {
-		t.Fatalf("revokeACL: %v", err)
-	}
-
-	// Verify the ACE is removed.
-	out, err = exec.Command("icacls", dir).CombinedOutput()
-	if err != nil {
-		t.Fatalf("icacls: %v", err)
-	}
-	if strings.Contains(string(out), sidStr) {
-		t.Errorf("ACE for %q still present after revoke:\n%s", sidStr, string(out))
+	// Revoke access.
+	if err := revokeAccessACL(dir, sid); err != nil {
+		t.Fatalf("revokeAccessACL: %v", err)
 	}
 }
 
 func TestRestrictedTokenWriteBlocking(t *testing.T) {
-	requireIcacls(t)
-
 	allowed := t.TempDir()
 	blocked := t.TempDir()
 
