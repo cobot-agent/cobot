@@ -430,15 +430,11 @@ func TestShellExecTool_NetworkAllowed(t *testing.T) {
 }
 
 func TestShellExecTool_NetworkNotBlockedByAppLayer(t *testing.T) {
-	// On Linux/macOS, when a sandbox config exists (even with AllowNetwork=false),
-	// the application-level network blacklist should NOT be applied — OS-level
-	// enforcement (Seatbelt/Landlock) handles it instead. Verify the command
+	// On all platforms with OS-level enforcement (Linux: Landlock, macOS: Seatbelt,
+	// Windows: Restricted Token), when a sandbox config exists (even with
+	// AllowNetwork=false), the application-level network blacklist should NOT be
+	// applied — OS-level enforcement handles it instead. Verify the command
 	// reaches the launcher unblocked.
-	// On Windows there is no OS-level enforcement, so the app-layer blacklist
-	// IS the enforcement — skip this test.
-	if runtime.GOOS == "windows" {
-		t.Skip("app-layer blacklist IS the enforcement on Windows (no OS-level sandbox)")
-	}
 	dir := t.TempDir()
 	vr := sandboxpkg.VirtualHome("myws")
 	sb := sandboxpkg.NewSandbox(sandboxpkg.SandboxConfig{

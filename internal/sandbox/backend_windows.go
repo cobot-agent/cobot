@@ -1,9 +1,11 @@
-//go:build !linux && !darwin && !windows
+//go:build windows
 
 package sandbox
 
-import "context"
+import (
+	"context"
+)
 
 func platformLaunch(ctx context.Context, req *LaunchRequest) ([]byte, error) {
-	return hostExec(ctx, req)
+	return restrictedTokenLaunch(ctx, req)
 }

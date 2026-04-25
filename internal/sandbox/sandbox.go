@@ -463,7 +463,7 @@ func (s *Sandbox) HasOSLevelEnforcement() bool {
 	if s == nil {
 		return false
 	}
-	return runtime.GOOS == "linux" || runtime.GOOS == "darwin"
+	return runtime.GOOS == "linux" || runtime.GOOS == "darwin" || runtime.GOOS == "windows"
 }
 
 // Resolve translates a path (virtual, relative, or real) to a real filesystem path,
