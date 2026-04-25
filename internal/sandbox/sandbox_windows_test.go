@@ -12,6 +12,16 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+// skipInCI skips the test when running in CI (GitHub Actions, etc.)
+// because CreateRestrictedToken + go test -race causes STATUS_HEAP_CORRUPTION
+// (0xc0000374) on Windows runners.
+func skipInCI(t *testing.T) {
+	t.Helper()
+	if os.Getenv("CI") != "" || os.Getenv("GITHUB_ACTIONS") != "" {
+		t.Skip("skipping: CreateRestrictedToken causes heap corruption with -race in CI")
+	}
+}
+
 func TestGenerateCapabilitySID(t *testing.T) {
 	sid, err := generateCapabilitySID()
 	if err != nil {
@@ -63,6 +73,8 @@ func TestBuildWriteDirs(t *testing.T) {
 }
 
 func TestGrantAndRevokeAccessACL(t *testing.T) {
+	skipInCI(t)
+
 	sid, err := generateCapabilitySID()
 	if err != nil {
 		t.Fatalf("generateCapabilitySID: %v", err)
@@ -111,33 +123,8 @@ func TestRestrictedTokenNoConfigFallback(t *testing.T) {
 	}
 }
 
-// canCreateRestrictedToken tests whether CreateRestrictedToken works in this
-// environment. On some CI runners or locked-down machines, token manipulation
-// may be restricted or cause heap corruption with -race.
-func canCreateRestrictedToken() bool {
-	// Disable in CI environments: CreateRestrictedToken + -race causes
-	// STATUS_HEAP_CORRUPTION (0xc0000374) on GitHub Actions Windows runners.
-	if os.Getenv("CI") != "" || os.Getenv("GITHUB_ACTIONS") != "" {
-		return false
-	}
-	sid, err := generateCapabilitySID()
-	if err != nil {
-		return false
-	}
-	defer windows.FreeSid(sid)
-
-	token, err := createRestrictedToken(sid)
-	if err != nil {
-		return false
-	}
-	token.Close()
-	return true
-}
-
 func TestRestrictedTokenWriteBlocking(t *testing.T) {
-	if !canCreateRestrictedToken() {
-		t.Skip("CreateRestrictedToken not available in this environment")
-	}
+	skipInCI(t)
 
 	allowed := t.TempDir()
 	blocked := t.TempDir()
