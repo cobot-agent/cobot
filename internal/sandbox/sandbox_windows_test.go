@@ -90,7 +90,8 @@ func TestGrantAndRevokeAccessACL(t *testing.T) {
 	// Verify the ACE is present by querying the DACL.
 	dirPtr, _ := windows.UTF16PtrFromString(dir)
 	var dacl, sd uintptr
-	ret, _, _ := procGetNamedSecurityInfoW.Call(
+	initWinProcs()
+	ret, _, _ := winProcGetNamedSecurityInfoW.Call(
 		uintptr(unsafe.Pointer(dirPtr)),
 		uintptr(seFileObject),
 		uintptr(daclSecurityInformation),
@@ -102,7 +103,7 @@ func TestGrantAndRevokeAccessACL(t *testing.T) {
 	if ret != 0 {
 		t.Fatalf("GetNamedSecurityInfo failed: %d", ret)
 	}
-	procLocalFree.Call(sd)
+	winProcLocalFree.Call(sd)
 
 	if err := revokeAccessACL(dir, sid); err != nil {
 		t.Logf("revokeAccessACL failed (non-fatal): %v", err)
