@@ -1,4 +1,4 @@
-//go:build windows
+//go:build windows && !race
 
 package sandbox
 
@@ -17,9 +17,12 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-var (
-	winOnce sync.Once
+// This file implements the Windows Restricted Token sandbox.
+// It is excluded from builds with -race because CreateRestrictedToken +
+// go test -race causes STATUS_HEAP_CORRUPTION (0xc0000374) on Windows.
 
+var (
+	winOnce                      sync.Once
 	winProcCreateRestrictedToken *windows.LazyProc
 	winProcGetNamedSecurityInfoW *windows.LazyProc
 	winProcSetEntriesInAclW      *windows.LazyProc
@@ -78,17 +81,9 @@ type sidAndAttributes struct {
 	Attributes uint32
 }
 
-// restrictedTokenLaunch runs a command under a restricted Windows token.
 func restrictedTokenLaunch(ctx context.Context, req *LaunchRequest) ([]byte, error) {
 	if req.Config == nil {
 		slog.Warn("sandbox: no config provided, running without Restricted Token enforcement", "command", req.Command)
-		return hostExec(ctx, req)
-	}
-
-	// In CI environments, CreateRestrictedToken causes STATUS_HEAP_CORRUPTION
-	// (0xc0000374) when combined with -race. Fall back to hostExec.
-	if os.Getenv("CI") != "" || os.Getenv("GITHUB_ACTIONS") != "" {
-		slog.Warn("sandbox: CI environment detected, skipping Restricted Token enforcement")
 		return hostExec(ctx, req)
 	}
 

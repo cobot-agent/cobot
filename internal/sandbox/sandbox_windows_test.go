@@ -1,4 +1,4 @@
-//go:build windows
+//go:build windows && !race
 
 package sandbox
 
@@ -11,16 +11,6 @@ import (
 
 	"golang.org/x/sys/windows"
 )
-
-// skipInCI skips the test when running in CI (GitHub Actions, etc.)
-// because CreateRestrictedToken + go test -race causes STATUS_HEAP_CORRUPTION
-// (0xc0000374) on Windows runners.
-func skipInCI(t *testing.T) {
-	t.Helper()
-	if os.Getenv("CI") != "" || os.Getenv("GITHUB_ACTIONS") != "" {
-		t.Skip("skipping: CreateRestrictedToken causes heap corruption with -race in CI")
-	}
-}
 
 func TestGenerateCapabilitySID(t *testing.T) {
 	sid, err := generateCapabilitySID()
@@ -73,8 +63,6 @@ func TestBuildWriteDirs(t *testing.T) {
 }
 
 func TestGrantAndRevokeAccessACL(t *testing.T) {
-	skipInCI(t)
-
 	sid, err := generateCapabilitySID()
 	if err != nil {
 		t.Fatalf("generateCapabilitySID: %v", err)
@@ -112,7 +100,7 @@ func TestGrantAndRevokeAccessACL(t *testing.T) {
 
 func TestRestrictedTokenNoConfigFallback(t *testing.T) {
 	req := &LaunchRequest{
-		Shell: "cmd", ShellFlag: "/C",
+		Shell:  "cmd", ShellFlag: "/C",
 		Command: "echo ok",
 	}
 	out, err := restrictedTokenLaunch(t.Context(), req)
@@ -125,8 +113,6 @@ func TestRestrictedTokenNoConfigFallback(t *testing.T) {
 }
 
 func TestRestrictedTokenWriteBlocking(t *testing.T) {
-	skipInCI(t)
-
 	allowed := t.TempDir()
 	blocked := t.TempDir()
 
@@ -134,7 +120,7 @@ func TestRestrictedTokenWriteBlocking(t *testing.T) {
 
 	// Write to allowed dir should succeed.
 	req := &LaunchRequest{
-		Shell: "cmd", ShellFlag: "/C",
+		Shell:   "cmd", ShellFlag: "/C",
 		Command: "echo ok > " + filepath.Join(allowed, "test.txt") + " && type " + filepath.Join(allowed, "test.txt"),
 		Config:  cfg,
 	}
