@@ -3,11 +3,14 @@
 package sandbox
 
 import (
+	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func requireSandboxExec(t *testing.T) {
@@ -38,25 +41,46 @@ func TestSeatbeltWriteBlocking(t *testing.T) {
 		t.Fatalf("expected 'ok', got %q", string(out))
 	}
 
-	// Write to blocked dir should fail.
-	req.Command = "echo blocked > " + filepath.Join(blocked, "blocked.txt")
+	// Write to blocked dir should fail — verify the file was NOT created.
+	blockedFile := filepath.Join(blocked, "blocked.txt")
+	req.Command = "echo blocked > " + blockedFile
 	out, _ = sandboxExecLaunch(t.Context(), req)
-	if !strings.Contains(string(out), "Operation not permitted") {
-		t.Fatalf("write to blocked dir should be denied, got: %s", out)
+	t.Logf("blocked write output: %s", out)
+	if _, statErr := os.Stat(blockedFile); !os.IsNotExist(statErr) {
+		t.Fatalf("write to blocked dir should not create file, got stat err: %v, output: %s", statErr, out)
 	}
 }
 
 func TestSeatbeltNetworkDeny(t *testing.T) {
 	requireSandboxExec(t)
+
+	// Start a local TCP server so the test is deterministic (no external network dependency).
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to create local listener: %v", err)
+	}
+	defer ln.Close()
+
+	srv := &http.Server{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte("hello"))
+		}),
+		ReadTimeout: 5 * time.Second,
+	}
+	go srv.Serve(ln)
+
+	addr := ln.Addr().String()
+
 	cfg := &SandboxConfig{Root: "/private/tmp", AllowNetwork: false}
 	req := &LaunchRequest{
 		Shell: "/bin/sh", ShellFlag: "-c",
-		Command: "curl -s --max-time 3 https://example.com 2>&1; echo exit:$?",
+		Command: "curl -s --max-time 3 http://" + addr + " 2>&1; echo exit:$?",
 		Config:  cfg,
 	}
 	out, _ := sandboxExecLaunch(t.Context(), req)
 	if strings.Contains(string(out), "exit:0") {
-		t.Fatal("curl should fail with network denied")
+		t.Fatalf("curl should fail with network denied, got: %s", out)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -452,6 +453,17 @@ func (s *Sandbox) AllowNetwork() bool {
 // HasWritePolicy reports whether the sandbox has any write restrictions configured.
 func (s *Sandbox) HasWritePolicy() bool {
 	return s != nil && (s.config.Root != "" || len(s.config.AllowPaths) > 0 || len(s.config.ReadonlyPaths) > 0)
+}
+
+// HasOSLevelEnforcement reports whether the current platform provides OS-level
+// sandbox enforcement (Landlock on Linux, Seatbelt on macOS). When false (e.g.
+// Windows, FreeBSD), the Launcher falls back to hostExec with no kernel-level
+// isolation, so application-level network command blocking may still be needed.
+func (s *Sandbox) HasOSLevelEnforcement() bool {
+	if s == nil {
+		return false
+	}
+	return runtime.GOOS == "linux" || runtime.GOOS == "darwin"
 }
 
 // Resolve translates a path (virtual, relative, or real) to a real filesystem path,

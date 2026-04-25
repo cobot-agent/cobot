@@ -103,12 +103,15 @@ func (t *ShellExecTool) Execute(ctx context.Context, args json.RawMessage) (stri
 		return "", fmt.Errorf("command is blocked by sandbox policy")
 	}
 
-	// Check network commands only when no sandbox is configured at all.
-	// When a sandbox exists, the AllowNetwork flag controls intent: on macOS/Linux
-	// the OS-level enforcement (Seatbelt/Landlock) blocks network at the kernel;
-	// on other platforms the flag is still respected as the sandbox-level policy
-	// decision, and the incomplete app-layer blacklist is not applied.
-	if t.sandbox == nil {
+	// Apply app-layer network command blacklist when:
+	//  1. No sandbox is configured at all (defense in depth), OR
+	//  2. Sandbox exists but OS-level enforcement is unavailable (e.g. Windows),
+	//     so the incomplete blacklist is the only network restriction available.
+	// On Linux/macOS the kernel-level enforcement (Seatbelt/Landlock) is
+	// comprehensive and the app-layer blacklist is skipped to avoid misleading
+	// errors and false positives from the incomplete command list.
+	needAppBlacklist := t.sandbox == nil || !t.sandbox.HasOSLevelEnforcement()
+	if needAppBlacklist {
 		if err := checkNetworkCommand(cmdStr); err != nil {
 			return "", err
 		}
