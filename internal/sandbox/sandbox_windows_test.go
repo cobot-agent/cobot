@@ -113,8 +113,13 @@ func TestRestrictedTokenNoConfigFallback(t *testing.T) {
 
 // canCreateRestrictedToken tests whether CreateRestrictedToken works in this
 // environment. On some CI runners or locked-down machines, token manipulation
-// may be restricted.
+// may be restricted or cause heap corruption with -race.
 func canCreateRestrictedToken() bool {
+	// Disable in CI environments: CreateRestrictedToken + -race causes
+	// STATUS_HEAP_CORRUPTION (0xc0000374) on GitHub Actions Windows runners.
+	if os.Getenv("CI") != "" || os.Getenv("GITHUB_ACTIONS") != "" {
+		return false
+	}
 	sid, err := generateCapabilitySID()
 	if err != nil {
 		return false
