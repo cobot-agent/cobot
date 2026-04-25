@@ -1,42 +1,31 @@
 package tools
 
 import (
-	"fmt"
-
 	"github.com/cobot-agent/cobot/internal/sandbox"
 )
 
 // sandboxResolvePath resolves and validates a path within the sandbox.
-// If sandbox is nil, the path is returned unchanged.
-func sandboxResolvePath(cfg *sandbox.SandboxConfig, path string, write bool) (string, error) {
-	if cfg == nil {
-		return path, nil
-	}
-	originalPath := path
-	resolved, err := cfg.AutoResolvePath(path)
-	if err != nil {
-		return "", err
-	}
-	if err := cfg.ValidatePath(resolved); err != nil {
-		return "", fmt.Errorf("path %q is outside allowed workspace paths", originalPath)
-	}
-	if write && !cfg.IsAllowed(resolved, true) {
-		return "", fmt.Errorf("path %q is readonly or blocked by sandbox policy", originalPath)
-	}
-	return resolved, nil
+// It delegates to Sandbox.Resolve — the single entry point for virtual→real
+// path translation used by all filesystem and shell tools.
+func sandboxResolvePath(sb *sandbox.Sandbox, path string, write bool) (string, error) {
+	return sb.Resolve(path, write)
+}
+
+// sandboxRewriteErr rewrites real filesystem paths in an error back to virtual paths.
+// It delegates to Sandbox.RewriteError.
+func sandboxRewriteErr(sb *sandbox.Sandbox, err error) error {
+	return sb.RewriteError(err)
 }
 
 // sandboxTool provides common sandbox functionality for tools.
+// All tools use *sandbox.Sandbox instead of raw *sandbox.SandboxConfig,
+// ensuring consistent virtual path handling across filesystem and shell operations.
 type sandboxTool struct {
-	sandbox *sandbox.SandboxConfig
+	sandbox *sandbox.Sandbox
 }
 
 // describeWithSandbox appends the sandbox notice to a tool description.
+// It delegates to Sandbox.Describe so all tools show consistent virtual path info.
 func (s *sandboxTool) describeWithSandbox(desc string) string {
-	if s.sandbox != nil && s.sandbox.VirtualRoot != "" {
-		return desc + fmt.Sprintf(` Sandbox is active. All file paths are automatically resolved under "%s" — provide paths starting with "%s" for best results. Relative paths and other absolute paths are auto-mapped into the sandbox.`, s.sandbox.VirtualRoot, s.sandbox.VirtualRoot)
-	}
-	return desc
+	return s.sandbox.Describe(desc)
 }
-
-var sandboxRewriteErr = (*sandbox.SandboxConfig).RewriteError

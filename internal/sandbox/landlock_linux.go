@@ -5,6 +5,7 @@ package sandbox
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"strings"
@@ -44,6 +45,7 @@ func landlockLaunch(ctx context.Context, req *LaunchRequest) ([]byte, error) {
 		}
 	} else {
 		// No config means no sandbox policy — run directly on host.
+		slog.Warn("sandbox: no config provided, running command without Landlock enforcement", "command", req.Command)
 		return hostExec(ctx, req)
 	}
 	args = append(args, "--")

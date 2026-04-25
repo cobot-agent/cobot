@@ -29,9 +29,9 @@ type SearchFilesTool struct {
 	BasicTool
 }
 
-func NewSearchFilesTool(sandbox *sandbox.SandboxConfig) *SearchFilesTool {
+func NewSearchFilesTool(sb *sandbox.Sandbox) *SearchFilesTool {
 	return &SearchFilesTool{BasicTool{
-		sandboxTool: sandboxTool{sandbox: sandbox},
+		sandboxTool: sandboxTool{sandbox: sb},
 		name:        "filesystem_search",
 		desc:        "Search for files matching a pattern recursively from a root directory.",
 		params:      filesystemSearchParamsJSON,
@@ -83,8 +83,8 @@ func (t *SearchFilesTool) searchWithFd(ctx context.Context, a *searchFilesArgs, 
 	lines := strings.Split(strings.TrimRight(output, "\n"), "\n")
 	var results []string
 	for _, line := range lines {
-		if t.sandbox != nil && t.sandbox.VirtualRoot != "" {
-			line = t.sandbox.RealToVirtual(line)
+		if t.sandbox.Active() {
+			line = t.sandbox.VirtualPath(line)
 		}
 		results = append(results, line)
 	}
@@ -128,8 +128,8 @@ func (t *SearchFilesTool) searchWithGo(a *searchFilesArgs, maxResults int) (stri
 		matched, _ := filepath.Match(a.Pattern, d.Name())
 		if matched {
 			displayPath := path
-			if t.sandbox != nil && t.sandbox.VirtualRoot != "" {
-				displayPath = t.sandbox.RealToVirtual(path)
+			if t.sandbox.Active() {
+				displayPath = t.sandbox.VirtualPath(path)
 			}
 			matches = append(matches, displayPath)
 		}
@@ -167,9 +167,9 @@ type GrepFilesTool struct {
 	BasicTool
 }
 
-func NewGrepFilesTool(sandbox *sandbox.SandboxConfig) *GrepFilesTool {
+func NewGrepFilesTool(sb *sandbox.Sandbox) *GrepFilesTool {
 	return &GrepFilesTool{BasicTool{
-		sandboxTool: sandboxTool{sandbox: sandbox},
+		sandboxTool: sandboxTool{sandbox: sb},
 		name:        "filesystem_grep",
 		desc:        "Search file contents for lines matching a regular expression pattern. Returns matching lines with line numbers.",
 		params:      filesystemGrepParamsJSON,
@@ -227,12 +227,12 @@ func (t *GrepFilesTool) grepWithRg(ctx context.Context, a *grepFilesArgs, maxRes
 	// Rewrite real paths to virtual paths and truncate
 	var results []string
 	for _, line := range lines {
-		if t.sandbox != nil && t.sandbox.VirtualRoot != "" {
+		if t.sandbox.Active() {
 			// rg output is "path:linenum:content", rewrite the path part
 			idx := strings.Index(line, ":")
 			if idx >= 0 {
 				realPath := line[:idx]
-				virtualPath := t.sandbox.RealToVirtual(realPath)
+				virtualPath := t.sandbox.VirtualPath(realPath)
 				line = virtualPath + line[idx:]
 			}
 		}
@@ -308,8 +308,8 @@ func (t *GrepFilesTool) grepWithGo(a *grepFilesArgs, maxResults int) (string, er
 		for i, line := range lines {
 			if re.Match(line) {
 				displayPath := path
-				if t.sandbox != nil && t.sandbox.VirtualRoot != "" {
-					displayPath = t.sandbox.RealToVirtual(path)
+				if t.sandbox.Active() {
+					displayPath = t.sandbox.VirtualPath(path)
 				}
 				fileMatches = append(fileMatches, fmt.Sprintf("%s:%d:%s", displayPath, i+1, string(line)))
 				if len(fileMatches) >= 10 { // max 10 matches per file

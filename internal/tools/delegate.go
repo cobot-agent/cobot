@@ -29,7 +29,7 @@ type DelegateTool struct {
 	factory     SubAgentFactory
 	workdir     string
 	agentLookup ExternalAgentLookup // to lookup external agent configs
-	sandbox     *sandbox.SandboxConfig
+	sandbox     *sandbox.Sandbox
 }
 
 func WithDelegateWorkdir(workdir string) func(*DelegateTool) {
@@ -40,7 +40,7 @@ func WithDelegateAgentLookup(l ExternalAgentLookup) func(*DelegateTool) {
 	return func(t *DelegateTool) { t.agentLookup = l }
 }
 
-func WithDelegateSandbox(s *sandbox.SandboxConfig) func(*DelegateTool) {
+func WithDelegateSandbox(s *sandbox.Sandbox) func(*DelegateTool) {
 	return func(t *DelegateTool) { t.sandbox = s }
 }
 
@@ -152,8 +152,8 @@ func (t *DelegateTool) Execute(ctx context.Context, args json.RawMessage) (strin
 		return "", fmt.Errorf("sub-agent error: %w", err)
 	}
 	content := resp.Content
-	if t.sandbox != nil && t.sandbox.VirtualRoot != "" {
-		content = t.sandbox.RewriteOutputPaths(content)
+	if t.sandbox != nil {
+		content = t.sandbox.RewriteOutput(content)
 	}
 	return content, nil
 }
@@ -181,8 +181,8 @@ func (t *DelegateTool) ExecuteStream(ctx context.Context, args json.RawMessage, 
 		switch evt.Type {
 		case cobot.EventText:
 			// Sanitize real paths in streaming events
-			if t.sandbox != nil && t.sandbox.VirtualRoot != "" {
-				evt.Content = t.sandbox.RewriteOutputPaths(evt.Content)
+			if t.sandbox != nil {
+				evt.Content = t.sandbox.RewriteOutput(evt.Content)
 			}
 			result.WriteString(evt.Content)
 			select {
@@ -191,8 +191,8 @@ func (t *DelegateTool) ExecuteStream(ctx context.Context, args json.RawMessage, 
 				return result.String(), ctx.Err()
 			}
 		case cobot.EventToolCall, cobot.EventToolResult, cobot.EventToolStart:
-			if t.sandbox != nil && t.sandbox.VirtualRoot != "" && evt.Content != "" {
-				evt.Content = t.sandbox.RewriteOutputPaths(evt.Content)
+			if t.sandbox != nil && evt.Content != "" {
+				evt.Content = t.sandbox.RewriteOutput(evt.Content)
 			}
 			select {
 			case eventCh <- evt:
@@ -210,8 +210,8 @@ func (t *DelegateTool) ExecuteStream(ctx context.Context, args json.RawMessage, 
 		}
 	}
 	content := result.String()
-	if t.sandbox != nil && t.sandbox.VirtualRoot != "" {
-		content = t.sandbox.RewriteOutputPaths(content)
+	if t.sandbox != nil {
+		content = t.sandbox.RewriteOutput(content)
 	}
 	return content, nil
 }

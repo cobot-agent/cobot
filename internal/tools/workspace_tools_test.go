@@ -255,7 +255,7 @@ func TestWorkspaceConfigUpdateTool_SandboxRejectOutsidePath(t *testing.T) {
 	}
 
 	vr := sandbox.VirtualHome("test")
-	sandboxCfg := &sandbox.SandboxConfig{VirtualRoot: vr, Root: "/tmp/real"}
+	sandboxCfg := sandbox.NewSandbox(sandbox.SandboxConfig{VirtualRoot: vr, Root: "/tmp/real"})
 	tool := &WorkspaceConfigUpdateTool{workspace: ws, sandbox: sandboxCfg}
 
 	args, _ := json.Marshal(map[string]interface{}{
@@ -271,7 +271,7 @@ func TestWorkspaceConfigUpdateTool_ReadonlyPathsBlockedWhenSandboxActive(t *test
 	ws := newTestWorkspace(t)
 	tool := &WorkspaceConfigUpdateTool{
 		workspace: ws,
-		sandbox:   &sandbox.SandboxConfig{VirtualRoot: sandbox.VirtualHome("test"), Root: "/tmp/real"},
+		sandbox:   sandbox.NewSandbox(sandbox.SandboxConfig{VirtualRoot: sandbox.VirtualHome("test"), Root: "/tmp/real"}),
 	}
 
 	args, _ := json.Marshal(map[string]interface{}{

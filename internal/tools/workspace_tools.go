@@ -28,16 +28,16 @@ var agentConfigUpdateParamsJSON []byte
 const maxPersonaSize = 64 * 1024 // 64 KB
 
 // sandboxDescSuffix appends a sandbox path suffix to a description if sandbox is configured.
-func sandboxDescSuffix(cfg *sandbox.SandboxConfig, desc, pathSuffix string) string {
-	if cfg != nil && cfg.VirtualRoot != "" {
-		return desc + fmt.Sprintf(". Files are stored under %s/%s", cfg.VirtualRoot, pathSuffix)
+func sandboxDescSuffix(sb *sandbox.Sandbox, desc, pathSuffix string) string {
+	if sb != nil && sb.Active() {
+		return desc + fmt.Sprintf(". Files are stored under %s/%s", sb.VirtualRoot(), pathSuffix)
 	}
 	return desc
 }
 
 type WorkspaceConfigUpdateTool struct {
 	workspace *workspace.Workspace
-	sandbox   *sandbox.SandboxConfig
+	sandbox   *sandbox.Sandbox
 }
 
 func (t *WorkspaceConfigUpdateTool) Name() string { return "workspace_config_update" }
@@ -111,7 +111,7 @@ type personaUpdateArgs struct {
 
 type PersonaUpdateTool struct {
 	workspace *workspace.Workspace
-	sandbox   *sandbox.SandboxConfig
+	sandbox   *sandbox.Sandbox
 }
 
 func (t *PersonaUpdateTool) Name() string { return "persona_update" }
@@ -146,8 +146,8 @@ func (t *PersonaUpdateTool) Execute(ctx context.Context, args json.RawMessage) (
 	if err := os.WriteFile(path, []byte(a.Content), 0644); err != nil {
 		return "", sandboxRewriteErr(t.sandbox, fmt.Errorf("write persona file: %w", err))
 	}
-	if t.sandbox != nil && t.sandbox.VirtualRoot != "" {
-		virtualPath := t.sandbox.RealToVirtual(path)
+	if t.sandbox != nil && t.sandbox.Active() {
+		virtualPath := t.sandbox.VirtualPath(path)
 		return fmt.Sprintf("%s updated (%s)", strings.ToLower(a.File), virtualPath), nil
 	}
 	return fmt.Sprintf("%s updated", strings.ToLower(a.File)), nil
@@ -155,14 +155,14 @@ func (t *PersonaUpdateTool) Execute(ctx context.Context, args json.RawMessage) (
 
 type AgentConfigUpdateTool struct {
 	workspace *workspace.Workspace
-	sandbox   *sandbox.SandboxConfig
+	sandbox   *sandbox.Sandbox
 }
 
 func (t *AgentConfigUpdateTool) Name() string { return "agent_config_update" }
 func (t *AgentConfigUpdateTool) Description() string {
-	if t.sandbox != nil && t.sandbox.VirtualRoot != "" {
+	if t.sandbox != nil && t.sandbox.Active() {
 		return "Update an agent's configuration file in the workspace" +
-			fmt.Sprintf(". Config files are stored under %s/agents/", t.sandbox.VirtualRoot)
+			fmt.Sprintf(". Config files are stored under %s/agents/", t.sandbox.VirtualRoot())
 	}
 	return "Update an agent's configuration file in the workspace"
 }
@@ -212,16 +212,16 @@ func (t *AgentConfigUpdateTool) Execute(ctx context.Context, args json.RawMessag
 	if err := config.SaveYAML(path, cfg); err != nil {
 		return "", sandboxRewriteErr(t.sandbox, fmt.Errorf("save agent config: %w", err))
 	}
-	if t.sandbox != nil && t.sandbox.VirtualRoot != "" {
-		return fmt.Sprintf("agent config updated: %s (agents/%s.yaml)", t.sandbox.VirtualRoot, params.Agent), nil
+	if t.sandbox != nil && t.sandbox.Active() {
+		return fmt.Sprintf("agent config updated: %s (agents/%s.yaml)", t.sandbox.VirtualRoot(), params.Agent), nil
 	}
 	return fmt.Sprintf("agent config updated: %s", params.Agent), nil
 }
 
-func RegisterWorkspaceTools(registry cobot.ToolRegistry, ws *workspace.Workspace, sandbox *sandbox.SandboxConfig) {
-	registry.Register(&WorkspaceConfigUpdateTool{workspace: ws, sandbox: sandbox})
-	registry.Register(&PersonaUpdateTool{workspace: ws, sandbox: sandbox})
-	registry.Register(&AgentConfigUpdateTool{workspace: ws, sandbox: sandbox})
+func RegisterWorkspaceTools(registry cobot.ToolRegistry, ws *workspace.Workspace, sb *sandbox.Sandbox) {
+	registry.Register(&WorkspaceConfigUpdateTool{workspace: ws, sandbox: sb})
+	registry.Register(&PersonaUpdateTool{workspace: ws, sandbox: sb})
+	registry.Register(&AgentConfigUpdateTool{workspace: ws, sandbox: sb})
 }
 
 var (

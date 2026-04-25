@@ -5,6 +5,7 @@ package sandbox
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os/exec"
 	"strings"
 )
@@ -14,6 +15,7 @@ import (
 // mechanism on macOS. See GitHub issue #16 for tracking.
 func sandboxExecLaunch(ctx context.Context, req *LaunchRequest) ([]byte, error) {
 	if req.Config == nil {
+		slog.Warn("sandbox: no config provided, running command without Seatbelt enforcement", "command", req.Command)
 		return hostExec(ctx, req)
 	}
 

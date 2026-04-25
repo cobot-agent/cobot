@@ -29,7 +29,7 @@ type ACPSubAgent struct {
 	timeout      time.Duration
 	systemPrompt string
 	model        string
-	sandbox      *sandbox.SandboxConfig
+	sandbox      *sandbox.Sandbox
 
 	// runtime state
 	mu      sync.Mutex
@@ -60,7 +60,7 @@ func NewACPSubAgent(command string, args []string, workdir string, timeout time.
 }
 
 // WithACPSandbox sets the sandbox config for path rewriting in ACP responses.
-func WithACPSandbox(s *sandbox.SandboxConfig) func(*ACPSubAgent) {
+func WithACPSandbox(s *sandbox.Sandbox) func(*ACPSubAgent) {
 	return func(a *ACPSubAgent) { a.sandbox = s }
 }
 
@@ -543,8 +543,8 @@ func (a *ACPSubAgent) Stream(ctx context.Context, message string) (<-chan cobot.
 // rewritePaths rewrites real filesystem paths to virtual paths in text output.
 // Returns the text unchanged if sandbox is not configured.
 func (a *ACPSubAgent) rewritePaths(text string) string {
-	if a.sandbox == nil || a.sandbox.VirtualRoot == "" {
+	if a.sandbox == nil {
 		return text
 	}
-	return a.sandbox.RewriteOutputPaths(text)
+	return a.sandbox.RewriteOutput(text)
 }
