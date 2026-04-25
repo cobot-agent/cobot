@@ -48,10 +48,6 @@ var networkCommands = []string{
 	"telnet", "ftp", "rsync", "ping", "nslookup", "dig", "host",
 }
 
-func sandboxHasOSLevelEnforcement() bool {
-	return runtime.GOOS == "linux" || runtime.GOOS == "darwin"
-}
-
 func NewShellExecTool(opts ...ShellExecToolOption) *ShellExecTool {
 	t := &ShellExecTool{
 		timeout: defaultShellTimeout,
@@ -107,12 +103,12 @@ func (t *ShellExecTool) Execute(ctx context.Context, args json.RawMessage) (stri
 		return "", fmt.Errorf("command is blocked by sandbox policy")
 	}
 
-	// Check network commands when there is no OS-level sandbox enforcement.
-	// Seatbelt (macOS) and Landlock (Linux) enforce network denial at the OS level,
-	// making the application-level blacklist redundant. On other platforms the OS-level
-	// enforcement is unavailable (falls back to hostExec), so we apply the blacklist
-	// as a best-effort fallback.
-	if t.sandbox == nil || !sandboxHasOSLevelEnforcement() {
+	// Check network commands only when no sandbox is configured at all.
+	// When a sandbox exists, the AllowNetwork flag controls intent: on macOS/Linux
+	// the OS-level enforcement (Seatbelt/Landlock) blocks network at the kernel;
+	// on other platforms the flag is still respected as the sandbox-level policy
+	// decision, and the incomplete app-layer blacklist is not applied.
+	if t.sandbox == nil {
 		if err := checkNetworkCommand(cmdStr); err != nil {
 			return "", err
 		}
