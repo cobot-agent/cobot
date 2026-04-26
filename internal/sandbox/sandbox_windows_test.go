@@ -76,9 +76,9 @@ func TestGrantAndRevokeAccessACL(t *testing.T) {
 	}
 
 	// Verify the ACE is present by querying the DACL.
+	initWinProcs()
 	dirPtr, _ := windows.UTF16PtrFromString(dir)
 	var dacl, sd uintptr
-	initWinProcs()
 	ret, _, _ := winProcGetNamedSecurityInfoW.Call(
 		uintptr(unsafe.Pointer(dirPtr)),
 		uintptr(seFileObject),
@@ -100,7 +100,7 @@ func TestGrantAndRevokeAccessACL(t *testing.T) {
 
 func TestRestrictedTokenNoConfigFallback(t *testing.T) {
 	req := &LaunchRequest{
-		Shell:  "cmd", ShellFlag: "/C",
+		Shell: "cmd", ShellFlag: "/C",
 		Command: "echo ok",
 	}
 	out, err := restrictedTokenLaunch(t.Context(), req)
@@ -119,9 +119,11 @@ func TestRestrictedTokenWriteBlocking(t *testing.T) {
 	cfg := &SandboxConfig{Root: allowed, AllowNetwork: true}
 
 	// Write to allowed dir should succeed.
+	// Quote paths to handle spaces in TempDir (e.g. C:\Users\Some User\AppData\...).
+	allowedFile := filepath.Join(allowed, "test.txt")
 	req := &LaunchRequest{
 		Shell:   "cmd", ShellFlag: "/C",
-		Command: "echo ok > " + filepath.Join(allowed, "test.txt") + " && type " + filepath.Join(allowed, "test.txt"),
+		Command: `echo ok > "` + allowedFile + `" && type "` + allowedFile + `"`,
 		Config:  cfg,
 	}
 	out, err := restrictedTokenLaunch(t.Context(), req)
@@ -134,7 +136,7 @@ func TestRestrictedTokenWriteBlocking(t *testing.T) {
 
 	// Write to blocked dir should fail — the restricted token has no ACE for it.
 	blockedFile := filepath.Join(blocked, "blocked.txt")
-	req.Command = "echo blocked > " + blockedFile
+	req.Command = `echo blocked > "` + blockedFile + `"`
 	out, _ = restrictedTokenLaunch(t.Context(), req)
 	t.Logf("blocked write output: %s", out)
 	if _, statErr := os.Stat(blockedFile); !os.IsNotExist(statErr) {

@@ -51,14 +51,17 @@ const (
 	daclSecurityInformation = 0x00000004
 
 	grantAccess  = 1
+	denyAccess   = 3
 	revokeAccess = 4
 
 	subContainersAndObjectsInherit = 0x03
+	noInheritance                  = 0x00
 
 	trusteeIsSID     = 0
 	trusteeIsUnknown = 0
 
-	fileAllAccess = 0x001F01FF
+	fileAllAccess  = 0x001F01FF
+	fileGenericWrite = 0x40011600 // GENERIC_WRITE | FILE_WRITE_ATTRIBUTES | FILE_WRITE_EA | WRITE_DAC
 )
 
 type explicitAccessW struct {
@@ -96,6 +99,7 @@ func restrictedTokenLaunch(ctx context.Context, req *LaunchRequest) ([]byte, err
 	}
 	defer windows.FreeSid(capSid)
 
+	// Grant write access to allowed directories.
 	writeDirs := buildWriteDirs(req.Config)
 	grantedDirs := make([]string, 0, len(writeDirs))
 	for _, dir := range writeDirs {
@@ -109,6 +113,30 @@ func restrictedTokenLaunch(ctx context.Context, req *LaunchRequest) ([]byte, err
 		for _, dir := range grantedDirs {
 			if err := revokeAccessACL(dir, capSid); err != nil {
 				slog.Debug("sandbox: failed to revoke ACL (non-fatal)", "dir", dir, "error", err)
+			}
+		}
+	}()
+
+	// If we failed to grant ACL on the root (required dir), fallback to hostExec
+	// since the sandboxed process won't be able to write to its workspace.
+	if req.Config.Root != "" && !containsDir(grantedDirs, req.Config.Root) {
+		slog.Warn("sandbox: failed to grant ACL on root dir, falling back to unsandboxed execution", "root", req.Config.Root)
+		return hostExec(ctx, req)
+	}
+
+	// Deny write access to readonly paths.
+	deniedDirs := make([]string, 0, len(req.Config.ReadonlyPaths))
+	for _, rp := range req.Config.ReadonlyPaths {
+		if err := denyWriteACL(rp, capSid); err != nil {
+			slog.Warn("sandbox: failed to deny write ACL on readonly path", "path", rp, "error", err)
+		} else {
+			deniedDirs = append(deniedDirs, rp)
+		}
+	}
+	defer func() {
+		for _, dir := range deniedDirs {
+			if err := revokeAccessACL(dir, capSid); err != nil {
+				slog.Debug("sandbox: failed to revoke readonly deny ACL (non-fatal)", "dir", dir, "error", err)
 			}
 		}
 	}()
@@ -128,6 +156,15 @@ func restrictedTokenLaunch(ctx context.Context, req *LaunchRequest) ([]byte, err
 		Token: syscall.Token(rtoken),
 	}
 	return cmd.CombinedOutput()
+}
+
+func containsDir(dirs []string, target string) bool {
+	for _, d := range dirs {
+		if d == target {
+			return true
+		}
+	}
+	return false
 }
 
 func generateCapabilitySID() (*windows.SID, error) {
@@ -160,14 +197,17 @@ func buildWriteDirs(cfg *SandboxConfig) []string {
 	return dirs
 }
 
+// grantAccessACL grants FILE_ALL_ACCESS to sid on dir with container/object inheritance.
+// It calls initWinProcs() internally so it's safe to use without prior initialization.
 func grantAccessACL(dir string, sid *windows.SID) error {
+	initWinProcs()
 	dirPtr, err := windows.UTF16PtrFromString(dir)
 	if err != nil {
 		return err
 	}
 
 	var dacl, sd uintptr
-	ret, _, e1 := winProcGetNamedSecurityInfoW.Call(
+	ret, _, _ := winProcGetNamedSecurityInfoW.Call(
 		uintptr(unsafe.Pointer(dirPtr)),
 		uintptr(seFileObject),
 		uintptr(daclSecurityInformation),
@@ -177,7 +217,7 @@ func grantAccessACL(dir string, sid *windows.SID) error {
 		uintptr(unsafe.Pointer(&sd)),
 	)
 	if ret != 0 {
-		return fmt.Errorf("GetNamedSecurityInfo: %w", e1)
+		return fmt.Errorf("GetNamedSecurityInfo: %w", windows.Errno(ret))
 	}
 	defer winProcLocalFree.Call(sd)
 
@@ -193,18 +233,18 @@ func grantAccessACL(dir string, sid *windows.SID) error {
 	}
 
 	var newAcl uintptr
-	ret, _, e1 = winProcSetEntriesInAclW.Call(
+	ret, _, _ = winProcSetEntriesInAclW.Call(
 		1,
 		uintptr(unsafe.Pointer(&ea)),
 		dacl,
 		uintptr(unsafe.Pointer(&newAcl)),
 	)
 	if ret != 0 {
-		return fmt.Errorf("SetEntriesInAcl: %w", e1)
+		return fmt.Errorf("SetEntriesInAcl: %w", windows.Errno(ret))
 	}
 	defer winProcLocalFree.Call(newAcl)
 
-	ret, _, e1 = winProcSetNamedSecurityInfoW.Call(
+	ret, _, _ = winProcSetNamedSecurityInfoW.Call(
 		uintptr(unsafe.Pointer(dirPtr)),
 		uintptr(seFileObject),
 		uintptr(daclSecurityInformation),
@@ -213,19 +253,22 @@ func grantAccessACL(dir string, sid *windows.SID) error {
 		0,
 	)
 	if ret != 0 {
-		return fmt.Errorf("SetNamedSecurityInfo: %w", e1)
+		return fmt.Errorf("SetNamedSecurityInfo: %w", windows.Errno(ret))
 	}
 	return nil
 }
 
-func revokeAccessACL(dir string, sid *windows.SID) error {
+// denyWriteACL adds a DENY write ACE for sid on dir (non-inherited).
+// This is used to enforce ReadonlyPaths within the granted Root.
+func denyWriteACL(dir string, sid *windows.SID) error {
+	initWinProcs()
 	dirPtr, err := windows.UTF16PtrFromString(dir)
 	if err != nil {
 		return err
 	}
 
 	var dacl, sd uintptr
-	ret, _, e1 := winProcGetNamedSecurityInfoW.Call(
+	ret, _, _ := winProcGetNamedSecurityInfoW.Call(
 		uintptr(unsafe.Pointer(dirPtr)),
 		uintptr(seFileObject),
 		uintptr(daclSecurityInformation),
@@ -235,7 +278,66 @@ func revokeAccessACL(dir string, sid *windows.SID) error {
 		uintptr(unsafe.Pointer(&sd)),
 	)
 	if ret != 0 {
-		return fmt.Errorf("GetNamedSecurityInfo: %w", e1)
+		return fmt.Errorf("GetNamedSecurityInfo: %w", windows.Errno(ret))
+	}
+	defer winProcLocalFree.Call(sd)
+
+	ea := explicitAccessW{
+		AccessPermissions: fileGenericWrite,
+		AccessMode:        denyAccess,
+		Inheritance:       noInheritance,
+		Trustee: trusteeW{
+			TrusteeForm: trusteeIsSID,
+			TrusteeType: trusteeIsUnknown,
+			PtstrName:   uintptr(unsafe.Pointer(sid)),
+		},
+	}
+
+	var newAcl uintptr
+	ret, _, _ = winProcSetEntriesInAclW.Call(
+		1,
+		uintptr(unsafe.Pointer(&ea)),
+		dacl,
+		uintptr(unsafe.Pointer(&newAcl)),
+	)
+	if ret != 0 {
+		return fmt.Errorf("SetEntriesInAcl: %w", windows.Errno(ret))
+	}
+	defer winProcLocalFree.Call(newAcl)
+
+	ret, _, _ = winProcSetNamedSecurityInfoW.Call(
+		uintptr(unsafe.Pointer(dirPtr)),
+		uintptr(seFileObject),
+		uintptr(daclSecurityInformation),
+		0, 0,
+		newAcl,
+		0,
+	)
+	if ret != 0 {
+		return fmt.Errorf("SetNamedSecurityInfo: %w", windows.Errno(ret))
+	}
+	return nil
+}
+
+func revokeAccessACL(dir string, sid *windows.SID) error {
+	initWinProcs()
+	dirPtr, err := windows.UTF16PtrFromString(dir)
+	if err != nil {
+		return err
+	}
+
+	var dacl, sd uintptr
+	ret, _, _ := winProcGetNamedSecurityInfoW.Call(
+		uintptr(unsafe.Pointer(dirPtr)),
+		uintptr(seFileObject),
+		uintptr(daclSecurityInformation),
+		0, 0,
+		uintptr(unsafe.Pointer(&dacl)),
+		0,
+		uintptr(unsafe.Pointer(&sd)),
+	)
+	if ret != 0 {
+		return fmt.Errorf("GetNamedSecurityInfo: %w", windows.Errno(ret))
 	}
 	defer winProcLocalFree.Call(sd)
 
@@ -249,18 +351,18 @@ func revokeAccessACL(dir string, sid *windows.SID) error {
 	}
 
 	var newAcl uintptr
-	ret, _, e1 = winProcSetEntriesInAclW.Call(
+	ret, _, _ = winProcSetEntriesInAclW.Call(
 		1,
 		uintptr(unsafe.Pointer(&ea)),
 		dacl,
 		uintptr(unsafe.Pointer(&newAcl)),
 	)
 	if ret != 0 {
-		return fmt.Errorf("SetEntriesInAcl: %w", e1)
+		return fmt.Errorf("SetEntriesInAcl: %w", windows.Errno(ret))
 	}
 	defer winProcLocalFree.Call(newAcl)
 
-	ret, _, e1 = winProcSetNamedSecurityInfoW.Call(
+	ret, _, _ = winProcSetNamedSecurityInfoW.Call(
 		uintptr(unsafe.Pointer(dirPtr)),
 		uintptr(seFileObject),
 		uintptr(daclSecurityInformation),
@@ -269,7 +371,7 @@ func revokeAccessACL(dir string, sid *windows.SID) error {
 		0,
 	)
 	if ret != 0 {
-		return fmt.Errorf("SetNamedSecurityInfo: %w", e1)
+		return fmt.Errorf("SetNamedSecurityInfo: %w", windows.Errno(ret))
 	}
 	return nil
 }
