@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -49,6 +50,9 @@ func pathMatchesRoot(path, root, sep string) bool {
 	return pathLower == rootLower || strings.HasPrefix(pathLower, rootLower+sep)
 }
 
+// shellSegmentReplacer splits a shell command into segments for security checking.
+// Only actual command separators are replaced with newlines: &&, ||, ;, |, &, and newlines.
+// Command substitutions $(...) and `...` are NOT split because they are part of words.
 var shellSegmentReplacer = strings.NewReplacer(
 	"\r\n", "\n",
 	"&&", "\n",
@@ -56,8 +60,6 @@ var shellSegmentReplacer = strings.NewReplacer(
 	"&", "\n",
 	";", "\n",
 	"|", "\n",
-	"$(", "\n",
-	"`", "\n",
 )
 
 func ShellCommandSegments(cmd string) []string {
@@ -177,8 +179,13 @@ func yamlMappingHasKey(node *yaml.Node, key string) bool {
 	return false
 }
 
+// IsEmpty reports whether the sandbox config has no restrictions configured.
+func (s *SandboxConfig) IsEmpty() bool {
+	return s == nil || (s.Root == "" && len(s.AllowPaths) == 0 && len(s.ReadonlyPaths) == 0)
+}
+
 func (s *SandboxConfig) IsAllowed(path string, write bool) bool {
-	if s == nil || (s.Root == "" && len(s.AllowPaths) == 0 && len(s.ReadonlyPaths) == 0) {
+	if s.IsEmpty() {
 		return true
 	}
 
@@ -353,7 +360,7 @@ func (s *SandboxConfig) RealToVirtual(realPath string) string {
 }
 
 func (s *SandboxConfig) ValidatePath(resolvedPath string) error {
-	if s == nil || (s.Root == "" && len(s.AllowPaths) == 0 && len(s.ReadonlyPaths) == 0) {
+	if s.IsEmpty() {
 		return nil
 	}
 	if s.IsAllowed(resolvedPath, false) {
@@ -566,6 +573,16 @@ func (s *Sandbox) Launch(ctx context.Context, shell, shellFlag, command, dir str
 		Dir:       dir,
 		Config:    &cfg,
 	})
+}
+
+// LaunchProcess starts a long-running process with OS-level sandbox enforcement.
+// It returns the *exec.Cmd so callers can capture stdout/stderr and manage the process lifecycle.
+// On macOS this uses Seatbelt (sandbox-exec); on Linux this uses Landlock.
+func (s *Sandbox) LaunchProcess(ctx context.Context, command string, args []string, dir string) (*exec.Cmd, error) {
+	if s == nil {
+		return nil, fmt.Errorf("sandbox: cannot launch without configuration")
+	}
+	return launchProcessWithSandbox(ctx, command, args, dir, &s.config)
 }
 
 // Describe returns a description suffix explaining the active sandbox to the LLM.

@@ -111,8 +111,7 @@ func (t *ShellExecTool) Execute(ctx context.Context, args json.RawMessage) (stri
 	// On Linux/macOS the kernel-level enforcement (Seatbelt/Landlock) is
 	// comprehensive and the app-layer blacklist is skipped to avoid misleading
 	// errors and false positives from the incomplete command list.
-	needAppBlacklist := (t.sandbox == nil || !t.sandbox.AllowNetwork()) &&
-		(t.sandbox == nil || !t.sandbox.HasNetworkIsolation())
+	needAppBlacklist := t.sandbox == nil || (!t.sandbox.AllowNetwork() && !t.sandbox.HasNetworkIsolation())
 	if needAppBlacklist {
 		if err := checkNetworkCommand(cmdStr); err != nil {
 			return "", err

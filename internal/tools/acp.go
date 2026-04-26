@@ -95,9 +95,19 @@ func (a *ACPSubAgent) start(ctx context.Context) error {
 	}
 
 	cmdArgs := append([]string{}, a.args...)
-	cmd := exec.CommandContext(ctx, a.command, cmdArgs...)
-	if a.workdir != "" {
-		cmd.Dir = a.workdir
+
+	var cmd *exec.Cmd
+	var err error
+	if a.sandbox != nil {
+		cmd, err = a.sandbox.LaunchProcess(ctx, a.command, cmdArgs, a.workdir)
+		if err != nil {
+			return fmt.Errorf("sandbox launch %q: %w", a.command, err)
+		}
+	} else {
+		cmd = exec.CommandContext(ctx, a.command, cmdArgs...)
+		if a.workdir != "" {
+			cmd.Dir = a.workdir
+		}
 	}
 
 	// Capture both stdout and stderr to find the server URL.

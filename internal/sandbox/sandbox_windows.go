@@ -441,3 +441,62 @@ func createRestrictedToken(capSid *windows.SID) (windows.Token, error) {
 	}
 	return newToken, nil
 }
+
+// launchProcessWithRestrictedToken launches a process with Windows Restricted Token isolation.
+// Unlike restrictedTokenLaunch which wraps commands via shell (for hostExec), this launches
+// the command directly via CreateProcessAsUserW with the restricted token.
+// The process can only write to paths where the capability SID has been granted access.
+func launchProcessWithRestrictedToken(ctx context.Context, command string, args []string, dir string, cfg *SandboxConfig) (*exec.Cmd, error) {
+	initWinProcs()
+
+	capSid, err := generateCapabilitySID()
+	if err != nil {
+		return nil, fmt.Errorf("generate capability SID: %w", err)
+	}
+	defer windows.FreeSid(capSid)
+
+	// Grant write access to allowed directories.
+	writeDirs := buildWriteDirs(cfg)
+	grantedDirs := make([]string, 0, len(writeDirs))
+	for _, d := range writeDirs {
+		if err := grantAccessACL(d, capSid); err != nil {
+			slog.Warn("sandbox: failed to grant write ACL", "dir", d, "error", err)
+		} else {
+			grantedDirs = append(grantedDirs, d)
+		}
+	}
+	defer func() {
+		for _, d := range grantedDirs {
+			revokeAccessACL(d, capSid) // best effort
+		}
+	}()
+
+	// Deny write access to readonly paths.
+	deniedDirs := make([]string, 0, len(cfg.ReadonlyPaths))
+	for _, rp := range cfg.ReadonlyPaths {
+		if err := denyWriteACL(rp, capSid); err != nil {
+			slog.Warn("sandbox: failed to deny write ACL on readonly path", "path", rp, "error", err)
+		} else {
+			deniedDirs = append(deniedDirs, rp)
+		}
+	}
+	defer func() {
+		for _, d := range deniedDirs {
+			revokeAccessACL(d, capSid) // best effort
+		}
+	}()
+
+	rtoken, err := createRestrictedToken(capSid)
+	if err != nil {
+		return nil, fmt.Errorf("create restricted token: %w", err)
+	}
+
+	cmd := exec.CommandContext(ctx, command, args...)
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Token: syscall.Token(rtoken),
+	}
+	return cmd, nil
+}
