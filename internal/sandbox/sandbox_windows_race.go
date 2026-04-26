@@ -14,6 +14,10 @@ func restrictedTokenLaunch(ctx context.Context, req *LaunchRequest) ([]byte, err
 	return hostExec(ctx, req)
 }
 
+func platformLaunch(ctx context.Context, req *LaunchRequest) ([]byte, error) {
+	return restrictedTokenLaunch(ctx, req)
+}
+
 // launchProcessWithSandbox falls back to direct process launch when built with -race.
 func launchProcessWithSandbox(ctx context.Context, command string, args []string, dir string, cfg *SandboxConfig) (*exec.Cmd, error) {
 	return launchProcessDirect(ctx, command, args, dir)
