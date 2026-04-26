@@ -430,15 +430,14 @@ func TestShellExecTool_NetworkAllowed(t *testing.T) {
 }
 
 func TestShellExecTool_NetworkNotBlockedByAppLayer(t *testing.T) {
-	// On Linux/macOS, when a sandbox config exists (even with AllowNetwork=false),
+	// On platforms with OS-level network isolation (Linux: Landlock, macOS:
+	// Seatbelt), when a sandbox config exists (even with AllowNetwork=false),
 	// the application-level network blacklist should NOT be applied — OS-level
-	// enforcement (Seatbelt/Landlock) handles it instead. Verify the command
-	// reaches the launcher unblocked.
-	// On Windows there is no OS-level enforcement, so the app-layer blacklist
-	// IS the enforcement — skip this test.
-	if runtime.GOOS == "windows" {
-		t.Skip("app-layer blacklist IS the enforcement on Windows (no OS-level sandbox)")
-	}
+	// enforcement handles it instead. On Windows, the Restricted Token sandbox
+	// only provides filesystem isolation, so HasNetworkIsolation() returns false
+	// and the app-layer blacklist is still applied. This test uses a stub
+	// launcher so it verifies the app-layer gating logic, not actual network
+	// enforcement.
 	dir := t.TempDir()
 	vr := sandboxpkg.VirtualHome("myws")
 	sb := sandboxpkg.NewSandbox(sandboxpkg.SandboxConfig{
@@ -455,18 +454,26 @@ func TestShellExecTool_NetworkNotBlockedByAppLayer(t *testing.T) {
 
 	args, _ := json.Marshal(map[string]any{"command": "curl https://example.com"})
 	result, err := tool.Execute(context.Background(), args)
-	if err != nil {
-		t.Fatalf("command should reach the launcher without app-layer rejection, got: %v", err)
-	}
-	if stub.request == nil {
-		t.Fatal("expected command to reach the launcher")
-	}
-	// Verify the command was passed through (virtual paths rewritten).
-	if stub.request.Command != "curl https://example.com" {
-		t.Errorf("launcher received command %q, want %q", stub.request.Command, "curl https://example.com")
-	}
-	if !strings.Contains(result, "done") {
-		t.Errorf("expected launcher output, got %q", result)
+
+	if sb.HasNetworkIsolation() {
+		// Linux/macOS: OS-level enforcement handles network, app-layer blacklist skipped.
+		if err != nil {
+			t.Fatalf("command should reach the launcher without app-layer rejection, got: %v", err)
+		}
+		if stub.request == nil {
+			t.Fatal("expected command to reach the launcher")
+		}
+		if stub.request.Command != "curl https://example.com" {
+			t.Errorf("launcher received command %q, want %q", stub.request.Command, "curl https://example.com")
+		}
+		if !strings.Contains(result, "done") {
+			t.Errorf("expected launcher output, got %q", result)
+		}
+	} else {
+		// Windows: Restricted Token provides FS-only isolation, app-layer blacklist still active.
+		if err == nil {
+			t.Fatal("expected curl to be blocked by app-layer blacklist on platforms without network isolation")
+		}
 	}
 }
 

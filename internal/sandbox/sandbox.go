@@ -456,10 +456,20 @@ func (s *Sandbox) HasWritePolicy() bool {
 }
 
 // HasOSLevelEnforcement reports whether the current platform provides OS-level
-// sandbox enforcement (Landlock on Linux, Seatbelt on macOS). When false (e.g.
-// Windows, FreeBSD), the Launcher falls back to hostExec with no kernel-level
-// isolation, so application-level network command blocking may still be needed.
+// sandbox enforcement for filesystem isolation (Landlock on Linux, Seatbelt on
+// macOS, Restricted Token on Windows).
 func (s *Sandbox) HasOSLevelEnforcement() bool {
+	if s == nil {
+		return false
+	}
+	return runtime.GOOS == "linux" || runtime.GOOS == "darwin" || runtime.GOOS == "windows"
+}
+
+// HasNetworkIsolation reports whether the OS-level sandbox can enforce network
+// restrictions at the kernel level (Landlock on Linux, Seatbelt on macOS).
+// Windows Restricted Token only provides filesystem isolation, so the
+// application-layer network command blacklist is still needed on Windows.
+func (s *Sandbox) HasNetworkIsolation() bool {
 	if s == nil {
 		return false
 	}

@@ -105,13 +105,14 @@ func (t *ShellExecTool) Execute(ctx context.Context, args json.RawMessage) (stri
 
 	// Apply app-layer network command blacklist when:
 	//  1. No sandbox is configured at all (defense in depth), OR
-	//  2. Sandbox exists but OS-level enforcement is unavailable (e.g. Windows),
+	//  2. Sandbox exists but OS-level network isolation is unavailable
+	//     (e.g. Windows Restricted Token only provides FS isolation),
 	//     so the incomplete blacklist is the only network restriction available.
 	// On Linux/macOS the kernel-level enforcement (Seatbelt/Landlock) is
 	// comprehensive and the app-layer blacklist is skipped to avoid misleading
 	// errors and false positives from the incomplete command list.
 	needAppBlacklist := (t.sandbox == nil || !t.sandbox.AllowNetwork()) &&
-		(t.sandbox == nil || !t.sandbox.HasOSLevelEnforcement())
+		(t.sandbox == nil || !t.sandbox.HasNetworkIsolation())
 	if needAppBlacklist {
 		if err := checkNetworkCommand(cmdStr); err != nil {
 			return "", err
