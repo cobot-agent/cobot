@@ -4,7 +4,6 @@ package sandbox
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"os/exec"
 )

@@ -14,17 +14,13 @@ func platformLaunch(ctx context.Context, req *LaunchRequest) ([]byte, error) {
 }
 
 func launchProcessWithSandbox(ctx context.Context, command string, args []string, dir string, cfg *SandboxConfig) (*exec.Cmd, error) {
-	exe, err := os.Executable()
-	if err != nil {
-		return launchProcessDirect(ctx, command, args, dir)
-	}
-
-	// Don't use re-exec in test binaries — they don't call HandleSandboxChildMode.
-	if strings.HasSuffix(os.Args[0], ".test") || strings.HasSuffix(exe, ".test") {
-		return launchProcessDirect(ctx, command, args, dir)
-	}
-
 	if cfg == nil || cfg.IsEmpty() {
+		return launchProcessDirect(ctx, command, args, dir)
+	}
+
+	// Skip sandbox in test binaries — they don't call HandleSandboxChildMode.
+	exe, err := os.Executable()
+	if err == nil && (strings.HasSuffix(os.Args[0], ".test") || strings.HasSuffix(exe, ".test")) {
 		return launchProcessDirect(ctx, command, args, dir)
 	}
 

@@ -5,7 +5,6 @@ package sandbox
 import (
 	"context"
 	"os/exec"
-	"syscall"
 )
 
 // platformLaunch uses restrictedTokenLaunch which wraps commands via shell.
@@ -35,9 +34,6 @@ func launchProcessDirect(ctx context.Context, command string, args []string, dir
 	cmd := exec.CommandContext(ctx, command, args...)
 	if dir != "" {
 		cmd.Dir = dir
-	}
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Token: 0,
 	}
 	return cmd, nil
 }
