@@ -20,8 +20,9 @@ func TestGenerateCapabilitySID(t *testing.T) {
 	defer windows.FreeSid(sid)
 
 	sidStr := sid.String()
-	if !strings.HasPrefix(sidStr, "S-1-5-21-") {
-		t.Errorf("SID should start with S-1-5-21-, got %q", sidStr)
+	// Capability SIDs use S-1-15-3-* (non-account namespace)
+	if !strings.HasPrefix(sidStr, "S-1-15-3-") {
+		t.Errorf("SID should start with S-1-15-3-, got %q", sidStr)
 	}
 
 	// Two calls should produce different SIDs.
@@ -48,7 +49,8 @@ func TestBuildWriteDirs(t *testing.T) {
 	if dirs[0] != `C:\workspace` {
 		t.Errorf("first dir should be root, got %q", dirs[0])
 	}
-	if tempDir := os.Getenv("TEMP"); tempDir != "" {
+	// Both TEMP and TMP (if set) should be included, plus os.TempDir().
+	if tempDir := os.TempDir(); tempDir != "" {
 		found := false
 		for _, d := range dirs {
 			if d == tempDir {
@@ -57,7 +59,7 @@ func TestBuildWriteDirs(t *testing.T) {
 			}
 		}
 		if !found {
-			t.Errorf("TEMP dir %q not in write dirs", tempDir)
+			t.Errorf("os.TempDir() %q not in write dirs", tempDir)
 		}
 	}
 }
@@ -113,13 +115,29 @@ func TestRestrictedTokenNoConfigFallback(t *testing.T) {
 }
 
 func TestRestrictedTokenWriteBlocking(t *testing.T) {
-	allowed := t.TempDir()
-	blocked := t.TempDir()
+	// The sandbox grants write access to Root, AllowPaths, and temp dirs.
+	// Use a dedicated TEMP so the granted temp tree is isolated from the
+	// blocked directory, preventing false test passes.
+	base := t.TempDir()
+	grantedTemp := filepath.Join(base, "granted-temp")
+	if err := os.MkdirAll(grantedTemp, 0o755); err != nil {
+		t.Fatalf("create granted temp dir: %v", err)
+	}
+	t.Setenv("TEMP", grantedTemp)
+	t.Setenv("TMP", grantedTemp)
+
+	allowed := filepath.Join(base, "allowed")
+	if err := os.MkdirAll(allowed, 0o755); err != nil {
+		t.Fatalf("create allowed dir: %v", err)
+	}
+	blocked := filepath.Join(base, "blocked")
+	if err := os.MkdirAll(blocked, 0o755); err != nil {
+		t.Fatalf("create blocked dir: %v", err)
+	}
 
 	cfg := &SandboxConfig{Root: allowed, AllowNetwork: true}
 
 	// Write to allowed dir should succeed.
-	// Quote paths to handle spaces in TempDir (e.g. C:\Users\Some User\AppData\...).
 	allowedFile := filepath.Join(allowed, "test.txt")
 	req := &LaunchRequest{
 		Shell:   "cmd", ShellFlag: "/C",

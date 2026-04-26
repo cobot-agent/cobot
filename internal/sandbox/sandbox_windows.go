@@ -18,8 +18,10 @@ import (
 )
 
 // This file implements the Windows Restricted Token sandbox.
-// It is excluded from builds with -race because CreateRestrictedToken +
-// go test -race causes STATUS_HEAP_CORRUPTION (0xc0000374) on Windows.
+// It uses Win32 ACL APIs (GetNamedSecurityInfoW, SetEntriesInAclW,
+// SetNamedSecurityInfoW) directly — not icacls — for ACL management.
+// Excluded from -race builds because CreateRestrictedToken + go test -race
+// causes STATUS_HEAP_CORRUPTION (0xc0000374) on Windows.
 
 var (
 	winOnce                      sync.Once
@@ -60,8 +62,8 @@ const (
 	trusteeIsSID     = 0
 	trusteeIsUnknown = 0
 
-	fileAllAccess  = 0x001F01FF
-	fileGenericWrite = 0x40011600 // GENERIC_WRITE | FILE_WRITE_ATTRIBUTES | FILE_WRITE_EA | WRITE_DAC
+	fileAllAccess    = 0x001F01FF
+	fileDeleteChild  = 0x00000040
 )
 
 type explicitAccessW struct {
@@ -124,7 +126,7 @@ func restrictedTokenLaunch(ctx context.Context, req *LaunchRequest) ([]byte, err
 		return hostExec(ctx, req)
 	}
 
-	// Deny write access to readonly paths.
+	// Deny write access to readonly paths with inherited ACEs covering the full subtree.
 	deniedDirs := make([]string, 0, len(req.Config.ReadonlyPaths))
 	for _, rp := range req.Config.ReadonlyPaths {
 		if err := denyWriteACL(rp, capSid); err != nil {
@@ -167,6 +169,9 @@ func containsDir(dirs []string, target string) bool {
 	return false
 }
 
+// generateCapabilitySID creates a random SID in the S-1-15-3-* namespace
+// (Windows Capability SIDs). This namespace is designated for application-defined
+// capabilities and cannot collide with real local/domain accounts (S-1-5-*).
 func generateCapabilitySID() (*windows.SID, error) {
 	var buf [16]byte
 	if _, err := rand.Read(buf[:]); err != nil {
@@ -177,7 +182,8 @@ func generateCapabilitySID() (*windows.SID, error) {
 	c := binary.LittleEndian.Uint32(buf[8:12])
 	d := binary.LittleEndian.Uint32(buf[12:16])
 
-	sidStr := fmt.Sprintf("S-1-5-21-%d-%d-%d-%d", a, b, c, d)
+	// S-1-15-3 = capability SID authority (application-defined, non-account)
+	sidStr := fmt.Sprintf("S-1-15-3-%d-%d-%d-%d", a, b, c, d)
 	sid, err := windows.StringToSid(sidStr)
 	if err != nil {
 		return nil, fmt.Errorf("StringToSid(%s): %w", sidStr, err)
@@ -185,15 +191,34 @@ func generateCapabilitySID() (*windows.SID, error) {
 	return sid, nil
 }
 
+// buildWriteDirs collects directories that should be writable for the sandboxed process.
+// It includes Root, AllowPaths, and temp directories (TEMP, TMP, os.TempDir()).
 func buildWriteDirs(cfg *SandboxConfig) []string {
-	dirs := make([]string, 0, 2+len(cfg.AllowPaths))
+	seen := make(map[string]bool)
+	dirs := make([]string, 0, 4+len(cfg.AllowPaths))
+
+	add := func(dir string) {
+		if dir == "" || seen[dir] {
+			return
+		}
+		seen[dir] = true
+		dirs = append(dirs, dir)
+	}
+
 	if cfg.Root != "" {
-		dirs = append(dirs, cfg.Root)
+		add(cfg.Root)
 	}
-	if tempDir := os.Getenv("TEMP"); tempDir != "" {
-		dirs = append(dirs, tempDir)
+	// Include both TEMP and TMP env vars, plus os.TempDir() (which may differ).
+	for _, env := range []string{"TEMP", "TMP"} {
+		if v := os.Getenv(env); v != "" {
+			add(v)
+		}
 	}
-	dirs = append(dirs, cfg.AllowPaths...)
+	add(os.TempDir())
+
+	for _, p := range cfg.AllowPaths {
+		add(p)
+	}
 	return dirs
 }
 
@@ -258,8 +283,9 @@ func grantAccessACL(dir string, sid *windows.SID) error {
 	return nil
 }
 
-// denyWriteACL adds a DENY write ACE for sid on dir (non-inherited).
-// This is used to enforce ReadonlyPaths within the granted Root.
+// denyWriteACL adds an inherited DENY ACE covering the full subtree for write-like
+// permissions (generic write, delete, rename, ACL/owner changes). This matches
+// the readonly semantics enforced by Landlock/Seatbelt on Linux/macOS.
 func denyWriteACL(dir string, sid *windows.SID) error {
 	initWinProcs()
 	dirPtr, err := windows.UTF16PtrFromString(dir)
@@ -282,10 +308,18 @@ func denyWriteACL(dir string, sid *windows.SID) error {
 	}
 	defer winProcLocalFree.Call(sd)
 
+	// Deny all write-like operations including deletion and ACL changes,
+	// propagated to children via subContainersAndObjectsInherit.
+	denyMask := uint32(0x40011600) | // GENERIC_WRITE | FILE_WRITE_ATTRIBUTES | FILE_WRITE_EA | WRITE_DAC (fileGenericWrite)
+		uint32(windows.DELETE) |
+		uint32(windows.WRITE_DAC) |
+		uint32(windows.WRITE_OWNER) |
+		fileDeleteChild
+
 	ea := explicitAccessW{
-		AccessPermissions: fileGenericWrite,
+		AccessPermissions: denyMask,
 		AccessMode:        denyAccess,
-		Inheritance:       noInheritance,
+		Inheritance:       subContainersAndObjectsInherit,
 		Trustee: trusteeW{
 			TrusteeForm: trusteeIsSID,
 			TrusteeType: trusteeIsUnknown,
