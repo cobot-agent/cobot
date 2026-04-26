@@ -494,13 +494,20 @@ func TestShellCommandSegments_SplitsCorrectly(t *testing.T) {
 		expected []string
 	}{
 		{"ls -la", []string{"ls -la"}},
-		{"ls && cat file", []string{"ls", "cat file"}},
-		{"ls || pwd", []string{"ls", "pwd"}},
-		{"ls; pwd", []string{"ls", "pwd"}},
-		{"ls | grep foo", []string{"ls", "grep foo"}},
+		// &&, ||, |, & are binary operators — parsed as ONE statement by mvdan/sh.
+		// ShellCommandSegments returns one string per statement, so these produce
+		// a single segment containing the full serialized command.
+		{"ls && cat file", []string{"ls && cat file"}},
+		{"ls || pwd", []string{"ls || pwd"}},
+		{"ls | grep foo", []string{"ls | grep foo"}},
+		// & as background operator: "ls & pwd" → background ls, then run pwd (two statements).
 		{"ls & pwd", []string{"ls", "pwd"}},
+		// Semicolon separates into two distinct statements.
+		{"ls; pwd", []string{"ls", "pwd"}},
+		// Newline separates into two distinct statements.
 		{"echo hello\ncat file", []string{"echo hello", "cat file"}},
-		{"ls && echo ok && rm -rf /", []string{"ls", "echo ok", "rm -rf /"}},
+		// Left-associative: ((ls && echo ok) && rm -rf /) — one statement.
+		{"ls && echo ok && rm -rf /", []string{"ls && echo ok && rm -rf /"}},
 	}
 	for _, tt := range tests {
 		got := ShellCommandSegments(tt.input)

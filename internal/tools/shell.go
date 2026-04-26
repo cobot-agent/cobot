@@ -182,12 +182,12 @@ func checkNetworkCommand(cmdStr string) error {
 
 // isNetworkCommandUsed checks if a network command is referenced in the given command string.
 func isNetworkCommandUsed(cmdStr, nc string) bool {
-	for _, segment := range sandbox.ShellCommandSegments(cmdStr) {
-		fields := strings.Fields(strings.TrimSpace(segment))
-		if len(fields) == 0 {
-			continue
-		}
-		if filepath.Base(fields[0]) == nc {
+	tree, err := sandbox.ParseShellTree(cmdStr)
+	if err != nil {
+		return false
+	}
+	for _, node := range tree.AllCmds() {
+		if node.Cmd == nc {
 			return true
 		}
 	}
