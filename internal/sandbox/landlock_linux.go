@@ -123,7 +123,7 @@ loop:
 		}
 	}
 
-	if len(cmdArgs) < 3 {
+	if len(cmdArgs) < 1 {
 		fmt.Fprintln(os.Stderr, "cobot-sandbox: missing command")
 		os.Exit(1)
 	}

@@ -394,23 +394,52 @@ func (s *SandboxConfig) IsBlockedCommand(cmd string) bool {
 	return false
 }
 
-// ---------------------------------------------------------------------------
 // SandboxedCmd wraps an exec.Cmd with OS-level sandbox enforcement.
-// Call Wait() instead of exec.Cmd.Wait() to ensure cleanup runs after process exits.
+// Use Start() to launch the process (not cmd.Start() directly) so that
+// sandbox cleanup runs if startup fails. Use Wait() to wait for
+// process exit and perform sandbox cleanup. If you decide not to start
+// the process, call Cleanup() to release sandbox resources.
+//
+// Safe to use even when no sandbox is active (cleanup will be nil).
 type SandboxedCmd struct {
 	Cmd     *exec.Cmd
 	cleanup func()
+	started bool
 }
 
-// Wait runs the process and performs sandbox cleanup.
-// It is safe to call Wait multiple times on the underlying exec.Cmd
-// (cleanup func runs only on the first call).
-func (s *SandboxedCmd) Wait() error {
-	err := s.Cmd.Wait()
-	if s.cleanup != nil {
-		s.cleanup()
-		s.cleanup = nil
+// Start launches the wrapped command, ensuring sandbox cleanup runs if startup fails.
+// Callers should prefer Start() over calling Cmd.Start() directly.
+func (s *SandboxedCmd) Start() error {
+	if s == nil || s.Cmd == nil {
+		return fmt.Errorf("sandbox: nil command")
 	}
+	if err := s.Cmd.Start(); err != nil {
+		s.Cleanup()
+		return err
+	}
+	s.started = true
+	return nil
+}
+
+// Cleanup releases any sandbox resources associated with this command.
+// It is safe to call Cleanup multiple times (only the first call executes it).
+func (s *SandboxedCmd) Cleanup() {
+	if s == nil || s.cleanup == nil {
+		return
+	}
+	cleanup := s.cleanup
+	s.cleanup = nil
+	cleanup()
+}
+
+// Wait waits for the process to exit and performs sandbox cleanup.
+// The cleanup func runs only on the first call to Wait.
+func (s *SandboxedCmd) Wait() error {
+	if s == nil || s.Cmd == nil {
+		return fmt.Errorf("sandbox: nil command")
+	}
+	err := s.Cmd.Wait()
+	s.Cleanup()
 	return err
 }
 // ---------------------------------------------------------------------------
@@ -593,14 +622,21 @@ func (s *Sandbox) Launch(ctx context.Context, shell, shellFlag, command, dir str
 }
 
 // LaunchProcess starts a long-running process with OS-level sandbox enforcement.
-// It returns *SandboxedCmd so callers can use .Wait() to ensure cleanup after process exits.
+// Use the returned SandboxedCmd's Start() to launch and Wait() to wait for exit.
+// If you decide not to start, call Cleanup() to release sandbox resources.
 // On macOS this uses Seatbelt (sandbox-exec); on Linux this uses Landlock.
 func (s *Sandbox) LaunchProcess(ctx context.Context, command string, args []string, dir string) (*SandboxedCmd, error) {
 	if s == nil {
 		return nil, fmt.Errorf("sandbox: cannot launch without configuration")
 	}
 	cmd, cleanup, err := launchProcessWithSandbox(ctx, command, args, dir, &s.config)
-	return &SandboxedCmd{Cmd: cmd, cleanup: cleanup}, err
+	if err != nil {
+		if cleanup != nil {
+			cleanup()
+		}
+		return nil, err
+	}
+	return &SandboxedCmd{Cmd: cmd, cleanup: cleanup}, nil
 }
 
 // Describe returns a description suffix explaining the active sandbox to the LLM.

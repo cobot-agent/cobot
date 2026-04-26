@@ -19,7 +19,7 @@ func launchProcessWithSandbox(ctx context.Context, command string, args []string
 		return cmd, nil, err
 	}
 
-	// Skip sandbox in test binaries.
+	// Skip sandbox in test binaries (sandbox-exec may conflict with test runner).
 	exe, err := os.Executable()
 	if err == nil && (strings.HasSuffix(os.Args[0], ".test") || strings.HasSuffix(exe, ".test")) {
 		cmd, err := launchProcessDirect(ctx, command, args, dir)
