@@ -19,14 +19,11 @@ func platformLaunch(ctx context.Context, req *LaunchRequest) ([]byte, error) {
 // It creates a restricted token with a capability SID, grants ACLs on allowed
 // directories, and launches the process with that token. The process can only
 // write to paths where the capability SID has been granted access.
-func launchProcessWithSandbox(ctx context.Context, command string, args []string, dir string, cfg *SandboxConfig) (*exec.Cmd, error) {
+func launchProcessWithSandbox(ctx context.Context, command string, args []string, dir string, cfg *SandboxConfig) (*exec.Cmd, func(), error) {
 	if cfg == nil || cfg.IsEmpty() {
-		return launchProcessDirect(ctx, command, args, dir)
+		cmd, err := launchProcessDirect(ctx, command, args, dir)
+		return cmd, nil, err
 	}
-
-	// Windows Restricted Token setup is expensive (SID generation + ACL manipulation).
-	// For short-lived commands, this overhead is significant. However, ACPSubAgent
-	// uses this for long-running server processes, so the setup cost is amortized.
 	return launchProcessWithRestrictedToken(ctx, command, args, dir, cfg)
 }
 

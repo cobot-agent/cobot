@@ -19,8 +19,9 @@ func platformLaunch(ctx context.Context, req *LaunchRequest) ([]byte, error) {
 }
 
 // launchProcessWithSandbox falls back to direct process launch when built with -race.
-func launchProcessWithSandbox(ctx context.Context, command string, args []string, dir string, cfg *SandboxConfig) (*exec.Cmd, error) {
-	return launchProcessDirect(ctx, command, args, dir)
+func launchProcessWithSandbox(ctx context.Context, command string, args []string, dir string, cfg *SandboxConfig) (*exec.Cmd, func(), error) {
+	cmd, err := launchProcessDirect(ctx, command, args, dir)
+	return cmd, nil, err
 }
 
 func launchProcessDirect(ctx context.Context, command string, args []string, dir string) (*exec.Cmd, error) {

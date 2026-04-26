@@ -395,7 +395,24 @@ func (s *SandboxConfig) IsBlockedCommand(cmd string) bool {
 }
 
 // ---------------------------------------------------------------------------
-// Sandbox — unified interface for virtual path translation and OS-level isolation
+// SandboxedCmd wraps an exec.Cmd with OS-level sandbox enforcement.
+// Call Wait() instead of exec.Cmd.Wait() to ensure cleanup runs after process exits.
+type SandboxedCmd struct {
+	Cmd     *exec.Cmd
+	cleanup func()
+}
+
+// Wait runs the process and performs sandbox cleanup.
+// It is safe to call Wait multiple times on the underlying exec.Cmd
+// (cleanup func runs only on the first call).
+func (s *SandboxedCmd) Wait() error {
+	err := s.Cmd.Wait()
+	if s.cleanup != nil {
+		s.cleanup()
+		s.cleanup = nil
+	}
+	return err
+}
 // ---------------------------------------------------------------------------
 
 // Sandbox provides unified virtual path translation and OS-level command isolation.
@@ -576,13 +593,14 @@ func (s *Sandbox) Launch(ctx context.Context, shell, shellFlag, command, dir str
 }
 
 // LaunchProcess starts a long-running process with OS-level sandbox enforcement.
-// It returns the *exec.Cmd so callers can capture stdout/stderr and manage the process lifecycle.
+// It returns *SandboxedCmd so callers can use .Wait() to ensure cleanup after process exits.
 // On macOS this uses Seatbelt (sandbox-exec); on Linux this uses Landlock.
-func (s *Sandbox) LaunchProcess(ctx context.Context, command string, args []string, dir string) (*exec.Cmd, error) {
+func (s *Sandbox) LaunchProcess(ctx context.Context, command string, args []string, dir string) (*SandboxedCmd, error) {
 	if s == nil {
 		return nil, fmt.Errorf("sandbox: cannot launch without configuration")
 	}
-	return launchProcessWithSandbox(ctx, command, args, dir, &s.config)
+	cmd, cleanup, err := launchProcessWithSandbox(ctx, command, args, dir, &s.config)
+	return &SandboxedCmd{Cmd: cmd, cleanup: cleanup}, err
 }
 
 // Describe returns a description suffix explaining the active sandbox to the LLM.

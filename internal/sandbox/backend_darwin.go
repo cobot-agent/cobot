@@ -13,20 +13,23 @@ func platformLaunch(ctx context.Context, req *LaunchRequest) ([]byte, error) {
 	return sandboxExecLaunch(ctx, req)
 }
 
-func launchProcessWithSandbox(ctx context.Context, command string, args []string, dir string, cfg *SandboxConfig) (*exec.Cmd, error) {
+func launchProcessWithSandbox(ctx context.Context, command string, args []string, dir string, cfg *SandboxConfig) (*exec.Cmd, func(), error) {
 	if cfg == nil || cfg.IsEmpty() {
-		return launchProcessDirect(ctx, command, args, dir)
+		cmd, err := launchProcessDirect(ctx, command, args, dir)
+		return cmd, nil, err
 	}
 
-	// Skip sandbox in test binaries — they don't call HandleSandboxChildMode.
+	// Skip sandbox in test binaries.
 	exe, err := os.Executable()
 	if err == nil && (strings.HasSuffix(os.Args[0], ".test") || strings.HasSuffix(exe, ".test")) {
-		return launchProcessDirect(ctx, command, args, dir)
+		cmd, err := launchProcessDirect(ctx, command, args, dir)
+		return cmd, nil, err
 	}
 
 	sandboxExecPath, err := exec.LookPath("sandbox-exec")
 	if err != nil {
-		return launchProcessDirect(ctx, command, args, dir)
+		cmd, err := launchProcessDirect(ctx, command, args, dir)
+		return cmd, nil, err
 	}
 
 	profile := buildSeatbeltProfile(cfg)
@@ -35,7 +38,7 @@ func launchProcessWithSandbox(ctx context.Context, command string, args []string
 	if dir != "" {
 		cmd.Dir = dir
 	}
-	return cmd, nil
+	return cmd, nil, nil
 }
 
 func launchProcessDirect(ctx context.Context, command string, args []string, dir string) (*exec.Cmd, error) {

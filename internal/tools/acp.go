@@ -33,7 +33,7 @@ type ACPSubAgent struct {
 
 	// runtime state
 	mu      sync.Mutex
-	cmd     *exec.Cmd
+	cmd     *sandbox.SandboxedCmd
 	baseURL string
 	nextID  int64
 	started bool
@@ -97,12 +97,14 @@ func (a *ACPSubAgent) start(ctx context.Context) error {
 	cmdArgs := append([]string{}, a.args...)
 
 	var cmd *exec.Cmd
+	var scmd *sandbox.SandboxedCmd
 	var err error
 	if a.sandbox != nil {
-		cmd, err = a.sandbox.LaunchProcess(ctx, a.command, cmdArgs, a.workdir)
+		scmd, err = a.sandbox.LaunchProcess(ctx, a.command, cmdArgs, a.workdir)
 		if err != nil {
 			return fmt.Errorf("sandbox launch %q: %w", a.command, err)
 		}
+		cmd = scmd.Cmd
 	} else {
 		cmd = exec.CommandContext(ctx, a.command, cmdArgs...)
 		if a.workdir != "" {
@@ -124,7 +126,7 @@ func (a *ACPSubAgent) start(ctx context.Context) error {
 		return fmt.Errorf("start command %q: %w", a.command, err)
 	}
 
-	a.cmd = cmd
+	a.cmd = scmd
 
 	// Read stdout and stderr concurrently to find the server URL.
 	// We give up after 5 seconds.
@@ -167,8 +169,8 @@ func (a *ACPSubAgent) start(ctx context.Context) error {
 
 // killLocked kills the subprocess. Must be called with a.mu held.
 func (a *ACPSubAgent) killLocked() error {
-	if a.cmd != nil && a.cmd.Process != nil {
-		_ = a.cmd.Process.Signal(os.Interrupt)
+	if a.cmd != nil && a.cmd.Cmd.Process != nil {
+		_ = a.cmd.Cmd.Process.Signal(os.Interrupt)
 		done := make(chan error, 1)
 		go func() {
 			done <- a.cmd.Wait()
@@ -176,7 +178,7 @@ func (a *ACPSubAgent) killLocked() error {
 		select {
 		case <-done:
 		case <-time.After(2 * time.Second):
-			_ = a.cmd.Process.Kill()
+			_ = a.cmd.Cmd.Process.Kill()
 			<-done
 		}
 	}
