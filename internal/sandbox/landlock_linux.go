@@ -14,44 +14,63 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// shouldUseReexec returns true if the re-exec pattern should be used for sandboxing.
+// Returns false if running in a test binary (which doesn't call HandleSandboxChildMode)
+// or if the executable cannot be determined.
+func shouldUseReexec() bool {
+	exe, err := os.Executable()
+	if err != nil {
+		return false
+	}
+	return !strings.HasSuffix(os.Args[0], ".test") && !strings.HasSuffix(exe, ".test")
+}
+
+// buildReexecArgs builds the argument slice for re-invoking the current binary
+// in sandbox child mode, using the given command and arguments. The command is
+// appended after the "--" separator.
+func buildReexecArgs(command string, args []string, cfg *SandboxConfig) []string {
+	reexecArgs := []string{"__cobot_sandbox_child__"}
+	if cfg.Root != "" {
+		reexecArgs = append(reexecArgs, "--root", cfg.Root)
+	}
+	for _, p := range cfg.AllowPaths {
+		reexecArgs = append(reexecArgs, "--allow", p)
+	}
+	for _, p := range cfg.ReadonlyPaths {
+		reexecArgs = append(reexecArgs, "--readonly", p)
+	}
+	if !cfg.AllowNetwork {
+		reexecArgs = append(reexecArgs, "--no-network")
+	}
+	reexecArgs = append(reexecArgs, "--")
+	reexecArgs = append(reexecArgs, command)
+	reexecArgs = append(reexecArgs, args...)
+	return reexecArgs
+}
+
 // landlockLaunch runs a command in a Landlock-sandboxed subprocess using the
 // re-exec pattern: the current binary is re-invoked with a special child-mode
 // argument, the child applies Landlock restrictions to itself, then execs the
 // actual shell command.
 func landlockLaunch(ctx context.Context, req *LaunchRequest) ([]byte, error) {
+	if !shouldUseReexec() {
+		return hostExec(ctx, req)
+	}
+
+	if req.Config == nil || req.Config.IsEmpty() {
+		// No config means no sandbox policy — run directly on host.
+		slog.Warn("sandbox: no config provided, running command without Landlock enforcement", "command", req.Command)
+		return hostExec(ctx, req)
+	}
+
 	exe, err := os.Executable()
 	if err != nil {
 		return hostExec(ctx, req)
 	}
 
-	// Don't use re-exec in test binaries — they don't call HandleSandboxChildMode.
-	if strings.HasSuffix(os.Args[0], ".test") || strings.HasSuffix(exe, ".test") {
-		return hostExec(ctx, req)
-	}
+	reexecArgs := buildReexecArgs(req.Shell, []string{req.ShellFlag, req.Command}, req.Config)
 
-	args := []string{"__cobot_sandbox_child__"}
-	if req.Config != nil {
-		if req.Config.Root != "" {
-			args = append(args, "--root", req.Config.Root)
-		}
-		for _, p := range req.Config.AllowPaths {
-			args = append(args, "--allow", p)
-		}
-		for _, p := range req.Config.ReadonlyPaths {
-			args = append(args, "--readonly", p)
-		}
-		if !req.Config.AllowNetwork {
-			args = append(args, "--no-network")
-		}
-	} else {
-		// No config means no sandbox policy — run directly on host.
-		slog.Warn("sandbox: no config provided, running command without Landlock enforcement", "command", req.Command)
-		return hostExec(ctx, req)
-	}
-	args = append(args, "--")
-	args = append(args, req.Shell, req.ShellFlag, req.Command)
-
-	cmd := exec.CommandContext(ctx, exe, args...)
+	cmd := exec.CommandContext(ctx, exe, reexecArgs...)
 	if req.Dir != "" {
 		cmd.Dir = req.Dir
 	}
@@ -104,7 +123,7 @@ loop:
 		}
 	}
 
-	if len(cmdArgs) < 3 {
+	if len(cmdArgs) < 1 {
 		fmt.Fprintln(os.Stderr, "cobot-sandbox: missing command")
 		os.Exit(1)
 	}

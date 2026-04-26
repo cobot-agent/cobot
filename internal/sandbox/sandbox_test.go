@@ -1,8 +1,10 @@
 package sandbox
 
 import (
+	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -486,6 +488,202 @@ func TestSandboxConfig_ValidatePath_PartialPrefixMatch(t *testing.T) {
 	}
 }
 
+func TestShellCommandSegments_SplitsCorrectly(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected []string
+	}{
+		{"ls -la", []string{"ls -la"}},
+		// &&, ||, |, & are binary operators — parsed as ONE statement by mvdan/sh.
+		// ShellCommandSegments returns one string per statement, so these produce
+		// a single segment containing the full serialized command.
+		{"ls && cat file", []string{"ls && cat file"}},
+		{"ls || pwd", []string{"ls || pwd"}},
+		{"ls | grep foo", []string{"ls | grep foo"}},
+		// & as background operator: "ls & pwd" → background ls, then run pwd (two statements).
+		{"ls & pwd", []string{"ls", "pwd"}},
+		// Semicolon separates into two distinct statements.
+		{"ls; pwd", []string{"ls", "pwd"}},
+		// Newline separates into two distinct statements.
+		{"echo hello\ncat file", []string{"echo hello", "cat file"}},
+		// Left-associative: ((ls && echo ok) && rm -rf /) — one statement.
+		{"ls && echo ok && rm -rf /", []string{"ls && echo ok && rm -rf /"}},
+	}
+	for _, tt := range tests {
+		got := ShellCommandSegments(tt.input)
+		if len(got) != len(tt.expected) {
+			t.Errorf("ShellCommandSegments(%q): got %d segments, want %d: %v", tt.input, len(got), len(tt.expected), got)
+			continue
+		}
+		for i := range got {
+			if got[i] != tt.expected[i] {
+				t.Errorf("ShellCommandSegments(%q)[%d]: got %q, want %q", tt.input, i, got[i], tt.expected[i])
+			}
+		}
+	}
+}
+
+func TestShellCommandSegments_CommandSubstitution(t *testing.T) {
+	// Command substitutions are NOT split (they are part of words), so the
+	// full expression stays in one segment.
+	seg := ShellCommandSegments("echo $(curl localhost)")
+	if len(seg) != 1 {
+		t.Errorf("expected 1 segment for command substitution, got %d: %v", len(seg), seg)
+	}
+	if !strings.Contains(seg[0], "$(curl localhost)") {
+		t.Errorf("segment should contain full cmd substitution: %q", seg[0])
+	}
+
+	// Backtick variant. Note: mvdan/sh Printer serializes all command
+	// substitutions as $(...), not backticks. So the segment contains
+	// "$(whoami)" not "`whoami`". This is fine for security checking since
+	// both forms are detected as HasCmdSubst.
+	seg2 := ShellCommandSegments("echo `whoami`")
+	if len(seg2) != 1 {
+		t.Errorf("expected 1 segment for backtick substitution, got %d: %v", len(seg2), seg2)
+	}
+	// mvdan Printer normalizes `...` to $(...), so we check for $(whoami)
+	if !strings.Contains(seg2[0], "$(whoami)") {
+		t.Errorf("segment should contain command substitution as $(...): got %q", seg2[0])
+	}
+}
+
+func TestIsBlockedCommand_CommandSubstitution(t *testing.T) {
+	cfg := &SandboxConfig{BlockedCommands: []string{"curl", "wget"}}
+
+	// Direct curl should be blocked
+	if !cfg.IsBlockedCommand("curl http://example.com") {
+		t.Error("direct curl should be blocked")
+	}
+
+	// curl inside $(...) is now detected and blocked.
+	// extractInnerCommands walks into CmdSubst.Stmts to find CallExpr commands.
+	if !cfg.IsBlockedCommand("echo $(curl http://example.com)") {
+		t.Error("curl inside command substitution should be blocked")
+	}
+
+	// Backtick form also detected.
+	if !cfg.IsBlockedCommand("echo `curl http://example.com`") {
+		t.Error("curl inside backtick substitution should be blocked")
+	}
+
+	// Pipeline inside substitution: both cat and grep are checked.
+	// Use "cat" in BlockedCommands to test this.
+	cfg2 := &SandboxConfig{BlockedCommands: []string{"cat", "grep"}}
+	if !cfg2.IsBlockedCommand("echo $(cat /etc/passwd | grep root)") {
+		t.Error("cat inside pipeline substitution should be blocked")
+	}
+
+	// Nested command substitution: $(curl $(wget localhost))
+	if !cfg.IsBlockedCommand("echo $(curl $(wget localhost))") {
+		t.Error("curl inside nested substitution should be blocked")
+	}
+
+	// Non-blocked commands should pass
+	if cfg.IsBlockedCommand("echo hello") {
+		t.Error("echo should not be blocked")
+	}
+
+	// wget is blocked, not curl
+	if !cfg.IsBlockedCommand("echo $(wget http://example.com)") {
+		t.Error("wget inside command substitution should be blocked")
+	}
+}
+
+func TestIsBlockedCommand_NetworkBlocked(t *testing.T) {
+	// IsBlockedCommand does NOT check AllowNetwork — that's IsBlockedNetwork.
+	// It only checks BlockedCommands list. Here we test the BlockedCommands list.
+	cfg := &SandboxConfig{BlockedCommands: []string{"curl", "wget", "nc", "telnet"}}
+
+	if !cfg.IsBlockedCommand("curl http://example.com") {
+		t.Error("curl should be blocked via BlockedCommands")
+	}
+	if !cfg.IsBlockedCommand("wget http://example.com") {
+		t.Error("wget should be blocked via BlockedCommands")
+	}
+	if cfg.IsBlockedCommand("ls -la") {
+		t.Error("ls should not be blocked")
+	}
+}
+
+func TestSandboxedCmd_NilSafety(t *testing.T) {
+	// Nil SandboxedCmd.Start() should return error
+	var scmd *SandboxedCmd
+	if err := scmd.Start(); err == nil {
+		t.Error("Start on nil SandboxedCmd should return error")
+	}
+
+	// Nil SandboxedCmd.Wait() should return error
+	if err := scmd.Wait(); err == nil {
+		t.Error("Wait on nil SandboxedCmd should return error")
+	}
+
+	// Nil SandboxedCmd.Cleanup() should not panic
+	scmd.Cleanup() // should be safe
+
+	// SandboxedCmd with nil Cmd
+	scmd = &SandboxedCmd{}
+	if err := scmd.Start(); err == nil {
+		t.Error("Start on nil Cmd should return error")
+	}
+	if err := scmd.Wait(); err == nil {
+		t.Error("Wait on nil Cmd should return error")
+	}
+}
+
+func TestSandboxedCmd_CleanupIdempotent(t *testing.T) {
+	cleanupCount := 0
+	scmd := &SandboxedCmd{
+		Cmd: exec.Command("echo", "ok"),
+		cleanup: func() {
+			cleanupCount++
+		},
+	}
+
+	// First Cleanup() runs the func
+	scmd.Cleanup()
+	if cleanupCount != 1 {
+		t.Errorf("first Cleanup: expected count=1, got %d", cleanupCount)
+	}
+
+	// Second Cleanup() should not run again
+	scmd.Cleanup()
+	if cleanupCount != 1 {
+		t.Errorf("second Cleanup: expected count=1, got %d", cleanupCount)
+	}
+
+	// Cleanup after Wait() should be no-op (cleanup already ran via Wait)
+	cleanupCount = 0
+	scmd = &SandboxedCmd{
+		Cmd:     exec.Command("echo", "ok"),
+		cleanup: func() { cleanupCount++ },
+	}
+	scmd.Wait()
+	// This call should be a no-op since Wait() already ran cleanup
+	scmd.Cleanup()
+	if cleanupCount != 1 {
+		t.Errorf("Cleanup after Wait: expected count=1 (Wait already called cleanup), got %d", cleanupCount)
+	}
+	// Another call should also be no-op
+	scmd.Cleanup()
+	if cleanupCount != 1 {
+		t.Errorf("second Cleanup after Wait: expected count=1, got %d", cleanupCount)
+	}
+}
+
+func TestSandboxedCmd_WaitCallsCleanup(t *testing.T) {
+	cleanupCalled := false
+	scmd := &SandboxedCmd{
+		Cmd: exec.Command("echo", "ok"),
+		cleanup: func() { cleanupCalled = true },
+	}
+
+	_ = scmd.Wait()
+	if !cleanupCalled {
+		t.Error("Wait should have called cleanup")
+	}
+}
+
 func TestSandboxConfig_ValidatePath_SymlinkEscape(t *testing.T) {
 	root := t.TempDir()
 	outside := t.TempDir()
@@ -498,4 +696,28 @@ func TestSandboxConfig_ValidatePath_SymlinkEscape(t *testing.T) {
 	if err := s.ValidatePath(filepath.Join(escape, "secret.txt")); err == nil {
 		t.Fatal("symlink escape should fail validation")
 	}
+}
+
+func TestLaunchProcess_ReturnsNilOnError(t *testing.T) {
+	// A nil Sandbox should return error from LaunchProcess, not a half-initialized object.
+	var s *Sandbox
+	scmd, err := s.LaunchProcess(context.Background(), "echo", []string{"ok"}, "")
+	if err == nil {
+		t.Error("LaunchProcess with nil Sandbox should return error")
+	}
+	if scmd != nil {
+		t.Error("LaunchProcess with nil Sandbox should return nil SandboxedCmd")
+	}
+
+	// With a real Sandbox that has empty config, LaunchProcess should succeed
+	realSandbox := NewSandbox(SandboxConfig{})
+	scmd, err = realSandbox.LaunchProcess(context.Background(), "echo", []string{"ok"}, "")
+	if err != nil {
+		t.Errorf("LaunchProcess with empty config failed: %v", err)
+	}
+	if scmd == nil {
+		t.Fatal("LaunchProcess should return non-nil SandboxedCmd on success")
+	}
+	// Clean up
+	scmd.Cleanup()
 }

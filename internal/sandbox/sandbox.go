@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -47,21 +48,6 @@ func pathMatchesRoot(path, root, sep string) bool {
 	pathLower := strings.ToLower(path)
 	rootLower := strings.ToLower(root)
 	return pathLower == rootLower || strings.HasPrefix(pathLower, rootLower+sep)
-}
-
-var shellSegmentReplacer = strings.NewReplacer(
-	"\r\n", "\n",
-	"&&", "\n",
-	"||", "\n",
-	"&", "\n",
-	";", "\n",
-	"|", "\n",
-	"$(", "\n",
-	"`", "\n",
-)
-
-func ShellCommandSegments(cmd string) []string {
-	return strings.Split(shellSegmentReplacer.Replace(cmd), "\n")
 }
 
 type SandboxConfig struct {
@@ -177,8 +163,13 @@ func yamlMappingHasKey(node *yaml.Node, key string) bool {
 	return false
 }
 
+// IsEmpty reports whether the sandbox config has no restrictions configured.
+func (s *SandboxConfig) IsEmpty() bool {
+	return s == nil || (s.Root == "" && len(s.AllowPaths) == 0 && len(s.ReadonlyPaths) == 0)
+}
+
 func (s *SandboxConfig) IsAllowed(path string, write bool) bool {
-	if s == nil || (s.Root == "" && len(s.AllowPaths) == 0 && len(s.ReadonlyPaths) == 0) {
+	if s.IsEmpty() {
 		return true
 	}
 
@@ -353,7 +344,7 @@ func (s *SandboxConfig) RealToVirtual(realPath string) string {
 }
 
 func (s *SandboxConfig) ValidatePath(resolvedPath string) error {
-	if s == nil || (s.Root == "" && len(s.AllowPaths) == 0 && len(s.ReadonlyPaths) == 0) {
+	if s.IsEmpty() {
 		return nil
 	}
 	if s.IsAllowed(resolvedPath, false) {
@@ -362,7 +353,22 @@ func (s *SandboxConfig) ValidatePath(resolvedPath string) error {
 	return fmt.Errorf("path %q is outside sandbox policy", resolvedPath)
 }
 
+// IsBlockedCommand checks if a command is blocked by sandbox policy.
+// It uses proper shell parsing to correctly handle quoted strings and
+// command substitutions. Commands inside $(...) or `...` are statically
+// detected and checked against BlockedCommands (e.g. $(curl localhost) is blocked
+// if "curl" is in BlockedCommands).
 func (s *SandboxConfig) IsBlockedCommand(cmd string) bool {
+	tree, err := ParseShellTree(cmd)
+	if err != nil {
+		// On parse error, fall back to naive parsing.
+		return s.isBlockedCommandNaive(cmd)
+	}
+	return tree.IsBlockedBy(s.BlockedCommands)
+}
+
+// isBlockedCommandNaive is the original naive implementation for fallback.
+func (s *SandboxConfig) isBlockedCommandNaive(cmd string) bool {
 	for _, segment := range ShellCommandSegments(cmd) {
 		trimmed := strings.TrimSpace(segment)
 		if trimmed == "" {
@@ -387,8 +393,54 @@ func (s *SandboxConfig) IsBlockedCommand(cmd string) bool {
 	return false
 }
 
-// ---------------------------------------------------------------------------
-// Sandbox — unified interface for virtual path translation and OS-level isolation
+// SandboxedCmd wraps an exec.Cmd with OS-level sandbox enforcement.
+// Use Start() to launch the process (not cmd.Start() directly) so that
+// sandbox cleanup runs if startup fails. Use Wait() to wait for
+// process exit and perform sandbox cleanup. If you decide not to start
+// the process, call Cleanup() to release sandbox resources.
+//
+// Safe to use even when no sandbox is active (cleanup will be nil).
+type SandboxedCmd struct {
+	Cmd     *exec.Cmd
+	cleanup func()
+	started bool
+}
+
+// Start launches the wrapped command, ensuring sandbox cleanup runs if startup fails.
+// Callers should prefer Start() over calling Cmd.Start() directly.
+func (s *SandboxedCmd) Start() error {
+	if s == nil || s.Cmd == nil {
+		return fmt.Errorf("sandbox: nil command")
+	}
+	if err := s.Cmd.Start(); err != nil {
+		s.Cleanup()
+		return err
+	}
+	s.started = true
+	return nil
+}
+
+// Cleanup releases any sandbox resources associated with this command.
+// It is safe to call Cleanup multiple times (only the first call executes it).
+func (s *SandboxedCmd) Cleanup() {
+	if s == nil || s.cleanup == nil {
+		return
+	}
+	cleanup := s.cleanup
+	s.cleanup = nil
+	cleanup()
+}
+
+// Wait waits for the process to exit and performs sandbox cleanup.
+// The cleanup func runs only on the first call to Wait.
+func (s *SandboxedCmd) Wait() error {
+	if s == nil || s.Cmd == nil {
+		return fmt.Errorf("sandbox: nil command")
+	}
+	err := s.Cmd.Wait()
+	s.Cleanup()
+	return err
+}
 // ---------------------------------------------------------------------------
 
 // Sandbox provides unified virtual path translation and OS-level command isolation.
@@ -566,6 +618,24 @@ func (s *Sandbox) Launch(ctx context.Context, shell, shellFlag, command, dir str
 		Dir:       dir,
 		Config:    &cfg,
 	})
+}
+
+// LaunchProcess starts a long-running process with OS-level sandbox enforcement.
+// Use the returned SandboxedCmd's Start() to launch and Wait() to wait for exit.
+// If you decide not to start, call Cleanup() to release sandbox resources.
+// On macOS this uses Seatbelt (sandbox-exec); on Linux this uses Landlock.
+func (s *Sandbox) LaunchProcess(ctx context.Context, command string, args []string, dir string) (*SandboxedCmd, error) {
+	if s == nil {
+		return nil, fmt.Errorf("sandbox: cannot launch without configuration")
+	}
+	cmd, cleanup, err := launchProcessWithSandbox(ctx, command, args, dir, &s.config)
+	if err != nil {
+		if cleanup != nil {
+			cleanup()
+		}
+		return nil, err
+	}
+	return &SandboxedCmd{Cmd: cmd, cleanup: cleanup}, nil
 }
 
 // Describe returns a description suffix explaining the active sandbox to the LLM.

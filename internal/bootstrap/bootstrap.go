@@ -148,9 +148,9 @@ func ConfigureAgentForWorkspace(a *agent.Agent, ws *workspace.Workspace, registr
 	sandboxConfig := ws.EffectiveSandbox(agentSandbox)
 
 	// Sandbox tools use the unified *sandbox.Sandbox for virtual path translation.
-	// Memory tools still accept *sandbox.SandboxConfig until they are migrated.
+	// Memory tools now also use *sandbox.Sandbox for consistent path handling.
 	sb := configureSandboxTools(a, ws, agentCfg, sm, sandboxConfig)
-	configureMemoryTools(a, store, sandboxConfig)
+	configureMemoryTools(a, store, sb)
 	configureDelegateTool(a, ws, registry, sb)
 	configureCronTool(a, ws, registry)
 	configureSkillSyncer(a, store, ws, agentCfg)
@@ -328,7 +328,7 @@ func configureSandboxTools(a *agent.Agent, ws *workspace.Workspace, agentCfg *co
 	return sb
 }
 
-func configureMemoryTools(a *agent.Agent, store *memory.Store, sandbox *sandbox.SandboxConfig) {
+func configureMemoryTools(a *agent.Agent, store *memory.Store, sandbox *sandbox.Sandbox) {
 	if store != nil {
 		a.RegisterTool(memory.NewMemorySearchTool(store, sandbox))
 		a.RegisterTool(memory.NewMemoryStoreTool(store, sandbox))

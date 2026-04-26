@@ -441,3 +441,70 @@ func createRestrictedToken(capSid *windows.SID) (windows.Token, error) {
 	}
 	return newToken, nil
 }
+
+// launchProcessWithRestrictedToken launches a process with Windows Restricted Token isolation.
+// Unlike restrictedTokenLaunch which wraps commands via shell (for hostExec), this launches
+// the command directly via CreateProcessAsUserW with the restricted token.
+// The process can only write to paths where the capability SID has been granted access.
+//
+// Caller MUST call the returned cleanup func after cmd.Wait() to revoke ACLs and close
+// the restricted token handle. The cleanup func is NOT called automatically.
+func launchProcessWithRestrictedToken(ctx context.Context, command string, args []string, dir string, cfg *SandboxConfig) (*exec.Cmd, func(), error) {
+	initWinProcs()
+
+	capSid, err := generateCapabilitySID()
+	if err != nil {
+		return nil, nil, fmt.Errorf("generate capability SID: %w", err)
+	}
+
+	// Grant write access to allowed directories.
+	writeDirs := buildWriteDirs(cfg)
+	grantedDirs := make([]string, 0, len(writeDirs))
+	for _, d := range writeDirs {
+		if err := grantAccessACL(d, capSid); err != nil {
+			slog.Warn("sandbox: failed to grant write ACL", "dir", d, "error", err)
+		} else {
+			grantedDirs = append(grantedDirs, d)
+		}
+	}
+
+	// Deny write access to readonly paths.
+	deniedDirs := make([]string, 0, len(cfg.ReadonlyPaths))
+	for _, rp := range cfg.ReadonlyPaths {
+		if err := denyWriteACL(rp, capSid); err != nil {
+			slog.Warn("sandbox: failed to deny write ACL on readonly path", "path", rp, "error", err)
+		} else {
+			deniedDirs = append(deniedDirs, rp)
+		}
+	}
+
+	rtoken, err := createRestrictedToken(capSid)
+	if err != nil {
+		// Best-effort cleanup granted ACLs before returning.
+		for _, d := range grantedDirs {
+			revokeAccessACL(d, capSid)
+		}
+		windows.FreeSid(capSid)
+		return nil, nil, fmt.Errorf("create restricted token: %w", err)
+	}
+
+	cmd := exec.CommandContext(ctx, command, args...)
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Token: syscall.Token(rtoken),
+	}
+
+	cleanup := func() {
+		for _, d := range grantedDirs {
+			revokeAccessACL(d, capSid)
+		}
+		for _, d := range deniedDirs {
+			revokeAccessACL(d, capSid)
+		}
+		rtoken.Close()
+		windows.FreeSid(capSid)
+	}
+	return cmd, cleanup, nil
+}

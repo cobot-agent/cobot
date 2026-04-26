@@ -33,7 +33,7 @@ type ACPSubAgent struct {
 
 	// runtime state
 	mu      sync.Mutex
-	cmd     *exec.Cmd
+	cmd     *sandbox.SandboxedCmd
 	baseURL string
 	nextID  int64
 	started bool
@@ -95,26 +95,37 @@ func (a *ACPSubAgent) start(ctx context.Context) error {
 	}
 
 	cmdArgs := append([]string{}, a.args...)
-	cmd := exec.CommandContext(ctx, a.command, cmdArgs...)
-	if a.workdir != "" {
-		cmd.Dir = a.workdir
+
+	var scmd *sandbox.SandboxedCmd
+	var err error
+	if a.sandbox != nil {
+		scmd, err = a.sandbox.LaunchProcess(ctx, a.command, cmdArgs, a.workdir)
+		if err != nil {
+			return fmt.Errorf("sandbox launch %q: %w", a.command, err)
+		}
+	} else {
+		cmd := exec.CommandContext(ctx, a.command, cmdArgs...)
+		if a.workdir != "" {
+			cmd.Dir = a.workdir
+		}
+		scmd = &sandbox.SandboxedCmd{Cmd: cmd}
 	}
 
 	// Capture both stdout and stderr to find the server URL.
-	stdout, err := cmd.StdoutPipe()
+	stdout, err := scmd.Cmd.StdoutPipe()
 	if err != nil {
 		return fmt.Errorf("stdout pipe: %w", err)
 	}
-	stderr, err := cmd.StderrPipe()
+	stderr, err := scmd.Cmd.StderrPipe()
 	if err != nil {
 		return fmt.Errorf("stderr pipe: %w", err)
 	}
 
-	if err := cmd.Start(); err != nil {
+	if err := scmd.Start(); err != nil {
 		return fmt.Errorf("start command %q: %w", a.command, err)
 	}
 
-	a.cmd = cmd
+	a.cmd = scmd
 
 	// Read stdout and stderr concurrently to find the server URL.
 	// We give up after 5 seconds.
@@ -157,8 +168,8 @@ func (a *ACPSubAgent) start(ctx context.Context) error {
 
 // killLocked kills the subprocess. Must be called with a.mu held.
 func (a *ACPSubAgent) killLocked() error {
-	if a.cmd != nil && a.cmd.Process != nil {
-		_ = a.cmd.Process.Signal(os.Interrupt)
+	if a.cmd != nil && a.cmd.Cmd != nil && a.cmd.Cmd.Process != nil {
+		_ = a.cmd.Cmd.Process.Signal(os.Interrupt)
 		done := make(chan error, 1)
 		go func() {
 			done <- a.cmd.Wait()
@@ -166,7 +177,7 @@ func (a *ACPSubAgent) killLocked() error {
 		select {
 		case <-done:
 		case <-time.After(2 * time.Second):
-			_ = a.cmd.Process.Kill()
+			_ = a.cmd.Cmd.Process.Kill()
 			<-done
 		}
 	}

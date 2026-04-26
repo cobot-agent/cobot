@@ -111,8 +111,7 @@ func (t *ShellExecTool) Execute(ctx context.Context, args json.RawMessage) (stri
 	// On Linux/macOS the kernel-level enforcement (Seatbelt/Landlock) is
 	// comprehensive and the app-layer blacklist is skipped to avoid misleading
 	// errors and false positives from the incomplete command list.
-	needAppBlacklist := (t.sandbox == nil || !t.sandbox.AllowNetwork()) &&
-		(t.sandbox == nil || !t.sandbox.HasNetworkIsolation())
+	needAppBlacklist := t.sandbox == nil || (!t.sandbox.AllowNetwork() && !t.sandbox.HasNetworkIsolation())
 	if needAppBlacklist {
 		if err := checkNetworkCommand(cmdStr); err != nil {
 			return "", err
@@ -183,12 +182,12 @@ func checkNetworkCommand(cmdStr string) error {
 
 // isNetworkCommandUsed checks if a network command is referenced in the given command string.
 func isNetworkCommandUsed(cmdStr, nc string) bool {
-	for _, segment := range sandbox.ShellCommandSegments(cmdStr) {
-		fields := strings.Fields(strings.TrimSpace(segment))
-		if len(fields) == 0 {
-			continue
-		}
-		if filepath.Base(fields[0]) == nc {
+	tree, err := sandbox.ParseShellTree(cmdStr)
+	if err != nil {
+		return false
+	}
+	for _, node := range tree.AllCmds() {
+		if node.Cmd == nc {
 			return true
 		}
 	}

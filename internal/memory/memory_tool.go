@@ -30,10 +30,10 @@ type memorySearchArgs struct {
 
 type MemorySearchTool struct {
 	store   *Store
-	sandbox *sandbox.SandboxConfig
+	sandbox *sandbox.Sandbox
 }
 
-func NewMemorySearchTool(s *Store, sandbox ...*sandbox.SandboxConfig) *MemorySearchTool {
+func NewMemorySearchTool(s *Store, sandbox ...*sandbox.Sandbox) *MemorySearchTool {
 	t := &MemorySearchTool{store: s}
 	if len(sandbox) > 0 {
 		t.sandbox = sandbox[0]
@@ -86,10 +86,10 @@ type memoryStoreArgs struct {
 
 type MemoryStoreTool struct {
 	store   *Store
-	sandbox *sandbox.SandboxConfig
+	sandbox *sandbox.Sandbox
 }
 
-func NewMemoryStoreTool(s *Store, sandbox ...*sandbox.SandboxConfig) *MemoryStoreTool {
+func NewMemoryStoreTool(s *Store, sandbox ...*sandbox.Sandbox) *MemoryStoreTool {
 	t := &MemoryStoreTool{store: s}
 	if len(sandbox) > 0 {
 		t.sandbox = sandbox[0]
@@ -141,10 +141,10 @@ type l3SearchArgs struct {
 
 type L3DeepSearchTool struct {
 	store   *Store
-	sandbox *sandbox.SandboxConfig
+	sandbox *sandbox.Sandbox
 }
 
-func NewL3DeepSearchTool(s *Store, sandbox ...*sandbox.SandboxConfig) *L3DeepSearchTool {
+func NewL3DeepSearchTool(s *Store, sandbox ...*sandbox.Sandbox) *L3DeepSearchTool {
 	t := &L3DeepSearchTool{store: s}
 	if len(sandbox) > 0 {
 		t.sandbox = sandbox[0]
@@ -189,4 +189,4 @@ var (
 	_ cobot.Tool = (*L3DeepSearchTool)(nil)
 )
 
-var sandboxRewriteError = (*sandbox.SandboxConfig).RewriteError
+var sandboxRewriteError = (*sandbox.Sandbox).RewriteError
