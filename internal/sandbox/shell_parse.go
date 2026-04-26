@@ -310,7 +310,8 @@ func extractInnerCommands(cmd syntax.Command) []string {
 			cmds = append(cmds, extractInnerCommands(s.Cmd)...)
 		}
 		if c.Else != nil {
-			// c.Else is another IfClause — recursed into via extractInnerCommands(*IfClause)
+			// c.Else is another IfClause — recurse to extract its commands
+			cmds = append(cmds, extractInnerCommands(c.Else)...)
 		}
 	case *syntax.CaseClause:
 		for _, item := range c.Items {

@@ -19,7 +19,9 @@ func launchProcessWithSandbox(ctx context.Context, command string, args []string
 		return cmd, nil, err
 	}
 
-	// Skip sandbox in test binaries (sandbox-exec may conflict with test runner).
+	// Skip sandbox-exec for test binaries to avoid conflicts with test runner
+	// process management. sandbox-exec is the native macOS sandbox (no re-exec
+	// pattern needed), so we simply fall back to direct launch for tests.
 	exe, err := os.Executable()
 	if err == nil && (strings.HasSuffix(os.Args[0], ".test") || strings.HasSuffix(exe, ".test")) {
 		cmd, err := launchProcessDirect(ctx, command, args, dir)
