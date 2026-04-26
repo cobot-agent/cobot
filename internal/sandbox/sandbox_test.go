@@ -549,16 +549,37 @@ func TestIsBlockedCommand_CommandSubstitution(t *testing.T) {
 		t.Error("direct curl should be blocked")
 	}
 
-	// curl inside $(...) is inside a word, so it won't be detected as a separate
-	// command segment. The top-level command is "echo", not "curl".
-	// This is a known limitation: command substitutions bypass BlockedCommands.
-	if cfg.IsBlockedCommand("echo $(curl http://example.com)") {
-		t.Log("note: curl inside command substitution is not blocked (known limitation)")
+	// curl inside $(...) is now detected and blocked.
+	// extractInnerCommands walks into CmdSubst.Stmts to find CallExpr commands.
+	if !cfg.IsBlockedCommand("echo $(curl http://example.com)") {
+		t.Error("curl inside command substitution should be blocked")
+	}
+
+	// Backtick form also detected.
+	if !cfg.IsBlockedCommand("echo `curl http://example.com`") {
+		t.Error("curl inside backtick substitution should be blocked")
+	}
+
+	// Pipeline inside substitution: both cat and grep are checked.
+	// Use "cat" in BlockedCommands to test this.
+	cfg2 := &SandboxConfig{BlockedCommands: []string{"cat", "grep"}}
+	if !cfg2.IsBlockedCommand("echo $(cat /etc/passwd | grep root)") {
+		t.Error("cat inside pipeline substitution should be blocked")
+	}
+
+	// Nested command substitution: $(curl $(wget localhost))
+	if !cfg.IsBlockedCommand("echo $(curl $(wget localhost))") {
+		t.Error("curl inside nested substitution should be blocked")
 	}
 
 	// Non-blocked commands should pass
 	if cfg.IsBlockedCommand("echo hello") {
 		t.Error("echo should not be blocked")
+	}
+
+	// wget is blocked, not curl
+	if !cfg.IsBlockedCommand("echo $(wget http://example.com)") {
+		t.Error("wget inside command substitution should be blocked")
 	}
 }
 

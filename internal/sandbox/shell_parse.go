@@ -14,11 +14,15 @@ type ShellSegment struct {
 	// "$(curl localhost)", "ls -la").
 	Raw string
 	// BaseCmd is the base name of the first word (e.g. "curl", "ls", "rm").
-	// Empty if the segment is empty or has command substitution.
+	// Empty if the segment starts with a command substitution.
 	BaseCmd string
 	// HasCmdSubst is true if Raw contains a command substitution $(...) or `...`.
-	// When true, the segment cannot be reliably security-checked.
 	HasCmdSubst bool
+	// InnerCmds lists all commands executed inside command substitutions
+	// within this segment. For example, "$(curl localhost)" has InnerCmds=["curl"].
+	// These are checked against BlockedCommands separately from BaseCmd,
+	// since the outer command (e.g. "echo") is not the security-relevant one.
+	InnerCmds []string
 }
 
 // ParseShellCommand parses a shell command string into structured segments.
@@ -63,16 +67,24 @@ func collectSegments(stmt *syntax.Stmt, out *[]ShellSegment) {
 			buf.WriteString(wordStr)
 			if hasCmdSubstitution(w) {
 				seg.HasCmdSubst = true
+				// Extract commands executed inside $(...) or `...` within this word.
+				extractInnerCommands(w, &seg.InnerCmds)
 			}
 		}
 		seg.Raw = buf.String()
 
 		if !seg.HasCmdSubst {
-			// Only compute BaseCmd when no command substitution is present.
+			// No command substitution — BaseCmd is the first argument.
 			if len(cmd.Args) > 0 {
 				seg.BaseCmd = filepath.Base(cmd.Args[0].Lit())
 			}
+		} else if len(cmd.Args) > 0 && !hasCmdSubstitution(cmd.Args[0]) {
+			// Segment starts with a normal word followed by words with cmd substitution.
+			// Example: "echo $(curl localhost)" — BaseCmd="echo", InnerCmds=["curl"].
+			seg.BaseCmd = filepath.Base(cmd.Args[0].Lit())
 		}
+		// If the segment starts with a cmd substitution (e.g. "$(curl localhost)"),
+		// BaseCmd remains empty; all commands are in InnerCmds.
 
 		*out = append(*out, seg)
 
@@ -174,6 +186,66 @@ func hasCmdSubstNode(n syntax.Node) bool {
 		return !found
 	})
 	return found
+}
+
+// extractInnerCommands walks node and finds all commands executed inside
+// command substitutions, appending their base names to out.
+// For example, in $(curl localhost) it finds the CallExpr whose first arg is "curl".
+func extractInnerCommands(node syntax.Node, out *[]string) {
+	syntax.Walk(node, func(n syntax.Node) bool {
+		if cs, ok := n.(*syntax.CmdSubst); ok {
+			// Descend into all statements inside the command substitution.
+			for _, stmt := range cs.Stmts {
+				collectCmds(stmt, out)
+			}
+			return true // continue walking (in case of nested CmdSubst)
+		}
+		return true
+	})
+}
+
+// collectCmds collects all top-level command names from a statement into out.
+func collectCmds(stmt *syntax.Stmt, out *[]string) {
+	if stmt == nil || stmt.Cmd == nil {
+		return
+	}
+	switch c := stmt.Cmd.(type) {
+	case *syntax.CallExpr:
+		if len(c.Args) > 0 && c.Args[0].Lit() != "" {
+			*out = append(*out, filepath.Base(c.Args[0].Lit()))
+		}
+	case *syntax.BinaryCmd:
+		collectCmds(c.X, out)
+		collectCmds(c.Y, out)
+	case *syntax.Subshell:
+		for _, s := range c.Stmts {
+			collectCmds(s, out)
+		}
+	case *syntax.WhileClause:
+		for _, s := range c.Cond {
+			collectCmds(s, out)
+		}
+		for _, s := range c.Do {
+			collectCmds(s, out)
+		}
+	case *syntax.ForClause:
+		for _, s := range c.Do {
+			collectCmds(s, out)
+		}
+	case *syntax.IfClause:
+		for _, s := range c.Cond {
+			collectCmds(s, out)
+		}
+		for _, s := range c.Then {
+			collectCmds(s, out)
+		}
+		if c.Else != nil {
+			collectCmds(&syntax.Stmt{Cmd: c.Else}, out)
+		}
+	case *syntax.FuncDecl:
+		collectCmds(c.Body, out)
+	}
+	// For any other cmd type, we don't extract (e.g. time, coproc, etc.)
 }
 
 // ShellCommandSegments returns the raw text of each shell segment.

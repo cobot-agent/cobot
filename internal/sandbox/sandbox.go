@@ -355,9 +355,9 @@ func (s *SandboxConfig) ValidatePath(resolvedPath string) error {
 
 // IsBlockedCommand checks if a command is blocked by sandbox policy.
 // It uses proper shell parsing to correctly handle quoted strings and
-// command substitutions. Segments containing command substitution $(...) or
-// `...` are skipped because the substituted content cannot be determined
-// statically.
+// command substitutions. Commands inside $(...) or `...` are statically
+// detected and checked against BlockedCommands (e.g. $(curl localhost) is blocked
+// if "curl" is in BlockedCommands).
 func (s *SandboxConfig) IsBlockedCommand(cmd string) bool {
 	segments, err := ParseShellCommand(cmd)
 	if err != nil {
@@ -366,29 +366,39 @@ func (s *SandboxConfig) IsBlockedCommand(cmd string) bool {
 	}
 
 	for _, seg := range segments {
-		if seg.HasCmdSubst {
-			// Command substitution present; cannot statically analyze.
-			continue
-		}
 		trimmed := strings.TrimSpace(seg.Raw)
 		if trimmed == "" {
 			continue
 		}
 
-		// seg.Raw is the full segment text (e.g. "rm -rf /").
-		// seg.BaseCmd is already computed (e.g. "rm").
-		baseCmd := seg.BaseCmd
+		// Check all command sources against BlockedCommands.
+		// cmdSources includes: the full segment, BaseCmd, and all InnerCmds.
+		var cmdSources []string
+		cmdSources = append(cmdSources, trimmed)
+		if seg.BaseCmd != "" {
+			cmdSources = append(cmdSources, seg.BaseCmd)
+		}
+		cmdSources = append(cmdSources, seg.InnerCmds...)
 
-		for _, blocked := range s.BlockedCommands {
-			if baseCmd == blocked || trimmed == blocked || strings.HasPrefix(trimmed, blocked+" ") || strings.HasPrefix(trimmed, blocked+"\t") {
-				return true
-			}
-			if (strings.Contains(blocked, " ") || strings.Contains(blocked, "=")) && strings.HasPrefix(trimmed, blocked) {
-				return true
+		for _, src := range cmdSources {
+			for _, blocked := range s.BlockedCommands {
+				if cmdSourceMatchesBlocked(src, blocked) {
+					return true
+				}
 			}
 		}
 	}
 	return false
+}
+
+// cmdSourceMatchesBlocked reports whether src matches a blocked command.
+// For simple names (no space/=), it's an exact or base-name match.
+// For patterns (space or =), it's a prefix match against src.
+func cmdSourceMatchesBlocked(src, blocked string) bool {
+	if strings.ContainsAny(blocked, " =") {
+		return strings.HasPrefix(src, blocked)
+	}
+	return src == blocked || filepath.Base(src) == blocked
 }
 
 // isBlockedCommandNaive is the original naive implementation for fallback.
