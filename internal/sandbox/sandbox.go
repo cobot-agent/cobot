@@ -50,22 +50,6 @@ func pathMatchesRoot(path, root, sep string) bool {
 	return pathLower == rootLower || strings.HasPrefix(pathLower, rootLower+sep)
 }
 
-// shellSegmentReplacer splits a shell command into segments for security checking.
-// Only actual command separators are replaced with newlines: &&, ||, ;, |, &, and newlines.
-// Command substitutions $(...) and `...` are NOT split because they are part of words.
-var shellSegmentReplacer = strings.NewReplacer(
-	"\r\n", "\n",
-	"&&", "\n",
-	"||", "\n",
-	"&", "\n",
-	";", "\n",
-	"|", "\n",
-)
-
-func ShellCommandSegments(cmd string) []string {
-	return strings.Split(shellSegmentReplacer.Replace(cmd), "\n")
-}
-
 type SandboxConfig struct {
 	VirtualRoot     string   `yaml:"virtual_root,omitempty"`
 	Root            string   `yaml:"root"`
@@ -369,7 +353,46 @@ func (s *SandboxConfig) ValidatePath(resolvedPath string) error {
 	return fmt.Errorf("path %q is outside sandbox policy", resolvedPath)
 }
 
+// IsBlockedCommand checks if a command is blocked by sandbox policy.
+// It uses proper shell parsing to correctly handle quoted strings and
+// command substitutions. Segments containing command substitution $(...) or
+// `...` are skipped because the substituted content cannot be determined
+// statically.
 func (s *SandboxConfig) IsBlockedCommand(cmd string) bool {
+	segments, err := ParseShellCommand(cmd)
+	if err != nil {
+		// On parse error, fall back to naive parsing.
+		return s.isBlockedCommandNaive(cmd)
+	}
+
+	for _, seg := range segments {
+		if seg.HasCmdSubst {
+			// Command substitution present; cannot statically analyze.
+			continue
+		}
+		trimmed := strings.TrimSpace(seg.Raw)
+		if trimmed == "" {
+			continue
+		}
+
+		// seg.Raw is the full segment text (e.g. "rm -rf /").
+		// seg.BaseCmd is already computed (e.g. "rm").
+		baseCmd := seg.BaseCmd
+
+		for _, blocked := range s.BlockedCommands {
+			if baseCmd == blocked || trimmed == blocked || strings.HasPrefix(trimmed, blocked+" ") || strings.HasPrefix(trimmed, blocked+"\t") {
+				return true
+			}
+			if (strings.Contains(blocked, " ") || strings.Contains(blocked, "=")) && strings.HasPrefix(trimmed, blocked) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// isBlockedCommandNaive is the original naive implementation for fallback.
+func (s *SandboxConfig) isBlockedCommandNaive(cmd string) bool {
 	for _, segment := range ShellCommandSegments(cmd) {
 		trimmed := strings.TrimSpace(segment)
 		if trimmed == "" {

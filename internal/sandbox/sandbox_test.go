@@ -494,13 +494,13 @@ func TestShellCommandSegments_SplitsCorrectly(t *testing.T) {
 		expected []string
 	}{
 		{"ls -la", []string{"ls -la"}},
-		{"ls && cat file", []string{"ls ", " cat file"}},
-		{"ls || pwd", []string{"ls ", " pwd"}},
-		{"ls; pwd", []string{"ls", " pwd"}},
-		{"ls | grep foo", []string{"ls ", " grep foo"}},
-		{"ls & pwd", []string{"ls ", " pwd"}},
+		{"ls && cat file", []string{"ls", "cat file"}},
+		{"ls || pwd", []string{"ls", "pwd"}},
+		{"ls; pwd", []string{"ls", "pwd"}},
+		{"ls | grep foo", []string{"ls", "grep foo"}},
+		{"ls & pwd", []string{"ls", "pwd"}},
 		{"echo hello\ncat file", []string{"echo hello", "cat file"}},
-		{"ls && echo ok && rm -rf /", []string{"ls ", " echo ok ", " rm -rf /"}},
+		{"ls && echo ok && rm -rf /", []string{"ls", "echo ok", "rm -rf /"}},
 	}
 	for _, tt := range tests {
 		got := ShellCommandSegments(tt.input)
@@ -527,13 +527,17 @@ func TestShellCommandSegments_CommandSubstitution(t *testing.T) {
 		t.Errorf("segment should contain full cmd substitution: %q", seg[0])
 	}
 
-	// Backtick variant
+	// Backtick variant. Note: mvdan/sh Printer serializes all command
+	// substitutions as $(...), not backticks. So the segment contains
+	// "$(whoami)" not "`whoami`". This is fine for security checking since
+	// both forms are detected as HasCmdSubst.
 	seg2 := ShellCommandSegments("echo `whoami`")
 	if len(seg2) != 1 {
 		t.Errorf("expected 1 segment for backtick substitution, got %d: %v", len(seg2), seg2)
 	}
-	if !strings.Contains(seg2[0], "`whoami`") {
-		t.Errorf("segment should contain full backtick substitution: %q", seg2[0])
+	// mvdan Printer normalizes `...` to $(...), so we check for $(whoami)
+	if !strings.Contains(seg2[0], "$(whoami)") {
+		t.Errorf("segment should contain command substitution as $(...): got %q", seg2[0])
 	}
 }
 
