@@ -181,9 +181,8 @@ func isMediaMessageType(t string) bool {
 	return false
 }
 
-// SendMessage sends a text or rich (post) message to a Feishu chat.
-// If msg.RichContent is non-empty, it is sent as a post message;
-// otherwise msg.Text is sent as plain text.
+// SendMessage dispatches to the correct Feishu IM API based on MsgType.
+// If MsgType is empty, defaults to "text".
 func (ch *FeishuChannel) SendMessage(ctx context.Context, msg *cobot.OutboundMessage) (*cobot.SendResult, error) {
 	if !ch.IsAlive() {
 		return nil, fmt.Errorf("feishu channel %s is closed", ch.ID())
@@ -192,13 +191,25 @@ func (ch *FeishuChannel) SendMessage(ctx context.Context, msg *cobot.OutboundMes
 		return nil, fmt.Errorf("feishu SendMessage: receive_id is required")
 	}
 
-	var msgType string
+	msgType := cobot.OutboundMessageType(msg.MsgType)
+	if msgType == "" {
+		msgType = cobot.OutboundMsgTypeText
+	}
+
 	var content string
-	if msg.RichContent != "" {
-		msgType = "post"
+	switch msgType {
+	case cobot.OutboundMsgTypePost, cobot.OutboundMsgTypeInteractive:
 		content = msg.RichContent
-	} else {
-		msgType = "text"
+		if content == "" {
+			return nil, fmt.Errorf("feishu SendMessage: rich_content required for %s", msgType)
+		}
+	case cobot.OutboundMsgTypeImage:
+		return ch.sendImageKey(ctx, msg.ReceiveID, msg.ImageKey)
+	case cobot.OutboundMsgTypeAudio, cobot.OutboundMsgTypeVideo, cobot.OutboundMsgTypeFile, cobot.OutboundMsgTypeMedia:
+		return ch.sendMediaKey(ctx, msg.ReceiveID, msg.MediaKey, string(msgType))
+	case cobot.OutboundMsgTypeText:
+		content = formatTextContent(msg.Text)
+	default:
 		content = formatTextContent(msg.Text)
 	}
 
@@ -207,7 +218,7 @@ func (ch *FeishuChannel) SendMessage(ctx context.Context, msg *cobot.OutboundMes
 			ReceiveIdType("chat_id").
 			Body(larkim.NewCreateMessageReqBodyBuilder().
 				ReceiveId(msg.ReceiveID).
-				MsgType(msgType).
+				MsgType(string(msgType)).
 				Content(content).
 				Build()).
 			Build(),
@@ -221,6 +232,60 @@ func (ch *FeishuChannel) SendMessage(ctx context.Context, msg *cobot.OutboundMes
 		messageID = ptrStr(resp.Data.MessageId)
 	}
 	slog.Debug("feishu: message sent", "channel", ch.ID(), "chat_id", msg.ReceiveID, "message_id", messageID, "type", msgType)
+	return &cobot.SendResult{Success: true, MessageID: messageID}, nil
+}
+
+// sendImageKey sends an image by Feishu resource key.
+func (ch *FeishuChannel) sendImageKey(ctx context.Context, chatID, imageKey string) (*cobot.SendResult, error) {
+	if imageKey == "" {
+		return nil, fmt.Errorf("feishu sendImageKey: image_key is required")
+	}
+	payload := map[string]string{"image_key": imageKey}
+	content, _ := json.Marshal(payload)
+	resp, err := ch.client.Im.V1.Message.Create(ctx,
+		larkim.NewCreateMessageReqBuilder().
+			ReceiveIdType("chat_id").
+			Body(larkim.NewCreateMessageReqBodyBuilder().
+				ReceiveId(chatID).
+				MsgType("image").
+				Content(string(content)).
+				Build()).
+			Build(),
+	)
+	if err != nil {
+		return &cobot.SendResult{Success: false}, fmt.Errorf("feishu send image: %w", err)
+	}
+	messageID := ""
+	if resp != nil && resp.Data != nil {
+		messageID = ptrStr(resp.Data.MessageId)
+	}
+	return &cobot.SendResult{Success: true, MessageID: messageID}, nil
+}
+
+// sendMediaKey sends an audio/video/file/media message by Feishu resource key.
+func (ch *FeishuChannel) sendMediaKey(ctx context.Context, chatID, mediaKey, msgType string) (*cobot.SendResult, error) {
+	if mediaKey == "" {
+		return nil, fmt.Errorf("feishu sendMediaKey: media_key is required")
+	}
+	payload := map[string]string{"file_key": mediaKey}
+	content, _ := json.Marshal(payload)
+	resp, err := ch.client.Im.V1.Message.Create(ctx,
+		larkim.NewCreateMessageReqBuilder().
+			ReceiveIdType("chat_id").
+			Body(larkim.NewCreateMessageReqBodyBuilder().
+				ReceiveId(chatID).
+				MsgType(msgType).
+				Content(string(content)).
+				Build()).
+			Build(),
+	)
+	if err != nil {
+		return &cobot.SendResult{Success: false}, fmt.Errorf("feishu send %s: %w", msgType, err)
+	}
+	messageID := ""
+	if resp != nil && resp.Data != nil {
+		messageID = ptrStr(resp.Data.MessageId)
+	}
 	return &cobot.SendResult{Success: true, MessageID: messageID}, nil
 }
 
