@@ -437,7 +437,7 @@ func newSubAgent(a *agent.Agent, registry cobot.ModelResolver, filteredTools cob
 
 // ConfigureGateway creates a Gateway, registers configured channels,
 // and starts it. Returns the Gateway for lifecycle management by the CLI.
-func ConfigureGateway(res *Result, cfg cobot.GatewayConfig) (*gateway.Gateway, error) {
+func ConfigureGateway(res *Result, gwCfg cobot.GatewayConfig, channels []cobot.ChannelConfig) (*gateway.Gateway, error) {
 	registry := res.Agent.Registry()
 	filtered := res.Agent.ToolRegistry().Clone().Without("delegate_task")
 	subAgents := &sync.Map{}
@@ -459,15 +459,52 @@ func ConfigureGateway(res *Result, cfg cobot.GatewayConfig) (*gateway.Gateway, e
 		return nil
 	}
 
-	gw := gateway.New(gateway.Config{Addr: cfg.Addr, APIKey: cfg.APIKey}, res.ChannelMgr, handler)
+	gw := gateway.New(gateway.Config{Addr: gwCfg.Addr, APIKey: gwCfg.APIKey}, res.ChannelMgr, handler)
 
-	// RegisterChannelFunc is set by channel implementation packages
-	// (feishu, reverse, etc.) when they are imported. This decouples
-	// gateway core from concrete channel types.
-	// TODO: Wire channel registration in follow-up PR.
+	// Register reverse channel factory for dynamic registration via REST API.
+	gw.SetRegisterReverseFunc(func(id, callbackURL, secret string) (cobot.MessageChannel, error) {
+		return channel.NewReverseChannel(id, callbackURL, secret), nil
+	})
+
+	// Register static channels from config.
+	for _, chCfg := range channels {
+		ch, err := createChannel(chCfg)
+		if err != nil {
+			slog.Warn("gateway: skipping invalid channel config", "name", chCfg.Name, "error", err)
+			continue
+		}
+		if err := gw.RegisterChannel(ch); err != nil {
+			return nil, fmt.Errorf("register channel %q: %w", chCfg.Name, err)
+		}
+	}
 
 	if err := gw.Start(); err != nil {
 		return nil, fmt.Errorf("start gateway: %w", err)
 	}
 	return gw, nil
+}
+
+// createChannel creates a MessageChannel from a ChannelConfig.
+func createChannel(cfg cobot.ChannelConfig) (cobot.MessageChannel, error) {
+	switch cfg.Type {
+	case "feishu":
+		fc := channel.FeishuConfig{
+			AppID:             cfg.Config["app_id"],
+			AppSecret:         cfg.Config["app_secret"],
+			VerificationToken: cfg.Config["verification_token"],
+			EncryptKey:        cfg.Config["encrypt_key"],
+		}
+		if fc.AppID == "" || fc.AppSecret == "" {
+			return nil, fmt.Errorf("feishu channel %q: app_id and app_secret are required", cfg.Name)
+		}
+		return channel.NewFeishuChannel("feishu:"+cfg.Name, fc), nil
+	case "reverse":
+		callbackURL := cfg.Config["callback_url"]
+		if callbackURL == "" {
+			return nil, fmt.Errorf("reverse channel %q: callback_url is required", cfg.Name)
+		}
+		return channel.NewReverseChannel("reverse:"+cfg.Name, callbackURL, cfg.Config["secret"]), nil
+	default:
+		return nil, fmt.Errorf("unknown channel type %q", cfg.Type)
+	}
 }

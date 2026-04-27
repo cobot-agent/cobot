@@ -38,7 +38,7 @@ var gatewayCmd = &cobra.Command{
 		cleanup := res.Cleanup
 		defer cleanup()
 
-		gw, err := bootstrap.ConfigureGateway(res, cfg.Gateway)
+		gw, err := bootstrap.ConfigureGateway(res, cfg.Gateway, cfg.Channels)
 		if err != nil {
 			return err
 		}
