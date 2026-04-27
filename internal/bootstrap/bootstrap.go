@@ -435,19 +435,15 @@ func newSubAgent(a *agent.Agent, registry cobot.ModelResolver, filteredTools cob
 	return sub
 }
 
-// ConfigureGateway creates a Gateway, registers configured platform adapters,
+// ConfigureGateway creates a Gateway, registers configured channels,
 // and starts it. Returns the Gateway for lifecycle management by the CLI.
-// Platform adapters are registered based on channel configs — currently only
-// the framework is wired; specific adapters will be added in follow-up PRs.
 func ConfigureGateway(res *Result, cfg cobot.GatewayConfig) (*gateway.Gateway, error) {
-	subAgents := &sync.Map{}
-
 	registry := res.Agent.Registry()
 	filtered := res.Agent.ToolRegistry().Clone().Without("delegate_task")
+	subAgents := &sync.Map{}
 
 	handler := func(ctx context.Context, msg *cobot.InboundMessage, replyFunc gateway.ReplyFunc) error {
 		agentKey := msg.Platform + ":" + msg.ChatID
-
 		candidate := newSubAgent(res.Agent, registry, filtered)
 		actual, _ := subAgents.LoadOrStore(agentKey, candidate)
 		sub := actual.(*agent.Agent)
@@ -457,20 +453,18 @@ func ConfigureGateway(res *Result, cfg cobot.GatewayConfig) (*gateway.Gateway, e
 			return fmt.Errorf("agent prompt: %w", err)
 		}
 		if resp.Content != "" {
-			_, err := replyFunc(&cobot.OutboundMessage{
-				ReceiveID:   msg.ChatID,
-				ReceiveType: msg.ChatType,
-				Text:        resp.Content,
-			})
+			_, err := replyFunc(&cobot.OutboundMessage{Text: resp.Content})
 			return err
 		}
 		return nil
 	}
 
-	gw := gateway.New(gateway.Config{Addr: cfg.Addr}, handler)
+	gw := gateway.New(gateway.Config{Addr: cfg.Addr, APIKey: cfg.APIKey}, res.ChannelMgr, handler)
 
-	// TODO: Register platform adapters based on res.Agent.Config().Channels
-	// This will be implemented when specific adapters (feishu, etc.) are added.
+	// RegisterChannelFunc is set by channel implementation packages
+	// (feishu, reverse, etc.) when they are imported. This decouples
+	// gateway core from concrete channel types.
+	// TODO: Wire channel registration in follow-up PR.
 
 	if err := gw.Start(); err != nil {
 		return nil, fmt.Errorf("start gateway: %w", err)
