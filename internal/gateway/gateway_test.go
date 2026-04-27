@@ -15,7 +15,7 @@ import (
 
 // mockMessageChannel implements cobot.MessageChannel for testing.
 type mockMessageChannel struct {
-	cobot.BaseChannel
+	*cobot.BaseChannel
 	platform    string
 	handler     func(ctx context.Context, msg *cobot.InboundMessage)
 	sent        []*cobot.OutboundMessage
@@ -25,7 +25,7 @@ type mockMessageChannel struct {
 
 func newMockMessageChannel(id, platform string) *mockMessageChannel {
 	return &mockMessageChannel{
-		BaseChannel: *cobot.NewBaseChannel(id),
+		BaseChannel: cobot.NewBaseChannel(id),
 		platform:    platform,
 		httpHandler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
