@@ -168,6 +168,10 @@ func (g *Gateway) RegisterChannel(ch cobot.MessageChannel) error {
 			if out.ReceiveType == "" {
 				out.ReceiveType = msg.ChatType
 			}
+			// Thread the bot's reply onto the user's message (not onto itself).
+			if out.ReplyToMessageID == "" && msg.MessageID != "" {
+				out.ReplyToMessageID = msg.MessageID
+			}
 			return ch.SendMessage(ctx, out)
 		}
 
