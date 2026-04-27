@@ -17,6 +17,7 @@ import (
 
 	"github.com/cobot-agent/cobot/internal/agent"
 	"github.com/cobot-agent/cobot/internal/channel"
+	"github.com/cobot-agent/cobot/internal/command"
 	"github.com/cobot-agent/cobot/internal/config"
 	"github.com/cobot-agent/cobot/internal/cron"
 	"github.com/cobot-agent/cobot/internal/gateway"
@@ -36,7 +37,13 @@ type Result struct {
 	Workspace  *workspace.Workspace
 	ChannelMgr *channel.Manager
 	Cleanup    func()
+
+	// CommandRegistry is the slash-command registry, nil until ConfigureGateway.
+	CommandRegistry interface{} // *command.Registry (avoid import cycle)
 }
+
+// AddCommandRegistry sets the command registry on Result.
+func (r *Result) SetCommandRegistry(reg interface{}) { r.CommandRegistry = reg }
 
 // InitAgent creates a fully-wired Agent for the given Config. When
 // requireProvider is true an error is returned if the LLM provider cannot
@@ -478,6 +485,11 @@ func ConfigureGateway(res *Result, gwCfg cobot.GatewayConfig, channels []cobot.C
 	}
 
 	gw := gateway.New(gateway.Config{Addr: gwCfg.Addr, APIKey: gwCfg.APIKey}, res.ChannelMgr, handler)
+
+	// Wire slash commands: create registry, inject Agent and cron, set help Data.
+	cmdReg := command.New(res.Agent, nil)
+	cmdReg.SetHelpData()
+	gw.SetCommandRegistry(cmdReg)
 
 	// Register reverse channel factory for dynamic registration via REST API.
 	gw.SetRegisterReverseFunc(func(id, callbackURL, secret string) (cobot.MessageChannel, error) {

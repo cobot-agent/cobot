@@ -37,6 +37,9 @@ type Gateway struct {
 	channelMgr *channel.Manager
 	handler    MessageHandler
 
+	// cmdRegistry routes /-prefixed messages to slash commands before the agent.
+	cmdRegistry cobot.CommandRegistry
+
 	// dedup tracks processed message IDs to prevent duplicate handling.
 	dedup          map[string]time.Time
 	dedupMu        sync.Mutex
@@ -113,6 +116,14 @@ func (g *Gateway) requireAPIKey(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// SetCommandRegistry configures the command registry for slash-command dispatch.
+// Must be called before the gateway starts processing messages.
+func (g *Gateway) SetCommandRegistry(r cobot.CommandRegistry) {
+	g.mu.Lock()
+	g.cmdRegistry = r
+	g.mu.Unlock()
+}
+
 // RegisterChannel registers a MessageChannel with the Gateway.
 // It wires OnMessage → dedup → handler → SendMessage, and if the channel
 // implements HTTPChannel, mounts its webhook handler at /webhook/{id}/.
@@ -158,6 +169,29 @@ func (g *Gateway) RegisterChannel(ch cobot.MessageChannel) error {
 				out.ReceiveType = msg.ChatType
 			}
 			return ch.SendMessage(ctx, out)
+		}
+
+		// Route /-prefixed messages to command dispatcher first.
+		if len(msg.Text) > 0 && msg.Text[0] == '/' {
+			g.mu.RLock()
+			registry := g.cmdRegistry
+			g.mu.RUnlock()
+			if registry != nil {
+				handled, err := registry.Execute(ctx, cobot.CommandContext{
+					Platform: msg.Platform,
+					ChatID:   msg.ChatID,
+					UserID:   msg.SenderID,
+					Text:     msg.Text,
+					Reply:    replyFunc,
+				})
+				if handled {
+					if err != nil {
+						slog.Error("gateway: command error", "channel", id, "error", err)
+					}
+					return
+				}
+				// Not a known command; fall through to agent.
+			}
 		}
 
 		if g.handler != nil {
