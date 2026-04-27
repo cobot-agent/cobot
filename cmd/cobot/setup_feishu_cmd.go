@@ -4,9 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
-	"os/signal"
 	"strings"
-	"syscall"
 
 	"github.com/spf13/cobra"
 
@@ -52,7 +50,7 @@ func runSetupFeishu(cmd *cobra.Command) error {
 	var cfg *channel.FeishuQRConfig
 
 	// ── QR scan flow ──
-qrDone := false
+	var qrDone bool
 	if !manual {
 		fmt.Println("  Connecting to Feishu / Lark...")
 		qrURL, deviceCode, interval, expireIn, err := channel.BuildQRPayload(domain)
@@ -68,10 +66,6 @@ qrDone := false
 			fmt.Println("  Or open the URL above in your mobile browser.")
 			fmt.Println()
 			fmt.Print("  Waiting for scan... (Ctrl+C to cancel) ")
-
-			// Handle Ctrl+C gracefully.
-			sigChan := make(chan os.Signal, 1)
-			signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
 			cfg, err = channel.PollAfterQR(domain, deviceCode, interval, expireIn)
 			if err != nil {

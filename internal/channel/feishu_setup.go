@@ -34,6 +34,30 @@ var feishuOpenURLs = map[string]string{
 
 const feishuRegistrationPath = "/oauth/v1/app/registration"
 
+// httpClient is a shared client with a 15-second timeout for all Feishu API calls.
+var httpClient = &http.Client{Timeout: 15 * time.Second}
+
+// feishuPOST sends a POST to the Feishu registration endpoint with a timeout.
+// It checks StatusCode and includes a snippet of non-2xx responses in the error.
+func feishuPOST(base, path string, body url.Values) (map[string]any, error) {
+	resp, err := httpClient.PostForm(base+path, body)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 200))
+		return nil, fmt.Errorf("request returned status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var result map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("parse response: %w", err)
+	}
+	return result, nil
+}
+
 // initRegistration verifies the environment supports client_secret auth.
 func initRegistration(domain string) error {
 	base := feishuAccountsURLs[domain]
@@ -41,17 +65,9 @@ func initRegistration(domain string) error {
 		base = feishuAccountsURLs["feishu"]
 	}
 
-	resp, err := http.Post(base+feishuRegistrationPath, "application/x-www-form-urlencoded",
-		strings.NewReader(url.Values{"action": {"init"}}.Encode()))
+	result, err := feishuPOST(base, feishuRegistrationPath, url.Values{"action": {"init"}})
 	if err != nil {
-		return fmt.Errorf("init request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(resp.Body)
-	var result map[string]any
-	if err := json.Unmarshal(body, &result); err != nil {
-		return fmt.Errorf("parse init response: %w", err)
+		return fmt.Errorf("init: %w", err)
 	}
 
 	methods, _ := result["supported_auth_methods"].([]any)
@@ -70,24 +86,16 @@ func beginRegistration(domain string) (qrURL, deviceCode string, interval, expir
 		base = feishuAccountsURLs["feishu"]
 	}
 
-	bodyStr := url.Values{
+	body := url.Values{
 		"action":            {"begin"},
 		"archetype":         {"PersonalAgent"},
 		"auth_method":       {"client_secret"},
 		"request_user_info": {"open_id"},
-	}.Encode()
-
-	resp, err := http.Post(base+feishuRegistrationPath, "application/x-www-form-urlencoded",
-		strings.NewReader(bodyStr))
-	if err != nil {
-		return "", "", 0, 0, fmt.Errorf("begin request: %w", err)
 	}
-	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(resp.Body)
-	var result map[string]any
-	if err := json.Unmarshal(body, &result); err != nil {
-		return "", "", 0, 0, fmt.Errorf("parse begin response: %w", err)
+	result, err := feishuPOST(base, feishuRegistrationPath, body)
+	if err != nil {
+		return "", "", 0, 0, fmt.Errorf("begin: %w", err)
 	}
 
 	dc, _ := result["device_code"].(string)
@@ -128,23 +136,15 @@ func pollRegistration(domain, deviceCode string, interval, expireIn int) (*Feish
 	currentDomain := domain
 
 	for time.Now().Before(deadline) {
-		bodyStr := url.Values{
+		body := url.Values{
 			"action":      {"poll"},
 			"device_code": {deviceCode},
 			"tp":          {"ob_app"},
-		}.Encode()
-
-		resp, err := http.Post(base+feishuRegistrationPath, "application/x-www-form-urlencoded",
-			strings.NewReader(bodyStr))
-		if err != nil {
-			time.Sleep(time.Duration(interval) * time.Second)
-			continue
 		}
-		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
 
-		var result map[string]any
-		if err := json.Unmarshal(body, &result); err != nil {
+		result, err := feishuPOST(base, feishuRegistrationPath, body)
+		if err != nil {
+			// Network or non-2xx error — retry after interval.
 			time.Sleep(time.Duration(interval) * time.Second)
 			continue
 		}
@@ -161,11 +161,9 @@ func pollRegistration(domain, deviceCode string, interval, expireIn int) (*Feish
 		if appID, ok := result["client_id"].(string); ok && appID != "" {
 			if appSecret, ok := result["client_secret"].(string); ok && appSecret != "" {
 				return &FeishuQRConfig{
-					AppID:             appID,
-					AppSecret:         appSecret,
-					Domain:            currentDomain,
-					VerificationToken: "",
-					EncryptKey:        "",
+					AppID:     appID,
+					AppSecret: appSecret,
+					Domain:    currentDomain,
 				}, nil
 			}
 		}
@@ -190,23 +188,13 @@ func probeBot(appID, appSecret, domain string) (botName string, err error) {
 		openBase = feishuOpenURLs["feishu"]
 	}
 
-	// Get tenant_access_token.
-	tokenURL := openBase + "/open-apis/auth/v3/tenant_access_token/internal"
-	bodyStr := url.Values{"app_id": {appID}, "app_secret": {appSecret}}.Encode()
-
-	resp, err := http.Post(tokenURL, "application/x-www-form-urlencoded", strings.NewReader(bodyStr))
+	result, err := feishuPOST(openBase, "/open-apis/auth/v3/tenant_access_token/internal",
+		url.Values{"app_id": {appID}, "app_secret": {appSecret}})
 	if err != nil {
 		return "", fmt.Errorf("auth request: %w", err)
 	}
-	defer resp.Body.Close()
 
-	respBody, _ := io.ReadAll(resp.Body)
-	var tokenResult map[string]any
-	if err := json.Unmarshal(respBody, &tokenResult); err != nil {
-		return "", fmt.Errorf("parse auth response: %w", err)
-	}
-
-	tenantToken, _ := tokenResult["tenant_access_token"].(string)
+	tenantToken, _ := result["tenant_access_token"].(string)
 	if tenantToken == "" {
 		return "", fmt.Errorf("no tenant_access_token")
 	}
@@ -215,16 +203,19 @@ func probeBot(appID, appSecret, domain string) (botName string, err error) {
 	req, _ := http.NewRequest("GET", openBase+"/open-apis/bot/v3/info", nil)
 	req.Header.Set("Authorization", "Bearer "+tenantToken)
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	botResp, err := client.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("bot info request: %w", err)
 	}
-	defer botResp.Body.Close()
+	defer resp.Body.Close()
 
-	botBody, _ := io.ReadAll(botResp.Body)
+	if resp.StatusCode >= 300 {
+		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 200))
+		return "", fmt.Errorf("bot info returned status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
 	var botResult map[string]any
-	if err := json.Unmarshal(botBody, &botResult); err != nil {
+	if err := json.NewDecoder(resp.Body).Decode(&botResult); err != nil {
 		return "", fmt.Errorf("parse bot info: %w", err)
 	}
 

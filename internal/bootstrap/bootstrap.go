@@ -485,17 +485,18 @@ func ConfigureGateway(res *Result, gwCfg cobot.GatewayConfig, channels []cobot.C
 	return gw, nil
 }
 
-// channelIDRegex enforces the format accepted by gateway.RegisterChannel.
-var channelIDRegex = regexp.MustCompile(`^[a-z0-9][a-z0-9\-:_.]*$`)
+// channelIDRegex enforces the format accepted by gateway.RegisterChannel:
+// lowercase alphanumeric, hyphens, underscores, and colons.
+var channelIDRegex = regexp.MustCompile(`^[a-z0-9][a-z0-9\-:_]*$`)
 
 // sanitizeChannelID returns a valid channel ID from cfg.Name,
 // or an error if cfg.Name cannot be converted.
 func sanitizeChannelID(cfgName, prefix string) (string, error) {
-	// Lowercase and remove any characters not in the allowed set.
+	// Lowercase and strip characters not in the allowed set (matching gateway.RegisterChannel).
 	sanitized := strings.ToLower(cfgName)
-	sanitized = regexp.MustCompile(`[^a-z0-9\-:_.]`).ReplaceAllString(sanitized, "")
+	sanitized = regexp.MustCompile(`[^a-z0-9\-:_]`).ReplaceAllString(sanitized, "")
 	// Ensure it doesn't start with a reserved character.
-	sanitized = strings.TrimLeft(sanitized, "-_.")
+	sanitized = strings.TrimLeft(sanitized, "-_")
 	if sanitized == "" {
 		return "", fmt.Errorf("channel name %q produces an empty ID after sanitization", cfgName)
 	}
