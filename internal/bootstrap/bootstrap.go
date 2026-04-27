@@ -150,6 +150,9 @@ func ConfigureAgentForWorkspace(a *agent.Agent, ws *workspace.Workspace, registr
 	}
 	sandboxConfig := ws.EffectiveSandbox(agentSandbox)
 
+	// Create the SkillManager before sandbox tools (RegisterSkillsTools needs it).
+	configureSkillManager(a, ws, sm)
+
 	// Sandbox tools use the unified *sandbox.Sandbox for virtual path translation.
 	// Memory tools now also use *sandbox.Sandbox for consistent path handling.
 	sb := configureSandboxTools(a, ws, agentCfg, sm, sandboxConfig)
@@ -199,6 +202,20 @@ func configureSystemPrompt(agentCfg *config.AgentConfig, sm *agent.SessionManage
 		prompt := resolveSystemPrompt(agentCfg.SystemPrompt, ws)
 		_ = sm.SetSystemPrompt(prompt)
 	}
+}
+
+// configureSkillManager creates a SkillManager and injects it into the Agent.
+// It must be called before configureSandboxTools (which calls RegisterSkillsTools).
+func configureSkillManager(a *agent.Agent, ws *workspace.Workspace, sm *agent.SessionManager) *agent.SkillManager {
+	refresher := &skillsRefresher{sm: sm, ws: ws}
+	skillMgr, err := agent.NewSkillManager(ws, refresher)
+	if err != nil {
+		slog.Warn("failed to create skill manager, skills tools will use directory scan", "error", err)
+		return nil
+	}
+	a.SetSkillManager(skillMgr)
+	slog.Debug("skill manager configured", "skills", skillMgr.Count())
+	return skillMgr
 }
 
 func configureSkills(agentCfg *config.AgentConfig, sm *agent.SessionManager, ws *workspace.Workspace) {
@@ -327,7 +344,7 @@ func configureSandboxTools(a *agent.Agent, ws *workspace.Workspace, agentCfg *co
 		enabledSkills = agentCfg.EnabledSkills
 	}
 	refresher := &skillsRefresher{sm: sm, ws: ws, filter: enabledSkills}
-	tools.RegisterSkillsTools(a.ToolRegistry(), ws, refresher)
+	tools.RegisterSkillsTools(a.ToolRegistry(), a.SkillManager(), ws, refresher)
 	return sb
 }
 

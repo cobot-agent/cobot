@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/cobot-agent/cobot/internal/agent"
 	"github.com/cobot-agent/cobot/internal/skills"
 	"github.com/cobot-agent/cobot/internal/workspace"
 	cobot "github.com/cobot-agent/cobot/pkg"
@@ -39,8 +40,12 @@ type skillSummary struct {
 }
 
 // skillsHandler holds shared state for all skills tool operations.
+// For read operations (list/view), it delegates to the SkillManager for fast
+// in-memory lookups. For mutating operations (manage), it still uses the
+// workspace directory directly.
 type skillsHandler struct {
-	ws        *workspace.Workspace
+	sm  *agent.SkillManager
+	ws  *workspace.Workspace
 	refresher cobot.SkillsPromptRefresher
 }
 
@@ -55,8 +60,9 @@ func (h *skillsHandler) findWritableDir(name string) (string, error) {
 // RegisterSkillsTools registers all skills-related tools.
 // The refresher is called after mutating skill operations (create/edit/patch/delete)
 // to refresh the system prompt's skills section.
-func RegisterSkillsTools(registry cobot.ToolRegistry, ws *workspace.Workspace, refresher cobot.SkillsPromptRefresher) {
-	h := &skillsHandler{ws: ws, refresher: refresher}
+// The SkillManager provides fast in-memory lookups for list and view operations.
+func RegisterSkillsTools(registry cobot.ToolRegistry, sm *agent.SkillManager, ws *workspace.Workspace, refresher cobot.SkillsPromptRefresher) {
+	h := &skillsHandler{sm: sm, ws: ws, refresher: refresher}
 	registry.Register(&fnTool{
 		name: "skills_list", desc: "List all available skills grouped by category. Use to discover skills that match the current task.",
 		params: json.RawMessage(skillsListParamsJSON), execute: h.executeList,
@@ -78,15 +84,28 @@ func (h *skillsHandler) executeList(ctx context.Context, args json.RawMessage) (
 	if err := decodeArgs(args, &params); err != nil {
 		return "", err
 	}
-	catalog, err := skills.LoadCatalog(ctx, h.skillDirs(), nil)
-	if err != nil {
-		return "", fmt.Errorf("load skills catalog: %w", err)
+	var catalog []skills.Skill
+	if h.sm != nil {
+		catalog = h.sm.List(ctx, params.Category)
+	} else {
+		// Fallback: directory scan (SkillManager failed to initialize).
+		var err error
+		catalog, err = skills.LoadCatalog(ctx, h.skillDirs(), nil)
+		if err != nil {
+			return "", fmt.Errorf("load skills catalog: %w", err)
+		}
+		if params.Category != "" {
+			filtered := make([]skills.Skill, 0, len(catalog))
+			for _, sk := range catalog {
+				if sk.Category == params.Category {
+					filtered = append(filtered, sk)
+				}
+			}
+			catalog = filtered
+		}
 	}
 	summaries := make([]skillSummary, 0, len(catalog))
 	for _, sk := range catalog {
-		if params.Category != "" && sk.Category != params.Category {
-			continue
-		}
 		summaries = append(summaries, skillSummary{
 			Name: sk.Name, Description: sk.Description,
 			Category: sk.Category, Source: sk.Source,
@@ -114,6 +133,11 @@ func (h *skillsHandler) executeView(ctx context.Context, args json.RawMessage) (
 		return "", err
 	}
 	if params.FilePath != "" {
+		// Linked file: use SkillManager if available.
+		if h.sm != nil {
+			return h.sm.ReadLinkedFile(ctx, params.Name, params.FilePath)
+		}
+		// Fallback: find skill dir manually.
 		skillDir, err := skills.FindSkillDir(h.ws.SkillsDir(), params.Name)
 		if err != nil {
 			skillDir, err = skills.FindSkillDir(workspace.GlobalSkillsDir(), params.Name)
@@ -123,6 +147,11 @@ func (h *skillsHandler) executeView(ctx context.Context, args json.RawMessage) (
 		}
 		return skills.ReadLinkedFile(skillDir, params.FilePath)
 	}
+	// Skill content: use SkillManager if available.
+	if h.sm != nil {
+		return h.sm.View(ctx, params.Name)
+	}
+	// Fallback: directory scan.
 	sk, err := skills.LoadOne(ctx, h.skillDirs(), params.Name)
 	if err != nil {
 		return "", err

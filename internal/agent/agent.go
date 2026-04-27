@@ -84,6 +84,7 @@ type Agent struct {
 	channelMgr    *channel.Manager
 	broker        broker.Broker
 	skillSyncer   *BackgroundSkillSyncer
+	skillManager  *SkillManager
 
 	// sessionsDir is the path to the per-session STM databases directory.
 	sessionsDir string
@@ -170,6 +171,16 @@ func (a *Agent) SetBroker(b broker.Broker) {
 // SetSkillSyncer sets the background skill syncer.
 func (a *Agent) SetSkillSyncer(s *BackgroundSkillSyncer) {
 	a.skillSyncer = s
+}
+
+// SetSkillManager sets the skill manager.
+func (a *Agent) SetSkillManager(sm *SkillManager) {
+	a.skillManager = sm
+}
+
+// SkillManager returns the skill manager.
+func (a *Agent) SkillManager() *SkillManager {
+	return a.skillManager
 }
 
 // SetSessionsDir sets the sessions directory path for session archival.
