@@ -176,6 +176,14 @@ func (ch *FeishuChannel) handleReceive(ctx context.Context, event *larkim.P2Mess
 	if handler != nil {
 		handler(ctx, inbound)
 	}
+
+	// Auto-react: add 👍 to confirm receipt. Runs async so it doesn't block.
+	go func() {
+		if r, ok := interface{}(ch).(cobot.Reactioner); ok {
+			_ = r.ReactMessage(context.Background(), messageID, "👍")
+		}
+	}()
+
 	return nil
 }
 
@@ -270,7 +278,55 @@ func (ch *FeishuChannel) sendImageKey(ctx context.Context, chatID, imageKey stri
 	return &cobot.SendResult{Success: true, MessageID: messageID}, nil
 }
 
-// sendMediaKey sends an audio/video/file/media message by Feishu resource key.
+// ReactMessage implements cobot.Reactioner. It adds an emoji reaction to a message.
+func (ch *FeishuChannel) ReactMessage(ctx context.Context, messageID, reactionType string) error {
+	if messageID == "" {
+		return fmt.Errorf("feishu ReactMessage: message_id is required")
+	}
+	emojiType := reactionType
+	// Map common Unicode emoji to Feishu shortcodes if needed.
+	shortcode := unicodeToFeishuEmoji(reactionType)
+	if shortcode != "" {
+		emojiType = shortcode
+	}
+	resp, err := ch.client.Im.V1.MessageReaction.Create(ctx,
+		larkim.NewCreateMessageReactionReqBuilder().
+			MessageId(messageID).
+			Body(larkim.NewCreateMessageReactionReqBodyBuilder().
+				ReactionType(&larkim.Emoji{EmojiType: &emojiType}).
+				Build()).
+			Build(),
+	)
+	if err != nil {
+		return fmt.Errorf("feishu add reaction: %w", err)
+	}
+	slog.Debug("feishu: reaction added", "message_id", messageID, "type", emojiType, "reaction_id", ptrStr(resp.Data.ReactionId))
+	return nil
+}
+
+// unicodeToFeishuEmoji maps common Unicode emoji to Feishu emoji shortcodes.
+// Returns "" if no mapping exists (pass-through).
+func unicodeToFeishuEmoji(unicode string) string {
+	switch unicode {
+	case "👍":
+		return "OK"
+	case "❤️", "💗", "💖":
+		return "Heart"
+	case "😂":
+		return "emoji_ laugh"
+	case "😮":
+		return "Scream"
+	case "😢":
+		return "Bawl"
+	case "😠":
+		return "Rage"
+	case "🎉":
+		return "tada"
+	case "👀":
+		return "Eyes"
+	}
+	return ""
+}
 func (ch *FeishuChannel) sendMediaKey(ctx context.Context, chatID, mediaKey, msgType string) (*cobot.SendResult, error) {
 	if mediaKey == "" {
 		return nil, fmt.Errorf("feishu sendMediaKey: media_key is required")

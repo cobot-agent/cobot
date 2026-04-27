@@ -178,6 +178,18 @@ type ChannelEvent struct {
 	MemberID string
 }
 
+// Reactioner is an optional interface implemented by MessageChannels that support
+// adding emoji reactions to messages. Use a type assertion to check capability.
+// Example:
+//     if r, ok := ch.(cobot.Reactioner); ok {
+//         _ = r.ReactMessage(ctx, msgID, "👍")
+//     }
+type Reactioner interface {
+	// ReactMessage adds a reaction emoji to a message. The reactionType
+	// is a Unicode emoji string like "👍" or "🎉".
+	ReactMessage(ctx context.Context, messageID, reactionType string) error
+}
+
 // HTTPChannel is an optional extension of MessageChannel that provides a
 // webhook HTTP handler. Platforms like Feishu implement this so the Gateway
 // can automatically mount /webhook/{channel_id}/.

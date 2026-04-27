@@ -93,6 +93,11 @@ func (ch *ReverseChannel) EditMessage(ctx context.Context, chatID, messageID, co
 	return nil, cobot.ErrNotSupported
 }
 
+// ReactMessage is not supported for reverse channels.
+func (ch *ReverseChannel) ReactMessage(ctx context.Context, messageID, reactionType string) error {
+	return cobot.ErrNotSupported
+}
+
 // Start is a no-op for ReverseChannel since it has no persistent connection.
 func (ch *ReverseChannel) Start(ctx context.Context) error {
 	return nil
