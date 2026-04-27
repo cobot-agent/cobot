@@ -42,10 +42,6 @@ type Gateway struct {
 	dedupMu        sync.Mutex
 	dedupLastPrune time.Time
 
-	// reverse tracks dynamically registered reverse channels.
-	reverse   map[string]*reverseEntry
-	reverseMu sync.Mutex
-
 	// registerReverseFunc creates ReverseChannel instances via API.
 	registerReverseFunc RegisterReverseFunc
 
@@ -64,11 +60,6 @@ type Gateway struct {
 	listenerMu sync.Mutex
 	started    bool
 	mu         sync.RWMutex
-}
-
-type reverseEntry struct {
-	ch          cobot.MessageChannel
-	callbackURL string
 }
 
 // New creates a Gateway wired to the given ChannelManager and MessageHandler.
@@ -95,7 +86,6 @@ func New(cfg Config, channelMgr *channel.Manager, handler MessageHandler) *Gatew
 		channelMgr: channelMgr,
 		handler:    handler,
 		dedup:      make(map[string]time.Time),
-		reverse:    make(map[string]*reverseEntry),
 		registered:      make(map[string]cobot.MessageChannel),
 		webhookHandlers: make(map[string]http.Handler),
 		apiKey:          cfg.APIKey,
@@ -179,7 +169,9 @@ func (g *Gateway) RegisterChannel(ch cobot.MessageChannel) error {
 
 	// Store webhook handler if HTTPChannel.
 	if hc, ok := ch.(cobot.HTTPChannel); ok {
+		g.mu.Lock()
 		g.webhookHandlers[id] = hc.HTTPHandler()
+		g.mu.Unlock()
 		slog.Info("gateway: registered webhook handler", "channel", id)
 	}
 
@@ -273,7 +265,9 @@ func (g *Gateway) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	channelID := remainder[:idx]
 
+	g.mu.RLock()
 	handler, ok := g.webhookHandlers[channelID]
+	g.mu.RUnlock()
 	if !ok {
 		http.Error(w, "webhook not found", http.StatusNotFound)
 		return
@@ -421,11 +415,12 @@ func (g *Gateway) unregisterChannelAPI(w http.ResponseWriter, r *http.Request, c
 	g.mu.Lock()
 	ch, isOurs := g.registered[channelID]
 	if !isOurs {
-		g.mu.RUnlock()
+		g.mu.Unlock()
 		http.Error(w, "channel not found or not managed by gateway", http.StatusNotFound)
 		return
 	}
 	delete(g.registered, channelID)
+	delete(g.webhookHandlers, channelID)
 	g.mu.Unlock()
 
 	g.channelMgr.Unregister(channelID, sessionID)
@@ -479,11 +474,20 @@ func (g *Gateway) sendChannelMessage(w http.ResponseWriter, r *http.Request, cha
 		Text:     req.Text,
 	}
 
-	// Collect the reply synchronously.
+	// Collect the reply synchronously and send it through the channel.
 	var reply *cobot.OutboundMessage
 	replyFunc := func(out *cobot.OutboundMessage) (*cobot.SendResult, error) {
+		if out == nil {
+			return &cobot.SendResult{Success: true}, nil
+		}
+		if out.ReceiveID == "" {
+			out.ReceiveID = req.ChatID
+		}
+		if out.ReceiveType == "" {
+			out.ReceiveType = req.ChatType
+		}
 		reply = out
-		return &cobot.SendResult{Success: true}, nil
+		return mc.SendMessage(r.Context(), out)
 	}
 
 	if err := g.handler(r.Context(), msg, replyFunc); err != nil {
