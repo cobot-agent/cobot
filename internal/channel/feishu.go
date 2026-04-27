@@ -1,12 +1,16 @@
 package channel
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
+	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	lark "github.com/larksuite/oapi-sdk-go/v3"
 	larkdispatch "github.com/larksuite/oapi-sdk-go/v3/event/dispatcher"
@@ -31,6 +35,10 @@ type FeishuChannel struct {
 	config  FeishuConfig
 	client  *lark.Client
 
+	// httpClient and tokenCache bypass the SDK builder to support reply_to_message_id.
+	httpClient  *http.Client
+	tokenCache  tokenCache
+
 	dispatcher *larkdispatch.EventDispatcher
 	wsClient   *ws.Client
 	bgWg      sync.WaitGroup
@@ -42,6 +50,13 @@ type FeishuChannel struct {
 	eventHandlerMu sync.RWMutex
 }
 
+// tokenCache holds a cached tenant_access_token with its expiry time.
+type tokenCache struct {
+	token string
+	expire time.Time
+	mu     sync.RWMutex
+}
+
 // NewFeishuChannel creates a FeishuChannel with the given ID and config.
 func NewFeishuChannel(id string, cfg FeishuConfig) *FeishuChannel {
 	ch := &FeishuChannel{
@@ -49,6 +64,7 @@ func NewFeishuChannel(id string, cfg FeishuConfig) *FeishuChannel {
 		platform:    "feishu",
 		config:      cfg,
 		client:      lark.NewClient(cfg.AppID, cfg.AppSecret),
+		httpClient: &http.Client{Timeout: 10 * time.Second},
 	}
 	ch.dispatcher = larkdispatch.NewEventDispatcher("", "").
 		OnP2MessageReceiveV1(ch.handleReceive).
@@ -229,6 +245,11 @@ func (ch *FeishuChannel) SendMessage(ctx context.Context, msg *cobot.OutboundMes
 		content = formatTextContent(msg.Text)
 	}
 
+	// Use direct HTTP for reply_to_message_id support (SDK builder doesn't support it).
+	if msg.ReplyToMessageID != "" {
+		return ch.sendReplyTo(ctx, msg)
+	}
+
 	resp, err := ch.client.Im.V1.Message.Create(ctx,
 		larkim.NewCreateMessageReqBuilder().
 			ReceiveIdType("chat_id").
@@ -249,6 +270,129 @@ func (ch *FeishuChannel) SendMessage(ctx context.Context, msg *cobot.OutboundMes
 	}
 	slog.Debug("feishu: message sent", "channel", ch.ID(), "chat_id", msg.ReceiveID, "message_id", messageID, "type", msgType)
 	return &cobot.SendResult{Success: true, MessageID: messageID}, nil
+}
+
+// sendReplyTo sends a message with reply_to_message_id via direct HTTP.
+// This bypasses the SDK builder which doesn't support the reply_to query param.
+func (ch *FeishuChannel) sendReplyTo(ctx context.Context, msg *cobot.OutboundMessage) (*cobot.SendResult, error) {
+	msgType := msg.MsgType
+	if msgType == "" {
+		msgType = cobot.OutboundMsgTypeText
+	}
+
+	var content string
+	switch msgType {
+	case cobot.OutboundMsgTypePost, cobot.OutboundMsgTypeInteractive:
+		content = msg.RichContent
+	default:
+		content = formatTextContent(msg.Text)
+	}
+
+	body := map[string]any{
+		"receive_id": msg.ReceiveID,
+		"msg_type":   msgType,
+		"content":    content,
+	}
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("feishu reply marshal: %w", err)
+	}
+
+	token, err := ch.getTenantToken(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("feishu reply: get token: %w", err)
+	}
+
+	// Build URL with optional reply_to_message_id.
+	url := fmt.Sprintf("https://open.%s.cn/open-apis/im/v1/messages?receive_id_type=chat_id", ch.config.Domain)
+	if msg.ReplyToMessageID != "" {
+		url += "&reply_to_message_id=" + msg.ReplyToMessageID
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+	if err != nil {
+		return nil, fmt.Errorf("feishu reply request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := ch.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("feishu reply: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 300 {
+		slog.Warn("feishu: reply failed", "status", resp.StatusCode, "body", string(respBody))
+		return &cobot.SendResult{Success: false}, fmt.Errorf("feishu reply returned %d: %s", resp.StatusCode, respBody)
+	}
+
+	var result struct {
+		Code   int    `json:"code"`
+		Msg    string `json:"msg"`
+		Data   struct {
+			MessageID string `json:"message_id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return &cobot.SendResult{Success: false}, fmt.Errorf("feishu reply parse: %w", err)
+	}
+	if result.Code != 0 {
+		return &cobot.SendResult{Success: false}, fmt.Errorf("feishu reply API error %d: %s", result.Code, result.Msg)
+	}
+
+	slog.Debug("feishu: reply sent", "channel", ch.ID(), "message_id", result.Data.MessageID, "reply_to", msg.ReplyToMessageID)
+	return &cobot.SendResult{Success: true, MessageID: result.Data.MessageID}, nil
+}
+
+// getTenantToken returns a cached tenant_access_token, refreshing if expired.
+func (ch *FeishuChannel) getTenantToken(ctx context.Context) (string, error) {
+	ch.tokenCache.mu.RLock()
+	token := ch.tokenCache.token
+	expire := ch.tokenCache.expire
+	ch.tokenCache.mu.RUnlock()
+
+	if token != "" && time.Now().Before(expire.Add(-30*time.Second)) {
+		return token, nil
+	}
+
+	// Refresh token.
+	ch.tokenCache.mu.Lock()
+	defer ch.tokenCache.mu.Unlock()
+	// Re-check after acquiring write lock.
+	if time.Now().Before(ch.tokenCache.expire.Add(-30*time.Second)) {
+		return ch.tokenCache.token, nil
+	}
+
+	body := map[string]string{
+		"app_id":     ch.config.AppID,
+		"app_secret": ch.config.AppSecret,
+	}
+	payload, _ := json.Marshal(body)
+	resp, err := ch.httpClient.Post(
+		fmt.Sprintf("https://open.%s.cn/open-apis/auth/v3/tenant_access_token/internal", ch.config.Domain),
+		"application/json", bytes.NewReader(payload))
+	if err != nil {
+		return "", fmt.Errorf("feishu token request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		Code              int    `json:"code"`
+		Token             string `json:"tenant_access_token"`
+		ExpireIn          int    `json:"expire"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("feishu token parse: %w", err)
+	}
+	if result.Code != 0 || result.Token == "" {
+		return "", fmt.Errorf("feishu token API error %d", result.Code)
+	}
+
+	ch.tokenCache.token = result.Token
+	ch.tokenCache.expire = time.Now().Add(time.Duration(result.ExpireIn) * time.Second)
+	return ch.tokenCache.token, nil
 }
 
 // sendImageKey sends an image by Feishu resource key.
