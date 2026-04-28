@@ -344,7 +344,7 @@ func (g *Gateway) recordDedup(key string) bool {
 	now := time.Now()
 	if now.Sub(g.dedupLastPrune) > time.Minute {
 		for k, t := range g.dedup {
-			if now.Sub(t) > 5*time.Minute {
+			if now.Sub(t) > 30*time.Minute {
 				delete(g.dedup, k)
 			}
 		}
