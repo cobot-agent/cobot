@@ -10,12 +10,14 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/cobot-agent/cobot/internal/agent"
 	"github.com/cobot-agent/cobot/internal/channel"
+	"github.com/cobot-agent/cobot/internal/command"
 	"github.com/cobot-agent/cobot/internal/config"
 	"github.com/cobot-agent/cobot/internal/cron"
 	"github.com/cobot-agent/cobot/internal/gateway"
@@ -35,7 +37,13 @@ type Result struct {
 	Workspace  *workspace.Workspace
 	ChannelMgr *channel.Manager
 	Cleanup    func()
+
+	// CommandRegistry is the slash-command registry, nil until ConfigureGateway.
+	CommandRegistry interface{} // *command.Registry (avoid import cycle)
 }
+
+// AddCommandRegistry sets the command registry on Result.
+func (r *Result) SetCommandRegistry(reg interface{}) { r.CommandRegistry = reg }
 
 // InitAgent creates a fully-wired Agent for the given Config. When
 // requireProvider is true an error is returned if the LLM provider cannot
@@ -149,6 +157,9 @@ func ConfigureAgentForWorkspace(a *agent.Agent, ws *workspace.Workspace, registr
 	}
 	sandboxConfig := ws.EffectiveSandbox(agentSandbox)
 
+	// Create the SkillManager before sandbox tools (RegisterSkillsTools needs it).
+	configureSkillManager(a, ws, sm)
+
 	// Sandbox tools use the unified *sandbox.Sandbox for virtual path translation.
 	// Memory tools now also use *sandbox.Sandbox for consistent path handling.
 	sb := configureSandboxTools(a, ws, agentCfg, sm, sandboxConfig)
@@ -198,6 +209,20 @@ func configureSystemPrompt(agentCfg *config.AgentConfig, sm *agent.SessionManage
 		prompt := resolveSystemPrompt(agentCfg.SystemPrompt, ws)
 		_ = sm.SetSystemPrompt(prompt)
 	}
+}
+
+// configureSkillManager creates a SkillManager and injects it into the Agent.
+// It must be called before configureSandboxTools (which calls RegisterSkillsTools).
+func configureSkillManager(a *agent.Agent, ws *workspace.Workspace, sm *agent.SessionManager) *agent.SkillManager {
+	refresher := &skillsRefresher{sm: sm, ws: ws}
+	skillMgr, err := agent.NewSkillManager(ws, refresher)
+	if err != nil {
+		slog.Warn("failed to create skill manager, skills tools will use directory scan", "error", err)
+		return nil
+	}
+	a.SetSkillManager(skillMgr)
+	slog.Debug("skill manager configured", "skills", skillMgr.Count())
+	return skillMgr
 }
 
 func configureSkills(agentCfg *config.AgentConfig, sm *agent.SessionManager, ws *workspace.Workspace) {
@@ -326,7 +351,7 @@ func configureSandboxTools(a *agent.Agent, ws *workspace.Workspace, agentCfg *co
 		enabledSkills = agentCfg.EnabledSkills
 	}
 	refresher := &skillsRefresher{sm: sm, ws: ws, filter: enabledSkills}
-	tools.RegisterSkillsTools(a.ToolRegistry(), ws, refresher)
+	tools.RegisterSkillsTools(a.ToolRegistry(), a.SkillManager(), ws, refresher)
 	return sb
 }
 
@@ -437,7 +462,7 @@ func newSubAgent(a *agent.Agent, registry cobot.ModelResolver, filteredTools cob
 
 // ConfigureGateway creates a Gateway, registers configured channels,
 // and starts it. Returns the Gateway for lifecycle management by the CLI.
-func ConfigureGateway(res *Result, cfg cobot.GatewayConfig) (*gateway.Gateway, error) {
+func ConfigureGateway(res *Result, gwCfg cobot.GatewayConfig, channels []cobot.ChannelConfig) (*gateway.Gateway, error) {
 	registry := res.Agent.Registry()
 	filtered := res.Agent.ToolRegistry().Clone().Without("delegate_task")
 	subAgents := &sync.Map{}
@@ -459,15 +484,86 @@ func ConfigureGateway(res *Result, cfg cobot.GatewayConfig) (*gateway.Gateway, e
 		return nil
 	}
 
-	gw := gateway.New(gateway.Config{Addr: cfg.Addr, APIKey: cfg.APIKey}, res.ChannelMgr, handler)
+	gw := gateway.New(gateway.Config{Addr: gwCfg.Addr, APIKey: gwCfg.APIKey}, res.ChannelMgr, handler)
 
-	// RegisterChannelFunc is set by channel implementation packages
-	// (feishu, reverse, etc.) when they are imported. This decouples
-	// gateway core from concrete channel types.
-	// TODO: Wire channel registration in follow-up PR.
+	// Wire slash commands: create registry, inject Agent and cron, set help Data.
+	cmdReg := command.New(res.Agent, nil)
+	cmdReg.SetHelpData()
+	gw.SetCommandRegistry(cmdReg)
+
+	// Register reverse channel factory for dynamic registration via REST API.
+	gw.SetRegisterReverseFunc(func(id, callbackURL, secret string) (cobot.MessageChannel, error) {
+		return channel.NewReverseChannel(id, callbackURL, secret), nil
+	})
+
+	// Register static channels from config.
+	for _, chCfg := range channels {
+		ch, err := createChannel(chCfg)
+		if err != nil {
+			slog.Warn("gateway: skipping invalid channel config", "name", chCfg.Name, "error", err)
+			continue
+		}
+		if err := gw.RegisterChannel(ch); err != nil {
+			return nil, fmt.Errorf("register channel %q: %w", chCfg.Name, err)
+		}
+	}
 
 	if err := gw.Start(); err != nil {
 		return nil, fmt.Errorf("start gateway: %w", err)
 	}
 	return gw, nil
+}
+
+// channelIDRegex enforces the format accepted by gateway.RegisterChannel:
+// lowercase alphanumeric, hyphens, underscores, and colons.
+var channelIDRegex = regexp.MustCompile(`^[a-z0-9][a-z0-9\-:_]*$`)
+
+// sanitizeChannelID returns a valid channel ID from cfg.Name,
+// or an error if cfg.Name cannot be converted.
+func sanitizeChannelID(cfgName, prefix string) (string, error) {
+	// Lowercase and strip characters not in the allowed set (matching gateway.RegisterChannel).
+	sanitized := strings.ToLower(cfgName)
+	sanitized = regexp.MustCompile(`[^a-z0-9\-:_]`).ReplaceAllString(sanitized, "")
+	// Ensure it doesn't start with a reserved character.
+	sanitized = strings.TrimLeft(sanitized, "-_")
+	if sanitized == "" {
+		return "", fmt.Errorf("channel name %q produces an empty ID after sanitization", cfgName)
+	}
+	// Verify it now matches the full format.
+	if !channelIDRegex.MatchString(prefix+sanitized) {
+		return "", fmt.Errorf("channel name %q cannot be used as a channel ID (got %q)", cfgName, prefix+sanitized)
+	}
+	return prefix + sanitized, nil
+}
+
+// createChannel creates a MessageChannel from a ChannelConfig.
+func createChannel(cfg cobot.ChannelConfig) (cobot.MessageChannel, error) {
+	switch cfg.Type {
+	case "feishu":
+		fc := channel.FeishuConfig{
+			AppID:     cfg.Config["app_id"],
+			AppSecret: cfg.Config["app_secret"],
+			Domain:    cfg.Config["domain"],
+		}
+		if fc.AppID == "" || fc.AppSecret == "" {
+			return nil, fmt.Errorf("feishu channel %q: app_id and app_secret are required", cfg.Name)
+		}
+		id, err := sanitizeChannelID(cfg.Name, "feishu:")
+		if err != nil {
+			return nil, fmt.Errorf("feishu channel %q: %w", cfg.Name, err)
+		}
+		return channel.NewFeishuChannel(id, fc), nil
+	case "reverse":
+		callbackURL := cfg.Config["callback_url"]
+		if callbackURL == "" {
+			return nil, fmt.Errorf("reverse channel %q: callback_url is required", cfg.Name)
+		}
+		id, err := sanitizeChannelID(cfg.Name, "reverse:")
+		if err != nil {
+			return nil, fmt.Errorf("reverse channel %q: %w", cfg.Name, err)
+		}
+		return channel.NewReverseChannel(id, callbackURL, cfg.Config["secret"]), nil
+	default:
+		return nil, fmt.Errorf("unknown channel type %q", cfg.Type)
+	}
 }

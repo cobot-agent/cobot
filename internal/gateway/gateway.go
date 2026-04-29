@@ -37,6 +37,9 @@ type Gateway struct {
 	channelMgr *channel.Manager
 	handler    MessageHandler
 
+	// cmdRegistry routes /-prefixed messages to slash commands before the agent.
+	cmdRegistry cobot.CommandRegistry
+
 	// dedup tracks processed message IDs to prevent duplicate handling.
 	dedup          map[string]time.Time
 	dedupMu        sync.Mutex
@@ -113,6 +116,14 @@ func (g *Gateway) requireAPIKey(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// SetCommandRegistry configures the command registry for slash-command dispatch.
+// Must be called before the gateway starts processing messages.
+func (g *Gateway) SetCommandRegistry(r cobot.CommandRegistry) {
+	g.mu.Lock()
+	g.cmdRegistry = r
+	g.mu.Unlock()
+}
+
 // RegisterChannel registers a MessageChannel with the Gateway.
 // It wires OnMessage → dedup → handler → SendMessage, and if the channel
 // implements HTTPChannel, mounts its webhook handler at /webhook/{id}/.
@@ -157,15 +168,65 @@ func (g *Gateway) RegisterChannel(ch cobot.MessageChannel) error {
 			if out.ReceiveType == "" {
 				out.ReceiveType = msg.ChatType
 			}
+			// Thread the bot's reply onto the user's message (not onto itself).
+			if out.ReplyToMessageID == "" && msg.MessageID != "" {
+				out.ReplyToMessageID = msg.MessageID
+			}
 			return ch.SendMessage(ctx, out)
 		}
 
+		// Route /-prefixed messages to command dispatcher first.
+		if len(msg.Text) > 0 && msg.Text[0] == '/' {
+			g.mu.RLock()
+			registry := g.cmdRegistry
+			g.mu.RUnlock()
+			if registry != nil {
+				handled, err := registry.Execute(ctx, cobot.CommandContext{
+					Platform: msg.Platform,
+					ChatID:   msg.ChatID,
+					UserID:   msg.SenderID,
+					Text:     msg.Text,
+					Reply:    replyFunc,
+				})
+				if handled {
+					if err != nil {
+						slog.Error("gateway: command error", "channel", id, "error", err)
+					}
+					return
+				}
+				// Not a known command; fall through to agent.
+			}
+		}
+
 		if g.handler != nil {
-			if err := g.handler(ctx, msg, replyFunc); err != nil {
+			lastSentID := ""
+			// Wrap replyFunc to capture the last successful message ID for completion reaction.
+			replyWithCapture := func(out *cobot.OutboundMessage) (*cobot.SendResult, error) {
+				result, err := replyFunc(out)
+				if err == nil && result != nil && result.MessageID != "" {
+					lastSentID = result.MessageID
+				}
+				return result, err
+			}
+			if err := g.handler(ctx, msg, replyWithCapture); err != nil {
 				slog.Error("gateway: message handler error", "channel", id, "error", err)
+			}
+			// Add completion reaction to our own last sent message after streaming finishes.
+			if lastSentID != "" {
+				if r, ok := interface{}(ch).(cobot.Reactioner); ok {
+					go func() {
+						_ = r.ReactMessage(context.Background(), lastSentID, "OK")
+					}()
+				}
 			}
 		}
 	})
+
+	// Start the channel's connection (e.g. WebSocket for Feishu).
+	if err := ch.Start(context.Background()); err != nil {
+		ch.Close()
+		return fmt.Errorf("start channel %q: %w", id, err)
+	}
 
 	// Store webhook handler if HTTPChannel.
 	if hc, ok := ch.(cobot.HTTPChannel); ok {
@@ -277,19 +338,27 @@ func (g *Gateway) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	handler.ServeHTTP(w, r)
 }
 
+// Deduper tracks processed message keys to prevent duplicate handling.
+type Deduper interface {
+	// Record reports whether the key was already known.
+	// Returns true if this is the first time; false if duplicate.
+	Record(key string) bool
+}
+
+// recordDedup reports whether the given key has been seen before.
+// It is called with dedupMu held by the caller.
 func (g *Gateway) recordDedup(key string) bool {
-	g.dedupMu.Lock()
-	defer g.dedupMu.Unlock()
 	now := time.Now()
+	// Prune entries older than 30 minutes on first call each minute.
 	if now.Sub(g.dedupLastPrune) > time.Minute {
+		g.dedupLastPrune = now
 		for k, t := range g.dedup {
-			if now.Sub(t) > 5*time.Minute {
+			if now.Sub(t) > 30*time.Minute {
 				delete(g.dedup, k)
 			}
 		}
-		g.dedupLastPrune = now
 	}
-	if _, exists := g.dedup[key]; exists {
+	if _, seen := g.dedup[key]; seen {
 		return false
 	}
 	g.dedup[key] = now

@@ -2,13 +2,9 @@ package agent
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
-	"errors"
-	"io/fs"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -318,36 +314,5 @@ func (sm *SessionManager) ArchiveInactiveSessions(ctx context.Context, retention
 // sessionHasContent checks whether the session DB has any drawers in the
 // history or context rooms.
 func (sm *SessionManager) sessionHasContent(sessionID string) (bool, error) {
-	dbPath := filepath.Join(sm.sessionsDir, sessionID+".db")
-	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL")
-	if err != nil {
-		return false, err
-	}
-	defer db.Close()
-
-	// Count drawers in history and context rooms.
-	// The wing is named "session" and rooms are named "history" and "context".
-	query := `
-		SELECT COUNT(*)
-		FROM drawers d
-		JOIN rooms r ON d.room_id = r.id
-		JOIN wings w ON r.wing_id = w.id
-		WHERE w.name = 'session' AND r.name IN ('history', 'context')
-	`
-	var count int
-	if err := db.QueryRowContext(context.Background(), query).Scan(&count); err != nil {
-		return false, err
-	}
-	return count > 0, nil
-}
-
-// deleteSessionFiles removes all files associated with a session (db, wal, shm).
-func deleteSessionFiles(sessionsDir, sessionID string) {
-	exts := []string{".db", ".wal", ".shm"}
-	for _, ext := range exts {
-		path := filepath.Join(sessionsDir, sessionID+ext)
-		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			slog.Warn("archive: failed to remove session file", "path", path, "err", err)
-		}
-	}
+	return sessionHasContent(sm.sessionsDir, sessionID)
 }

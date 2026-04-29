@@ -131,12 +131,63 @@ type MessageChannel interface {
 	// the Gateway starts processing messages.
 	OnMessage(handler func(ctx context.Context, msg *InboundMessage))
 
+	// OnEvent registers a callback for platform-specific system events
+	// (e.g. message reactions, member join/leave, message edits).
+	// Callers that don't care about these events may pass nil.
+	OnEvent(handler func(ctx context.Context, event *ChannelEvent))
+
 	// SendMessage sends an outbound message to the platform.
 	SendMessage(ctx context.Context, msg *OutboundMessage) (*SendResult, error)
 
 	// EditMessage updates a previously sent message (for pseudo-streaming).
 	// Platforms that don't support editing should return nil, ErrNotSupported.
 	EditMessage(ctx context.Context, chatID, messageID, content string) (*SendResult, error)
+
+	// Start initiates the channel's connection (e.g. WebSocket handshake).
+	// It is called by the Gateway after RegisterChannel, before processing messages.
+	// For channels that don't need explicit startup (e.g. Reverse), this is a no-op.
+	Start(ctx context.Context) error
+}
+
+// ChannelEventType describes the type of a channel system event.
+type ChannelEventType string
+
+const (
+	ChannelEventMessageReaction  ChannelEventType = "message_reaction"
+	ChannelEventMessageRecalled  ChannelEventType = "message_recalled"
+	ChannelEventMemberJoined     ChannelEventType = "member_joined"
+	ChannelEventMemberLeft       ChannelEventType = "member_left"
+)
+
+// ChannelEvent represents a platform-specific system event (reactions, etc.)
+// delivered to the gateway via the OnEvent callback.
+type ChannelEvent struct {
+	Type      ChannelEventType // event type discriminator
+	Platform  string          // "feishu", etc.
+	Timestamp string          // ISO8601 event time
+
+	// For message_reaction / message_recalled:
+	ChatID    string
+	MessageID string
+	UserID    string
+
+	// For message_reaction:
+	ReactionType string // e.g. "emoji", "thumb_up"
+
+	// For member_joined / member_left:
+	MemberID string
+}
+
+// Reactioner is an optional interface implemented by MessageChannels that support
+// adding emoji reactions to messages. Use a type assertion to check capability.
+// Example:
+//     if r, ok := ch.(cobot.Reactioner); ok {
+//         _ = r.ReactMessage(ctx, msgID, "👍")
+//     }
+type Reactioner interface {
+	// ReactMessage adds a reaction emoji to a message. The reactionType
+	// is a Unicode emoji string like "👍" or "🎉".
+	ReactMessage(ctx context.Context, messageID, reactionType string) error
 }
 
 // HTTPChannel is an optional extension of MessageChannel that provides a
