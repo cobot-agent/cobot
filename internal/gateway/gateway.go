@@ -243,10 +243,15 @@ func (g *Gateway) RegisterChannel(ch cobot.MessageChannel) error {
 		slog.Info("gateway: registered webhook handler", "channel", id)
 	}
 
-	// Register in ChannelManager and mark as local so health check doesn't expire it.
-	sessionID := "gateway:" + id
-	g.channelMgr.Register(ch, sessionID)
-	g.channelMgr.MarkLocal(sessionID)
+	// Register the live channel instance for direct channelID-based routing.
+	if err := g.channelMgr.Register(ch); err != nil {
+		g.mu.Lock()
+		delete(g.registered, id)
+		delete(g.webhookHandlers, id)
+		g.mu.Unlock()
+		ch.Close()
+		return err
+	}
 	slog.Info("gateway: channel registered", "channel", id, "platform", ch.Platform())
 	return nil
 }
@@ -264,8 +269,7 @@ func (g *Gateway) UnregisterChannel(channelID string) bool {
 	delete(g.webhookHandlers, channelID)
 	g.mu.Unlock()
 
-	sessionID := "gateway:" + channelID
-	g.channelMgr.Unregister(channelID, sessionID)
+	g.channelMgr.Unregister(channelID)
 	ch.Close()
 	return true
 }
@@ -487,7 +491,6 @@ func (g *Gateway) handleChannelMessages(w http.ResponseWriter, r *http.Request) 
 }
 
 func (g *Gateway) unregisterChannelAPI(w http.ResponseWriter, r *http.Request, channelID string) {
-	sessionID := "gateway:" + channelID
 	g.mu.Lock()
 	ch, isOurs := g.registered[channelID]
 	if !isOurs {
@@ -499,7 +502,7 @@ func (g *Gateway) unregisterChannelAPI(w http.ResponseWriter, r *http.Request, c
 	delete(g.webhookHandlers, channelID)
 	g.mu.Unlock()
 
-	g.channelMgr.Unregister(channelID, sessionID)
+	g.channelMgr.Unregister(channelID)
 	ch.Close()
 
 	w.WriteHeader(http.StatusNoContent)
