@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 
@@ -14,6 +15,12 @@ import (
 
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
+
+// webhookProvider is an internal capability check: a registered channel that
+// can serve its own inbound webhook HTTP handler. Implemented by Feishu.
+type webhookProvider interface {
+	HTTPHandler() http.Handler
+}
 
 // Config holds gateway server settings.
 type Config struct {
@@ -54,7 +61,7 @@ type Gateway struct {
 	// registered tracks channel instances registered via RegisterChannel.
 	registered map[string]cobot.MessageChannel
 
-	// webhookHandlers stores HTTPChannel handlers keyed by channel ID
+	// webhookHandlers stores webhook handlers keyed by channel ID
 	// for the single /webhook/ dispatcher.
 	webhookHandlers map[string]http.Handler
 
@@ -85,10 +92,10 @@ func New(cfg Config, channelMgr *channel.Manager, handler MessageHandler) *Gatew
 			WriteTimeout:      30 * time.Second,
 			IdleTimeout:       60 * time.Second,
 		},
-		mux:        mux,
-		channelMgr: channelMgr,
-		handler:    handler,
-		dedup:      make(map[string]time.Time),
+		mux:             mux,
+		channelMgr:      channelMgr,
+		handler:         handler,
+		dedup:           make(map[string]time.Time),
 		registered:      make(map[string]cobot.MessageChannel),
 		webhookHandlers: make(map[string]http.Handler),
 		apiKey:          cfg.APIKey,
@@ -125,8 +132,8 @@ func (g *Gateway) SetCommandRegistry(r cobot.CommandRegistry) {
 }
 
 // RegisterChannel registers a MessageChannel with the Gateway.
-// It wires OnMessage → dedup → handler → SendMessage, and if the channel
-// implements HTTPChannel, mounts its webhook handler at /webhook/{id}/.
+// It wires OnMessage → dedup → handler → Send, and channels that expose an
+// HTTPHandler (e.g. Feishu) get their webhook mounted at /webhook/{id}/.
 // Returns an error if a channel with the same ID is already registered.
 func (g *Gateway) RegisterChannel(ch cobot.MessageChannel) error {
 	id := ch.ID()
@@ -172,7 +179,7 @@ func (g *Gateway) RegisterChannel(ch cobot.MessageChannel) error {
 			if out.ReplyToMessageID == "" && msg.MessageID != "" {
 				out.ReplyToMessageID = msg.MessageID
 			}
-			return ch.SendMessage(ctx, out)
+			return ch.Send(ctx, out)
 		}
 
 		// Route /-prefixed messages to command dispatcher first.
@@ -199,53 +206,49 @@ func (g *Gateway) RegisterChannel(ch cobot.MessageChannel) error {
 		}
 
 		if g.handler != nil {
-			lastSentID := ""
-			// Wrap replyFunc to capture the last successful message ID for completion reaction.
-			replyWithCapture := func(out *cobot.OutboundMessage) (*cobot.SendResult, error) {
-				result, err := replyFunc(out)
-				if err == nil && result != nil && result.MessageID != "" {
-					lastSentID = result.MessageID
-				}
-				return result, err
-			}
-			if err := g.handler(ctx, msg, replyWithCapture); err != nil {
+			if err := g.handler(ctx, msg, replyFunc); err != nil {
 				slog.Error("gateway: message handler error", "channel", id, "error", err)
-			}
-			// Add completion reaction to our own last sent message after streaming finishes.
-			if lastSentID != "" {
-				if r, ok := interface{}(ch).(cobot.Reactioner); ok {
-					go func() {
-						_ = r.ReactMessage(context.Background(), lastSentID, "OK")
-					}()
-				}
 			}
 		}
 	})
 
 	// Start the channel's connection (e.g. WebSocket for Feishu).
 	if err := ch.Start(context.Background()); err != nil {
+		// Roll back the registration so the same ID can be re-registered later
+		// and we don't retain a dead entry in g.registered.
+		g.mu.Lock()
+		delete(g.registered, id)
+		delete(g.webhookHandlers, id)
+		g.mu.Unlock()
 		ch.Close()
 		return fmt.Errorf("start channel %q: %w", id, err)
 	}
 
-	// Store webhook handler if HTTPChannel.
-	if hc, ok := ch.(cobot.HTTPChannel); ok {
+	// Store webhook handler if the channel provides one.
+	if hc, ok := ch.(webhookProvider); ok {
 		g.mu.Lock()
 		g.webhookHandlers[id] = hc.HTTPHandler()
 		g.mu.Unlock()
 		slog.Info("gateway: registered webhook handler", "channel", id)
 	}
 
-	// Register in ChannelManager and mark as local so health check doesn't expire it.
-	sessionID := "gateway:" + id
-	g.channelMgr.Register(ch, sessionID)
-	g.channelMgr.MarkLocal(sessionID)
+	// Register the live channel instance for direct channelID-based routing.
+	if err := g.channelMgr.Register(ch); err != nil {
+		g.mu.Lock()
+		delete(g.registered, id)
+		delete(g.webhookHandlers, id)
+		g.mu.Unlock()
+		ch.Close()
+		return err
+	}
 	slog.Info("gateway: channel registered", "channel", id, "platform", ch.Platform())
 	return nil
 }
 
-// UnregisterChannel removes a channel registered via RegisterChannel.
-// Only channels with the "gateway:" session prefix are removed.
+// UnregisterChannel removes a channel previously added via RegisterChannel.
+// It deletes the gateway's local registration (and any webhook handler),
+// unregisters the channel from the manager, and closes it.
+// Returns false if the channel was not registered through this gateway.
 func (g *Gateway) UnregisterChannel(channelID string) bool {
 	g.mu.Lock()
 	ch, exists := g.registered[channelID]
@@ -257,8 +260,7 @@ func (g *Gateway) UnregisterChannel(channelID string) bool {
 	delete(g.webhookHandlers, channelID)
 	g.mu.Unlock()
 
-	sessionID := "gateway:" + channelID
-	g.channelMgr.Unregister(channelID, sessionID)
+	g.channelMgr.Unregister(channelID)
 	ch.Close()
 	return true
 }
@@ -401,7 +403,7 @@ func (g *Gateway) listChannels(w http.ResponseWriter, r *http.Request) {
 		ci := channelInfo{ID: id}
 		if mc, ok := ch.(cobot.MessageChannel); ok {
 			ci.Platform = mc.Platform()
-			if _, ok := mc.(cobot.HTTPChannel); ok {
+			if _, ok := mc.(webhookProvider); ok {
 				ci.Webhook = true
 			}
 		}
@@ -449,8 +451,8 @@ func (g *Gateway) registerReverseChannel(w http.ResponseWriter, r *http.Request)
 		"status": "registered",
 	}
 	// Only include webhook URL if the channel actually serves one.
-	if _, ok := ch.(cobot.HTTPChannel); ok {
-		resp["webhook"] = "/webhook/" + ch.ID() + "/"
+	if _, ok := ch.(webhookProvider); ok {
+		resp["webhook"] = "/webhook/" + url.PathEscape(ch.ID()) + "/"
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -480,7 +482,6 @@ func (g *Gateway) handleChannelMessages(w http.ResponseWriter, r *http.Request) 
 }
 
 func (g *Gateway) unregisterChannelAPI(w http.ResponseWriter, r *http.Request, channelID string) {
-	sessionID := "gateway:" + channelID
 	g.mu.Lock()
 	ch, isOurs := g.registered[channelID]
 	if !isOurs {
@@ -492,7 +493,7 @@ func (g *Gateway) unregisterChannelAPI(w http.ResponseWriter, r *http.Request, c
 	delete(g.webhookHandlers, channelID)
 	g.mu.Unlock()
 
-	g.channelMgr.Unregister(channelID, sessionID)
+	g.channelMgr.Unregister(channelID)
 	ch.Close()
 
 	w.WriteHeader(http.StatusNoContent)
@@ -556,7 +557,7 @@ func (g *Gateway) sendChannelMessage(w http.ResponseWriter, r *http.Request, cha
 			out.ReceiveType = req.ChatType
 		}
 		reply = out
-		return mc.SendMessage(r.Context(), out)
+		return mc.Send(r.Context(), out)
 	}
 
 	if err := g.handler(r.Context(), msg, replyFunc); err != nil {

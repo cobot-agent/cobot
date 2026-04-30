@@ -41,22 +41,14 @@ func (m *mockMessageChannel) OnMessage(handler func(ctx context.Context, msg *co
 
 func (m *mockMessageChannel) OnEvent(handler func(ctx context.Context, event *cobot.ChannelEvent)) {}
 
-func (m *mockMessageChannel) SendMessage(ctx context.Context, msg *cobot.OutboundMessage) (*cobot.SendResult, error) {
+func (m *mockMessageChannel) Send(ctx context.Context, msg *cobot.OutboundMessage) (*cobot.SendResult, error) {
 	m.mu.Lock()
 	m.sent = append(m.sent, msg)
 	m.mu.Unlock()
 	return &cobot.SendResult{Success: true, MessageID: "msg_" + msg.ReceiveID}, nil
 }
 
-func (m *mockMessageChannel) EditMessage(ctx context.Context, chatID, messageID, content string) (*cobot.SendResult, error) {
-	return nil, cobot.ErrNotSupported
-}
-
 func (m *mockMessageChannel) Start(ctx context.Context) error {
-	return nil
-}
-
-func (m *mockMessageChannel) Send(ctx context.Context, msg cobot.ChannelMessage) error {
 	return nil
 }
 
@@ -429,9 +421,9 @@ func TestGatewayRegisterReverseChannel(t *testing.T) {
 	if result["id"] != "rev-ch" {
 		t.Fatalf("expected id 'rev-ch', got %v", result["id"])
 	}
-	// mock channel implements HTTPChannel, so webhook should be present
+	// mock channel implements webhookProvider, so webhook should be present
 	if _, hasWebhook := result["webhook"]; !hasWebhook {
-		t.Fatal("expected webhook field for HTTPChannel mock")
+		t.Fatal("expected webhook field for webhookProvider mock")
 	}
 }
 

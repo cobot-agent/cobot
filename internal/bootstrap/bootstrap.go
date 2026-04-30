@@ -78,10 +78,6 @@ func InitAgent(cfg *cobot.Config, requireProvider bool) (*Result, error) {
 	channelMgr := channel.NewManager()
 	a.SetChannelManager(channelMgr)
 
-	// Start channel health check (30 second interval).
-	hcCtx, hcCancel := context.WithCancel(context.Background())
-	channelMgr.StartHealthCheck(hcCtx, 30*time.Second)
-
 	sm := a.SessionMgr()
 
 	if agentCfg != nil {
@@ -112,8 +108,6 @@ func InitAgent(cfg *cobot.Config, requireProvider bool) (*Result, error) {
 	// SetModel resolves the "provider:model" spec and initializes the provider.
 	if err := a.SetModel(cfg.Model); err != nil {
 		if requireProvider {
-			hcCancel()
-			channelMgr.StopHealthCheck()
 			a.Close()
 			return nil, err
 		}
@@ -121,18 +115,12 @@ func InitAgent(cfg *cobot.Config, requireProvider bool) (*Result, error) {
 	}
 
 	if err := ConfigureAgentForWorkspace(a, ws, registry); err != nil {
-		hcCancel()
-		channelMgr.StopHealthCheck()
 		a.Close()
 		return nil, err
 	}
 
 	// a.Close() already closes the memory store; no need for separate cleanup.
-	cleanup := func() {
-		hcCancel()
-		channelMgr.StopHealthCheck()
-		a.Close()
-	}
+	cleanup := func() { a.Close() }
 	return &Result{Agent: a, Workspace: ws, ChannelMgr: channelMgr, Cleanup: cleanup}, nil
 }
 
@@ -381,7 +369,7 @@ func configureCronTool(a *agent.Agent, ws *workspace.Workspace, registry cobot.M
 		BrokerDBPath: ws.BrokerDBPath(),
 		CronDir:      ws.CronDir(),
 		RunsDir:      ws.CronRunsDir(),
-		Notifier:     channelMgr,
+		Deliverer:    channelMgr,
 		NewAgent: func() *agent.Agent {
 			filtered := a.ToolRegistry().Clone().Without("cron", "delegate_task")
 			sub := newSubAgent(a, registry, filtered)
@@ -530,7 +518,7 @@ func sanitizeChannelID(cfgName, prefix string) (string, error) {
 		return "", fmt.Errorf("channel name %q produces an empty ID after sanitization", cfgName)
 	}
 	// Verify it now matches the full format.
-	if !channelIDRegex.MatchString(prefix+sanitized) {
+	if !channelIDRegex.MatchString(prefix + sanitized) {
 		return "", fmt.Errorf("channel name %q cannot be used as a channel ID (got %q)", cfgName, prefix+sanitized)
 	}
 	return prefix + sanitized, nil
