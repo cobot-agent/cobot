@@ -25,6 +25,9 @@ type FeishuConfig struct {
 	AppID     string
 	AppSecret string
 	Domain    string // "feishu" or "lark"
+
+	ReceiveEmoji string
+	DoneEmoji    string
 }
 
 // FeishuChannel implements cobot.MessageChannel and exposes an HTTP webhook handler for Feishu/Lark integration.
@@ -72,6 +75,12 @@ type tokenCache struct {
 
 // NewFeishuChannel creates a FeishuChannel with the given ID and config.
 func NewFeishuChannel(id string, cfg FeishuConfig) *FeishuChannel {
+	if cfg.ReceiveEmoji == "" {
+		cfg.ReceiveEmoji = "Typing"
+	}
+	if cfg.DoneEmoji == "" {
+		cfg.DoneEmoji = "DONE"
+	}
 	ch := &FeishuChannel{
 		BaseChannel: cobot.NewBaseChannel(id),
 		platform:    "feishu",
@@ -227,9 +236,9 @@ func (ch *FeishuChannel) handleReceive(ctx context.Context, event *larkim.P2Mess
 	}
 
 	// Auto-react synchronously BEFORE invoking the handler. This guarantees the
-	// 👍 reaction appears before any reply text, since reply is dispatched by
+	// reaction appears before any reply text, since reply is dispatched by
 	// the handler. An async goroutine would race the reply HTTP call.
-	_ = ch.ReactMessage(ctx, messageID, "👍")
+	_ = ch.ReactMessage(ctx, messageID, ch.config.ReceiveEmoji)
 
 	ch.handlerMu.RLock()
 	handler := ch.handler
@@ -238,6 +247,8 @@ func (ch *FeishuChannel) handleReceive(ctx context.Context, event *larkim.P2Mess
 	if handler != nil {
 		handler(ctx, inbound)
 	}
+
+	_ = ch.ReactMessage(ctx, messageID, ch.config.DoneEmoji)
 
 	return nil
 }
@@ -279,9 +290,9 @@ func (ch *FeishuChannel) Send(ctx context.Context, msg *cobot.OutboundMessage) (
 	case cobot.OutboundMsgTypeAudio, cobot.OutboundMsgTypeVideo, cobot.OutboundMsgTypeFile, cobot.OutboundMsgTypeMedia:
 		return ch.sendMediaKey(ctx, msg.ReceiveID, msg.MediaKey, string(msgType))
 	case cobot.OutboundMsgTypeText:
-		content = buildPostPayload(msg.Text)
+		content, msgType = buildPostPayload(msg.Text)
 	default:
-		content = buildPostPayload(msg.Text)
+		content, msgType = buildPostPayload(msg.Text)
 	}
 
 	slog.Info("feishu: Send dispatch", "channel", ch.ID(), "chat_id", msg.ReceiveID, "msg_type", msgType, "reply_to", msg.ReplyToMessageID, "text_len", len(msg.Text))
@@ -329,8 +340,7 @@ func (ch *FeishuChannel) sendReplyTo(ctx context.Context, msg *cobot.OutboundMes
 	case cobot.OutboundMsgTypePost, cobot.OutboundMsgTypeInteractive:
 		content = msg.RichContent
 	default:
-		content = buildPostPayload(msg.Text)
-		msgType = cobot.OutboundMsgTypePost
+		content, msgType = buildPostPayload(msg.Text)
 	}
 
 	body := map[string]any{
@@ -505,19 +515,25 @@ func unicodeToFeishuEmoji(unicode string) string {
 	case "👍":
 		return "OK"
 	case "❤️", "💗", "💖":
-		return "Heart"
+		return "HEART"
 	case "😂":
-		return "emoji_ laugh"
+		return "LAUGH"
 	case "😮":
-		return "Scream"
+		return "WOW"
 	case "😢":
-		return "Bawl"
+		return "CRY"
 	case "😠":
-		return "Rage"
+		return "ANGRY"
 	case "🎉":
-		return "tada"
+		return "PARTY"
 	case "👀":
 		return "Eyes"
+	case "🤔":
+		return "THINKING"
+	case "✅":
+		return "DONE"
+	case "⌨️", "⌨":
+		return "Typing"
 	}
 	return ""
 }
@@ -559,12 +575,13 @@ func (ch *FeishuChannel) EditMessage(ctx context.Context, chatID, messageID, con
 		return nil, fmt.Errorf("feishu EditMessage: message_id is required")
 	}
 
+	payload, editMsgType := buildPostPayload(content)
 	_, err := ch.client.Im.V1.Message.Update(ctx,
 		larkim.NewUpdateMessageReqBuilder().
 			MessageId(messageID).
 			Body(larkim.NewUpdateMessageReqBodyBuilder().
-				MsgType(string(cobot.OutboundMsgTypePost)).
-				Content(buildPostPayload(content)).
+				MsgType(string(editMsgType)).
+				Content(payload).
 				Build()).
 			Build(),
 	)
@@ -574,18 +591,175 @@ func (ch *FeishuChannel) EditMessage(ctx context.Context, chatID, messageID, con
 	return &cobot.SendResult{Success: true, MessageID: messageID}, nil
 }
 
-// buildPostPayload converts markdown text to Feishu post JSON format.
-// It wraps the content in zh_cn locale and isolates fenced code blocks
-// into dedicated rows to avoid Feishu renderer issues.
-func buildPostPayload(content string) string {
+// buildPostPayload converts markdown text to Feishu message JSON.
+// If the content contains markdown tables, it returns an interactive card with
+// a table component; otherwise it returns a post payload with md rows.
+// The second return value indicates the msg_type to use ("post" or "interactive").
+func buildPostPayload(content string) (string, cobot.OutboundMessageType) {
+	tables, rest := extractMarkdownTables(content)
+	if len(tables) > 0 {
+		return buildCardPayload(tables, rest), cobot.OutboundMsgTypeInteractive
+	}
 	rows := buildMarkdownPostRows(content)
 	payload := map[string]any{
 		"zh_cn": map[string]any{
 			"content": rows,
 		},
 	}
-	data, _ := json.Marshal(payload) // always succeeds
+	data, _ := json.Marshal(payload)
+	return string(data), cobot.OutboundMsgTypePost
+}
+
+// parsedTable holds a parsed markdown table.
+type parsedTable struct {
+	Headers []string
+	Rows    [][]string
+}
+
+// extractMarkdownTables finds and parses all markdown pipe tables in content,
+// returning the parsed tables and the remaining non-table text.
+func extractMarkdownTables(content string) ([]parsedTable, string) {
+	lines := strings.Split(content, "\n")
+	var tables []parsedTable
+	var rest []string
+	i := 0
+
+	for i < len(lines) {
+		trimmed := strings.TrimSpace(lines[i])
+		if !isTableLine(trimmed) {
+			rest = append(rest, lines[i])
+			i++
+			continue
+		}
+
+		var tableLines []string
+		for i < len(lines) && isTableLine(strings.TrimSpace(lines[i])) {
+			tableLines = append(tableLines, lines[i])
+			i++
+		}
+
+		t := parseTable(tableLines)
+		if t != nil {
+			tables = append(tables, *t)
+		} else {
+			rest = append(rest, tableLines...)
+		}
+	}
+
+	return tables, strings.Join(rest, "\n")
+}
+
+// parseTable parses a block of markdown table lines into a parsedTable.
+func parseTable(lines []string) *parsedTable {
+	if len(lines) < 2 {
+		return nil
+	}
+	headers := parseTableRow(lines[0])
+	if len(headers) == 0 {
+		return nil
+	}
+	startIdx := 1
+	if isTableSeparator(lines[1]) {
+		startIdx = 2
+	}
+	var rows [][]string
+	for _, line := range lines[startIdx:] {
+		cells := parseTableRow(line)
+		if len(cells) > 0 {
+			rows = append(rows, cells)
+		}
+	}
+	return &parsedTable{Headers: headers, Rows: rows}
+}
+
+// buildCardPayload builds a Feishu interactive card JSON containing a table
+// component and optional markdown sections for non-table text.
+func buildCardPayload(tables []parsedTable, rest string) string {
+	var elements []any
+
+	// Add non-table text as markdown element.
+	if strings.TrimSpace(rest) != "" {
+		elements = append(elements, map[string]any{
+			"tag":     "markdown",
+			"content": rest,
+		})
+	}
+
+	for _, t := range tables {
+		columns := make([]map[string]any, len(t.Headers))
+		for i, h := range t.Headers {
+			col := map[string]any{
+				"name":         fmt.Sprintf("col_%d", i),
+				"data_type":    "text",
+				"display_name": h,
+				"width":        "auto",
+			}
+			columns[i] = col
+		}
+
+		rows := make([]map[string]any, 0, len(t.Rows))
+		for _, row := range t.Rows {
+			r := make(map[string]any, len(t.Headers))
+			for j := range t.Headers {
+				key := fmt.Sprintf("col_%d", j)
+				if j < len(row) {
+					r[key] = row[j]
+				} else {
+					r[key] = ""
+				}
+			}
+			rows = append(rows, r)
+		}
+
+		table := map[string]any{
+			"tag":        "table",
+			"page_size":  20,
+			"row_height": "low",
+			"header_style": map[string]any{
+				"text_align":       "center",
+				"background_style": "grey",
+				"bold":             true,
+			},
+			"columns": columns,
+			"rows":    rows,
+		}
+		elements = append(elements, table)
+	}
+
+	card := map[string]any{
+		"elements": elements,
+	}
+	data, _ := json.Marshal(card)
 	return string(data)
+}
+
+func isTableLine(trimmed string) bool {
+	return strings.HasPrefix(trimmed, "|") && strings.HasSuffix(trimmed, "|") && len(trimmed) > 2
+}
+
+func isTableSeparator(trimmed string) bool {
+	inner := strings.Trim(trimmed, "| ")
+	for _, part := range strings.Split(inner, "|") {
+		if strings.TrimSpace(part) == "" {
+			return false
+		}
+		for _, ch := range strings.TrimSpace(part) {
+			if ch != '-' && ch != ':' && ch != ' ' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func parseTableRow(line string) []string {
+	inner := strings.Trim(strings.TrimSpace(line), "|")
+	parts := strings.Split(inner, "|")
+	cells := make([]string, len(parts))
+	for i, p := range parts {
+		cells[i] = strings.TrimSpace(p)
+	}
+	return cells
 }
 
 // buildMarkdownPostRows converts markdown content into Feishu post row format.

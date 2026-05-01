@@ -34,6 +34,7 @@ const displayTimeFmt = "2006-01-02 15:04:05"
 type CronTool struct {
 	scheduler   *cron.Scheduler
 	channelIDFn func() string // returns the channel ID of the current context
+	chatIDFn    func() string // returns the platform chat ID of the current context
 }
 
 // CronToolOption is a functional option for CronTool.
@@ -43,6 +44,13 @@ type CronToolOption func(*CronTool)
 // Cron job results are sent back to the originating channel.
 func WithCronChannelIDFn(fn func() string) CronToolOption {
 	return func(t *CronTool) { t.channelIDFn = fn }
+}
+
+// WithCronChatIDFn sets a function that returns the current platform chat ID
+// (e.g. Feishu oc_xxx). This is stored on the job and used as ReceiveID
+// when delivering cron results.
+func WithCronChatIDFn(fn func() string) CronToolOption {
+	return func(t *CronTool) { t.chatIDFn = fn }
 }
 
 // NewCronTool creates a new CronTool with the given scheduler.
@@ -61,6 +69,14 @@ func (t *CronTool) Name() string { return "cron" }
 func (t *CronTool) currentChannelID() string {
 	if t.channelIDFn != nil {
 		return t.channelIDFn()
+	}
+	return ""
+}
+
+// currentChatID returns the platform chat ID from the injected function, or empty string.
+func (t *CronTool) currentChatID() string {
+	if t.chatIDFn != nil {
+		return t.chatIDFn()
 	}
 	return ""
 }
@@ -133,6 +149,7 @@ func (t *CronTool) handleCreate(ctx context.Context, params cronParams) (string,
 		OneShot:   oneShot,
 		CreatedAt: time.Now(),
 		ChannelID: t.currentChannelID(),
+		ChatID:    t.currentChatID(),
 	}
 
 	if err := t.scheduler.AddJob(job); err != nil {

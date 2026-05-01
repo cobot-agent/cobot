@@ -232,6 +232,7 @@ func TestConsumeOnce_ValidChannelID(t *testing.T) {
 	payload := &cronResultPayload{
 		JobID:   "job-valid-ch",
 		JobName: "test-valid-channel",
+		ChatID:  "oc_test_chat",
 		Result:  "world",
 	}
 	msg, err := newCronResultMessage("channel-123", payload)
@@ -254,8 +255,8 @@ func TestConsumeOnce_ValidChannelID(t *testing.T) {
 	if calls[0].msg == nil {
 		t.Fatal("expected delivered message")
 	}
-	if calls[0].msg.ReceiveID != "" {
-		t.Errorf("deliver msg.ReceiveID = %q, want empty (channel resolves platform destination)", calls[0].msg.ReceiveID)
+	if calls[0].msg.ReceiveID != "oc_test_chat" {
+		t.Errorf("deliver msg.ReceiveID = %q, want %q", calls[0].msg.ReceiveID, "oc_test_chat")
 	}
 	wantTitle := `Cron job "test-valid-channel" completed`
 	if !strings.Contains(calls[0].msg.Text, wantTitle) {

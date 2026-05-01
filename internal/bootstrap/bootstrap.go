@@ -392,6 +392,16 @@ func configureCronTool(a *agent.Agent, ws *workspace.Workspace, registry cobot.M
 			}
 			return ""
 		}),
+		tools.WithCronChatIDFn(func() string {
+			// Return the most recent chat ID across all active agents.
+			// This is set by the gateway handler before each Prompt call.
+			var last string
+			a.ChatIDs().Range(func(_, v any) bool {
+				last = v.(string)
+				return true
+			})
+			return last
+		}),
 	))
 }
 
@@ -461,6 +471,10 @@ func ConfigureGateway(res *Result, gwCfg cobot.GatewayConfig, channels []cobot.C
 		actual, _ := subAgents.LoadOrStore(agentKey, candidate)
 		sub := actual.(*agent.Agent)
 
+		// Store the current chat ID so tools (e.g. cron) can capture it
+		// for result delivery.
+		res.Agent.SetCurrentChatID(agentKey, msg.ChatID)
+
 		resp, err := sub.Prompt(ctx, msg.Text)
 		if err != nil {
 			return fmt.Errorf("agent prompt: %w", err)
@@ -529,9 +543,11 @@ func createChannel(cfg cobot.ChannelConfig) (cobot.MessageChannel, error) {
 	switch cfg.Type {
 	case "feishu":
 		fc := channel.FeishuConfig{
-			AppID:     cfg.Config["app_id"],
-			AppSecret: cfg.Config["app_secret"],
-			Domain:    cfg.Config["domain"],
+			AppID:        cfg.Config["app_id"],
+			AppSecret:    cfg.Config["app_secret"],
+			Domain:       cfg.Config["domain"],
+			ReceiveEmoji: cfg.Config["receive_emoji"],
+			DoneEmoji:    cfg.Config["done_emoji"],
 		}
 		if fc.AppID == "" || fc.AppSecret == "" {
 			return nil, fmt.Errorf("feishu channel %q: app_id and app_secret are required", cfg.Name)

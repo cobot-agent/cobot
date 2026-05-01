@@ -59,6 +59,9 @@ type Job struct {
 
 	// Notification target
 	ChannelID string `yaml:"channel_id,omitempty"`
+	// ChatID is the platform-specific chat identifier (e.g. Feishu oc_xxx)
+	// used as the ReceiveID when delivering cron results to the channel.
+	ChatID string `yaml:"chat_id,omitempty"`
 }
 
 // ReadID returns a temporary opaque token combining the job ID with the

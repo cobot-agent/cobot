@@ -12,6 +12,7 @@ import (
 type cronResultPayload struct {
 	JobID    string    `json:"job_id"`
 	JobName  string    `json:"job_name"`
+	ChatID   string    `json:"chat_id,omitempty"`
 	Result   string    `json:"result"`
 	Error    string    `json:"error,omitempty"`
 	RunAt    time.Time `json:"run_at"`

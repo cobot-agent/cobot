@@ -97,12 +97,17 @@ func (s *Scheduler) consumeOnce(ctx context.Context) {
 		}
 		content := formatCronResult(payload.JobName, payload.Result, payload.Error)
 		if s.deliverer != nil {
-			title := fmt.Sprintf("Cron job %q completed", payload.JobName)
-			out := &cobot.OutboundMessage{
-				Text: title + "\n\n" + content,
-			}
-			if _, err := s.deliverer.Send(notifyCtx, msg.ChannelID, out); err != nil {
-				slog.Warn("failed to deliver cron result", "channel_id", msg.ChannelID, "error", err)
+			if payload.ChatID == "" {
+				slog.Warn("cron result has no chat_id, skipping delivery", "job_id", payload.JobID, "channel_id", msg.ChannelID)
+			} else {
+				title := fmt.Sprintf("Cron job %q completed", payload.JobName)
+				out := &cobot.OutboundMessage{
+					ReceiveID: payload.ChatID,
+					Text:      title + "\n\n" + content,
+				}
+				if _, err := s.deliverer.Send(notifyCtx, msg.ChannelID, out); err != nil {
+					slog.Warn("failed to deliver cron result", "channel_id", msg.ChannelID, "chat_id", payload.ChatID, "error", err)
+				}
 			}
 		}
 		ackIDs = append(ackIDs, msg.ID)
@@ -127,6 +132,7 @@ func (s *Scheduler) publishJobResult(job *Job, result string, runErr error, dura
 	payload := &cronResultPayload{
 		JobID:    job.ID,
 		JobName:  job.Name,
+		ChatID:   job.ChatID,
 		Result:   result,
 		RunAt:    time.Now(),
 		Duration: duration.Milliseconds(),
