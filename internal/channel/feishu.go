@@ -690,7 +690,7 @@ func buildCardPayload(tables []parsedTable, rest string) string {
 		for i, h := range t.Headers {
 			col := map[string]any{
 				"name":         fmt.Sprintf("col_%d", i),
-				"data_type":    "text",
+				"data_type":    "lark_md",
 				"display_name": h,
 				"width":        "auto",
 			}
